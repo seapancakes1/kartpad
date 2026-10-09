@@ -49,6 +49,7 @@
     @"video.frame_interpolation_fps":@(c.frameInterpolationFps.value_or(0)),
     @"video.vsync":@(c.vsync.value_or(false)),
     @"video.show_fps":@(c.showFps.value_or(true)),
+    @"video.cursor_auto_hide_seconds":@(c.cursorAutoHideSeconds.value_or(3)),
     @"video.disable_copy_filter":@(c.disableCopyFilter.value_or(true)),
     @"video.skip_unready_pipelines":@(c.skipUnreadyPipelines.value_or(true)),
     @"video.disabled_post_processing_paths":@((c.disabledPostProcessingPaths.value_or(0)&0x10)!=0),
@@ -141,8 +142,9 @@
     [self.settingsPanel.contentView addSubview:self.settingsStatus];
 
     NSView *graphics=[self settingsPage:@"Graphics"];
-    [graphics setFrameSize:NSMakeSize(780,795)];
-    [self settingsLabel:@"Graphics & Display" page:graphics y:735].font=[NSFont boldSystemFontOfSize:19];
+    [graphics setFrameSize:NSMakeSize(780,850)];
+    [self settingsLabel:@"Graphics & Display" page:graphics y:790].font=[NSFont boldSystemFontOfSize:19];
+    [self setting:@"video.cursor_auto_hide_seconds" label:@"Hide mouse pointer" choices:@[@"Never",@"After 3 seconds idle",@"After 5 seconds idle",@"After 10 seconds idle"] values:@[@0,@3,@5,@10] page:graphics y:730];
     [self setting:@"video.resolution_multiplier" label:@"Render resolution" choices:@[@"Auto (window size)",@"Native (1×)",@"1.5×",@"2×",@"3×",@"4×",@"6×",@"8×"] values:@[@0,@1,@1.5,@2,@3,@4,@6,@8] page:graphics y:675];
     [self setting:@"video.display_mode" label:@"Display mode" choices:@[@"Windowed",@"Borderless fullscreen",@"Exclusive fullscreen"] values:@[@"windowed",@"borderless",@"exclusive"] page:graphics y:620];
     [self setting:@"video.frame_interpolation_fps" label:@"Frame interpolation" choices:@[@"Off (60 FPS)",@"120 FPS — experimental",@"180 FPS — experimental"] values:@[@0,@120,@180] page:graphics y:565];
