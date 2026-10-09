@@ -111,7 +111,7 @@ for shell_contract in \
   "chooseRetroRewindData:" \
   "RMCP01-r0-retro-rewind" \
   "KartPadRuntimeProfile" \
-  "Quit and reopen KartPad to switch games. Your saves and settings are preserved." \
+  "KartPad restarts to switch games. Your saves and settings are kept." \
   "showMiis:" \
   "Rename License" \
   "Licenses without a Mii" \
@@ -146,7 +146,7 @@ for shell_contract in \
   # These selectors/preferences are compiled only into the dual launcher.
   if [[ "${product}" != dual ]]; then
     case "${shell_contract}" in
-      "chooseRetroRewindData:"|"KartPadRuntimeProfile"|"Quit and reopen KartPad to switch games. Your saves and settings are preserved.") continue ;;
+      "chooseRetroRewindData:"|"KartPadRuntimeProfile"|"KartPad restarts to switch games. Your saves and settings are kept.") continue ;;
     esac
   fi
   if ! rg -F -q "${shell_contract}" <<<"${executable_strings}"; then
