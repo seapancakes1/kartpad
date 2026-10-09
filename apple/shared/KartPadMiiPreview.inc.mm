@@ -8,7 +8,7 @@ __asm__(".linker_option \"-framework\", \"QuartzCore\""); // CACurrentMediaTime 
 #include "kartpad/mii/scene.h"
 #include <random>
 struct KPMiiGPUVertex { simd_float4 position, normal; simd_float2 uv; simd_float4 color; };
-struct KPMiiUniform { simd_float4x4 mvp, model; simd_float4 color; float textured, unlit, bodyMaterial, padding; };
+struct KPMiiUniform { simd_float4x4 mvp, model; simd_float4 color; float textured, unlit, bodyMaterial, alphaThreshold; };
 // GPU copies of one scene. The preview worker makes them (Metal resource creation is thread-safe),
 // so installing a new scene on the main thread, which the game shares, is only a swap.
 @interface KPMiiGPUScene : NSObject {
@@ -89,7 +89,7 @@ struct KPMiiUniform { simd_float4x4 mvp, model; simd_float4 color; float texture
 #include <metal_stdlib>
 using namespace metal;
 struct V { float4 p; float4 n; float2 uv; float4 color; };
-struct U { float4x4 mvp; float4x4 model; float4 color; float textured; float unlit; float bodyMaterial; float padding; };
+struct U { float4x4 mvp; float4x4 model; float4 color; float textured; float unlit; float bodyMaterial; float alphaThreshold; };
 struct O { float4 p [[position]]; float3 n; float2 uv; float4 color; };
 vertex O miiVertex(uint i [[vertex_id]], const device V *v [[buffer(0)]], constant U &u [[buffer(1)]]) {
     O o; o.p=u.mvp*v[i].p; o.n=(u.model*v[i].n).xyz; o.uv=v[i].uv; o.color=v[i].color; return o;
@@ -100,9 +100,11 @@ fragment float4 miiFragment(O o [[stage_in]], constant U &u [[buffer(1)]],
     float3 n=normalize(o.n);
     if(u.bodyMaterial>0.5) {
         // NW4R MiiBody TEV: vertex alpha is a lighting coefficient; texture alpha masks highlights.
-        // Neither is surface transparency. Both body sections use the same diffuse atlas.
+        // Neither is surface transparency; the material's alpha test drops the atlas's transparent texels.
+        // Both body sections use the same diffuse atlas.
         float2 env=float2(n.x,-n.y)*0.5+0.5;
         float4 diffuse=t.sample(s,o.uv);
+        if(diffuse.a<u.alphaThreshold)discard_fragment();
         float3 lighting=saturate(o.color.rgb+lm.sample(s,env).rgb*o.color.a);
         float3 rgb=saturate(diffuse.rgb*lighting)*u.color.rgb;
         rgb=saturate(rgb+hm.sample(s,env).rgb*diffuse.a);
@@ -235,7 +237,7 @@ static simd_float4x4 KPMiiRotation(float yaw,float pitch,float roll){
     projection.columns[0].x=1/(half*aspect);projection.columns[1].y=1/half;projection.columns[2].z=-1/300.f;projection.columns[3]={0,-center/half,.5,1};
     [encoder setRenderPipelineState:_pipeline];[encoder setFrontFacingWinding:MTLWindingClockwise];
     for(size_t i=0;_scene&&i<_scene->parts.size();i++){
-        const auto&part=_scene->parts[i];if(part.bodyPart&&!self.fullBody)continue;simd_float4x4 world=part.bodyPart?model:simd_mul(model,head);KPMiiUniform u{};u.mvp=simd_mul(projection,world);u.model=world;u.color={part.color[0]/255.f,part.color[1]/255.f,part.color[2]/255.f,1};u.textured=part.texture.width?1:0;u.unlit=part.unlit;u.bodyMaterial=part.bodyPart;
+        const auto&part=_scene->parts[i];if(part.bodyPart&&!self.fullBody)continue;simd_float4x4 world=part.bodyPart?model:simd_mul(model,head);KPMiiUniform u{};u.mvp=simd_mul(projection,world);u.model=world;u.color={part.color[0]/255.f,part.color[1]/255.f,part.color[2]/255.f,1};u.textured=part.texture.width?1:0;u.unlit=part.unlit;u.bodyMaterial=part.bodyPart;u.alphaThreshold=part.alphaThreshold;
         [encoder setCullMode:part.doubleSided?MTLCullModeNone:MTLCullModeBack];[encoder setDepthStencilState:part.translucent?_overlayDepth:_opaqueDepth];[encoder setVertexBuffer:posed&&_ring[@(i)]?_ring[@(i)][_ringIndex%3]:_buffers[i] offset:0 atIndex:0];[encoder setVertexBytes:&u length:sizeof(u) atIndex:1];[encoder setFragmentBytes:&u length:sizeof(u) atIndex:1];
         [encoder setFragmentSamplerState:_samplers[part.texture.wrapS+part.texture.wrapT*3] atIndex:0];
         if(part.texture.width)[encoder setFragmentTexture:i==_scene->maskPart&&faceTexture&&faceTexture!=NSNull.null?faceTexture:_textures[i] atIndex:0];else [encoder setFragmentTexture:nil atIndex:0];

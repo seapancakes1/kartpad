@@ -677,21 +677,6 @@ static bool KPFullscreenAcrossNotch() {
   [self.miis show];
 }
 
-- (void)createMii:(id)sender {
-  [self.miis show];
-  [self.miis createMii:sender];
-}
-
-- (void)editMii:(NSMenuItem *)sender {
-  [self.miis show];
-  [self.miis editSlot:[sender.representedObject unsignedIntegerValue]];
-}
-
-- (void)importMii:(id)sender {
-  [self.miis show];
-  [self.miis importMii:sender];
-}
-
 - (NSMenuItem *)playerMenuItem:(NSString *)title action:(SEL)action enabled:(BOOL)enabled {
   NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:title action:action keyEquivalent:@""];
   item.target = self;
@@ -699,16 +684,12 @@ static bool KPFullscreenAcrossNotch() {
   return item;
 }
 
-// Rebuilt each time the Player menu opens so the Mii list and the
-// pending-restart state are current.
+// Rebuilt each time the Player menu opens so the pending-restart state is
+// current. Everything else about Miis happens in the Miis window.
 - (void)menuNeedsUpdate:(NSMenu *)menu {
   if (![menu.title isEqualToString:@"Player"]) return;
   [menu removeAllItems];
-  NSError *error = nil;
-  NSArray<NSDictionary<NSString *, id> *> *records = KartPadMiiRecords(&error);
-  const BOOL pending = KartPadHasPendingMiiChanges();
-  const BOOL editable = KartPadCanQueueMiiChanges() && error == nil;
-  if (pending) {
+  if (KartPadHasPendingMiiChanges()) {
     [menu addItem:[self playerMenuItem:@"Restart KartPad to Apply Mii Changes"
                                 action:@selector(restartKartPad:) enabled:YES]];
     [menu addItem:NSMenuItem.separatorItem];
@@ -717,18 +698,6 @@ static bool KPFullscreenAcrossNotch() {
   miis.keyEquivalent = @"m";
   miis.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
   [menu addItem:miis];
-  [menu addItem:[self playerMenuItem:@"Create Mii…" action:@selector(createMii:) enabled:editable]];
-  NSMenuItem *edit = [self playerMenuItem:@"Edit Mii" action:nil enabled:editable && records.count > 0];
-  edit.submenu = [[NSMenu alloc] initWithTitle:@"Edit Mii"];
-  edit.submenu.autoenablesItems = NO;
-  for (NSDictionary<NSString *, id> *record in records) {
-    NSMenuItem *item = [self playerMenuItem:[record[@"name"] stringByAppendingString:@"…"]
-                                     action:@selector(editMii:) enabled:editable];
-    item.representedObject = record[@"slot"];
-    [edit.submenu addItem:item];
-  }
-  [menu addItem:edit];
-  [menu addItem:[self playerMenuItem:@"Import Mii…" action:@selector(importMii:) enabled:editable]];
 }
 
 - (void)toggleExperimentalWiimote:(NSMenuItem *)sender {

@@ -11,7 +11,9 @@ static unsigned KPFavoriteIndex(NSDictionary *record){unsigned i=[record[@"favor
 static unsigned KPFavoriteHex(NSDictionary *record){auto c=kartpad::mii::Shirt[KPFavoriteIndex(record)];return (c[0]<<16)|(c[1]<<8)|c[2];}
 static NSString *KPFavoriteName(NSDictionary *record){return @[@"Red",@"Orange",@"Yellow",@"Light green",@"Green",@"Blue",@"Light blue",@"Pink",@"Purple",@"Brown",@"White",@"Black"][KPFavoriteIndex(record)];}
 static NSString *KPSlotName(NSDictionary *record){return [NSString stringWithFormat:@"Mii %lu",(unsigned long)([record[@"slot"] unsignedIntegerValue]+1)];}
-static NSString *KPLicenseTitle(NSDictionary *license){return [NSString stringWithFormat:@"%@ · License %lu",license[@"profileTitle"]?:@"Mario Kart Wii",(unsigned long)([license[@"slot"] unsignedIntegerValue]+1)];}
+// Set on reload: license titles name their game profile only when there is more than one.
+static BOOL KPNameProfiles=NO;
+static NSString *KPLicenseTitle(NSDictionary *license){NSString *number=[NSString stringWithFormat:@"License %lu",(unsigned long)([license[@"slot"] unsignedIntegerValue]+1)];return KPNameProfiles?[NSString stringWithFormat:@"%@ · %@",license[@"profileTitle"]?:@"Mario Kart Wii",number]:number;}
 static NSString *KPLicensePending(NSDictionary *license){
     NSString *operation=license[@"pendingOperation"];
     return [operation isEqual:@"delete"]?@"Deletion pending":[operation isEqual:@"rename"]?@"Rename pending":[operation isEqual:@"mii"]?@"Mii change pending":[license[@"missingLinkedMii"] boolValue]?@"Its Mii is missing":nil;
@@ -317,7 +319,8 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
         KPFill(c,CGRectOffset(card,0,2),0x000000,18,KPP->shadow*.6);KPFill(c,card,KPP->panel,18);KPStroke(c,card,KPP->panelStroke,1,18);
     }
     if(self.dropTargeted)KPStroke(c,CGRectInset(self.gridCard,-2,-2),KPP->accentBottom,3,20);
-    if(self.hint.length)KPCenteredText(self.hint,self.hintRect,12,KPP->secondaryText,NO,NSTextAlignmentCenter);
+    NSString *hint=self.dropTargeted?@"Drop to import":self.hint;
+    if(hint.length&&self.hintRect.size.width>=120)KPCenteredText(hint,self.hintRect,12,KPP->secondaryText,NO,NSTextAlignmentCenter);
 }
 @end
 
@@ -393,6 +396,7 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
     BOOL pending=KartPadHasPendingMiiChanges(),queueBlocked=!KartPadCanQueueMiiChanges();if(!pending)self.lastChange=nil;
     NSUInteger pendingCount=pending?KartPadPendingMiiChangeCount():0;BOOL discardable=KartPadCanDiscardPendingMiiChanges();
     BOOL changed=!self.loaded||![records isEqual:self.records]||![licenses isEqual:self.licenses]||pending!=self.pending||queueBlocked!=self.queueBlocked||discardable!=self.discardable||pendingCount!=self.pendingCount||!((readError==self.readError)||[readError isEqual:self.readError])||!((licenseError==self.licenseError)||[licenseError isEqual:self.licenseError]);
+    KPNameProfiles=[NSSet setWithArray:[licenses valueForKey:@"profileIdentifier"]].count>1;
     self.records=records;self.licenses=licenses;self.readError=readError;self.licenseError=licenseError;self.pending=pending;self.queueBlocked=queueBlocked;self.discardable=discardable;self.pendingCount=pendingCount;
     if(![self selectedRecord])self.selectedSlot=records.count?[records.firstObject[@"slot"] unsignedIntegerValue]:NSNotFound;
     __weak KPMiiBrowser *weak=self;
@@ -499,7 +503,7 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
     self.tiles=[NSMutableArray array];self.detailPortrait=nil;
     KPMiiBrowserView *canvas=self.canvas;CGFloat w=canvas.bounds.size.width,h=canvas.bounds.size.height;
     BOOL compact=w<640,tight=h<480;CGFloat m=compact?12:20;canvas.margin=m;
-    canvas.subtitle=self.readError?nil:[NSString stringWithFormat:@"%lu of %lu",(unsigned long)self.records.count,(unsigned long)kartpad::mii::kMaximumMiiSlots];
+    canvas.subtitle=self.readError?nil:[NSString stringWithFormat:@"%lu/%lu",(unsigned long)self.records.count,(unsigned long)kartpad::mii::kMaximumMiiSlots];
     __weak KPMiiBrowser *weak=self;
 
     // Header: the title (drawn) and the shared Sound switch.
@@ -553,7 +557,7 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
     [canvas addSubview:[self button:@"Done" frame:CGRectMake(w-m-120,footerY,120,footerH) style:KPStyle::Primary enabled:YES action:^(KPMiiBrowserButton *b){[weak finish];}]];
     canvas.hintRect=CGRectMake(m+importW+12,footerY,w-2*m-importW-120-24,footerH);
 #if TARGET_OS_OSX
-    canvas.hint=canvas.hintRect.size.width>=300?@"Double-click a Mii to edit it. Drop .mii files here to import them.":nil;
+    canvas.hint=nil;
 #else
     canvas.hint=canvas.hintRect.size.width>=300?@"Fully close KartPad from the app switcher and reopen it to apply changes.":nil;
 #endif
@@ -675,13 +679,13 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
     [document addSubview:portrait];self.detailPortrait=portrait;
     CGFloat ix=side+14,iw=dw-ix;
     CGFloat iy=[self note:record[@"name"] in:document x:ix y:2 width:iw size:22 bold:YES secondary:NO]+4;
-    NSString *creator=[record[@"creator"] isEqual:@"Unknown"]?KPSlotName(record):[NSString stringWithFormat:@"%@ · Created by %@",KPSlotName(record),record[@"creator"]];
-    iy=[self note:creator in:document x:ix y:iy width:iw size:13 bold:NO secondary:YES]+10;
+    // The creator is worth showing only for a Mii made elsewhere, such as on a Wii.
+    NSString *creator=record[@"creator"];
+    if(creator.length&&![creator isEqual:@"Unknown"]&&![creator isEqual:@"KartPad"])iy=[self note:[@"Created by " stringByAppendingString:creator] in:document x:ix y:iy width:iw size:13 bold:NO secondary:YES]+4;
+    iy+=6;
     KPMiiPaintView *chip=[[KPMiiPaintView alloc]initWithFrame:CGRectMake(ix,iy,18,18)];unsigned hex=KPFavoriteHex(record);
     chip.paint=^(CGContextRef c,CGRect b){KPFill(c,b,hex,5);KPStroke(c,b,0x000000,1,5,.18);};[document addSubview:chip];
-    iy=std::max(iy+18,[self note:[NSString stringWithFormat:@"Favorite color: %@",KPFavoriteName(record)] in:document x:ix+26 y:iy width:iw-26 size:13 bold:NO secondary:NO])+8;
-    NSString *uses=linked.count==0?@"Not used by a license":linked.count==1?@"Used by 1 license":[NSString stringWithFormat:@"Used by %lu licenses",(unsigned long)linked.count];
-    iy=[self note:uses in:document x:ix y:iy width:iw size:13 bold:NO secondary:YES]+6;
+    iy=std::max(iy+18,[self note:KPFavoriteName(record) in:document x:ix+26 y:iy width:iw-26 size:13 bold:NO secondary:NO])+8;
     if(KPMiiPortraitProblem&&![KPMiiPortraits() objectForKey:record[@"mii"]]){iy=[self note:[NSString stringWithFormat:@"Portraits unavailable: %@",KPMiiPortraitProblem] in:document x:ix y:iy width:iw size:11 bold:NO secondary:YES]+6;self.problemShown=YES;}
     y=std::max(side,iy)+16;
 
@@ -702,9 +706,9 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
     else{
         for(NSDictionary *license in linked){[document addSubview:[self licenseRow:license frame:CGRectMake(0,y,dw,56)]];y+=64;}
         if(!linked.count)y=[self note:@"No license races as this Mii yet." in:document x:2 y:y width:dw-4 size:13 bold:NO secondary:YES]+10;
-        if(!promote){[document addSubview:[self button:@"Use for a License…" frame:CGRectMake(0,y,dw,44) style:KPStyle::Plain enabled:editable&&others.count>0 action:^(KPMiiBrowserButton *b){[weak chooseLicenseFor:record from:b];}]];y+=52;}
+        if(!promote&&others.count){[document addSubview:[self button:@"Use for a License…" frame:CGRectMake(0,y,dw,44) style:KPStyle::Plain enabled:editable action:^(KPMiiBrowserButton *b){[weak chooseLicenseFor:record from:b];}]];y+=52;}
     }
-    y=[self note:@"To start a new license, choose New on the game’s license screen and pick this Mii." in:document x:2 y:y width:dw-4 size:12 bold:NO secondary:YES]+8;
+    if(!linked.count)y=[self note:@"To start a new license, choose New on the game’s license screen and pick this Mii." in:document x:2 y:y width:dw-4 size:12 bold:NO secondary:YES]+8;
     [self finish:scroll height:y];
 }
 - (KPMiiBrowserButton*)licenseRow:(NSDictionary*)license frame:(CGRect)frame{
@@ -723,8 +727,9 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
     NSArray *(^entries)(void)=^NSArray*{
         BOOL can=[weak editable]&&!weak.licenseError&&![license[@"pendingOperation"] isEqual:@"delete"];
         NSMutableArray *list=[NSMutableArray array];
-        if(missing)[list addObject:KPEntry(@"Choose Mii…",can,NO,^{[weak chooseMiiForLicense:license from:weakRow];})];
-        else [list addObject:KPEntry(@"Rename License…",can,NO,^{[weak renameLicense:license];})];
+        BOOL choices=missing||weak.records.count>1;
+        [list addObject:KPEntry(missing?@"Choose Mii…":@"Change Mii…",can&&choices,NO,^{[weak chooseMiiForLicense:license from:weakRow];})];
+        if(!missing)[list addObject:KPEntry(@"Rename License…",can,NO,^{[weak renameLicense:license];})];
         [list addObject:KPEntry(@"Delete License…",can,YES,^{[weak deleteLicense:license];})];
         return list;
     };
@@ -1030,7 +1035,7 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
 }
 - (void)chooseMiiForLicense:(NSDictionary*)license from:(KPMiiBrowserButton*)anchor{
     if([self blocked])return;__weak KPMiiBrowser *weak=self;NSMutableArray *entries=[NSMutableArray array];
-    for(NSDictionary *record in self.records)[entries addObject:KPEntry(record[@"name"],YES,NO,^{[weak link:license to:record];})];
+    for(NSDictionary *record in self.records)if(![record[@"createIdBytes"] isEqual:license[@"createId"]])[entries addObject:KPEntry(record[@"name"],YES,NO,^{[weak link:license to:record];})];
     KPPlay(KPSound::Press);[self showMenu:entries title:[NSString stringWithFormat:@"Choose a Mii for %@",KPLicenseTitle(license)] from:anchor];
 }
 @end

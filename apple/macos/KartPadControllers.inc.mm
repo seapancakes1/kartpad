@@ -566,8 +566,8 @@ static KPControllerSettings *KPControllers() {
   if(!controller)controller=[KPControllerSettings new];
   return controller;
 }
-extern "C" void KartPadControllersTick() { @autoreleasepool { [KPControllers() tick]; } }
-extern "C" bool KartPadControllersVisible() { return KPControllers().panel.visible; }
+// KartPadControllersTick and KartPadControllersVisible are in KartPadMacMiis.inc.mm, since the
+// Mii windows share the pads with this window.
 
 static NSString *KPControllerDiagnostics() {
   NSMutableString *text = [NSMutableString stringWithFormat:@"Controller subsystem: %@\nDetected controllers: %u\n",

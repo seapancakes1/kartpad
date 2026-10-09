@@ -325,16 +325,19 @@ static void KPIcon(CGContextRef c,unsigned category,CGRect rect,unsigned ink){
     case 3: // Hair: a filled cap with a fringe over the face outline.
         CGContextMoveToPoint(c,5,21);CGContextAddCurveToPoint(c,4,9,12,3,20,3);CGContextAddCurveToPoint(c,28,3,36,9,35,21);CGContextAddLineToPoint(c,31,15);CGContextAddLineToPoint(c,27,18);CGContextAddLineToPoint(c,24,12);CGContextAddLineToPoint(c,19,17);CGContextAddLineToPoint(c,14,12);CGContextAddLineToPoint(c,10,17);CGContextClosePath(c);CGContextFillPath(c);
         CGContextMoveToPoint(c,7.5,22);CGContextAddCurveToPoint(c,8,31,14,37,20,37);CGContextAddCurveToPoint(c,26,37,32,31,32.5,22);CGContextStrokePath(c);break;
-    case 4: // Eyebrows.
-        CGContextSetLineWidth(c,4.6);CGContextMoveToPoint(c,4,24);CGContextAddQuadCurveToPoint(c,10,13,18,19);CGContextStrokePath(c);CGContextMoveToPoint(c,36,24);CGContextAddQuadCurveToPoint(c,30,13,22,19);CGContextStrokePath(c);break;
+    case 4: // Eyebrows: Wii-style tapered brows, a fine outer tip swelling to a blunt inner end that dips toward the nose.
+        for(int side:{0,1}){CGContextSaveGState(c);if(side){CGContextTranslateCTM(c,40,0);CGContextScaleCTM(c,-1,1);}
+            CGContextMoveToPoint(c,1.5,19);CGContextAddCurveToPoint(c,7,15,13.5,15,17.5,18.5);CGContextAddCurveToPoint(c,19.2,20,19,24,16.8,24);CGContextAddCurveToPoint(c,12,22.5,6.5,20.8,1.5,19);CGContextClosePath(c);CGContextFillPath(c);
+            CGContextRestoreGState(c);}
+        break;
     case 5: // Eyes: almonds with pupils.
         CGContextSetLineWidth(c,2.4);for(CGFloat x:{2.,22.}){CGContextMoveToPoint(c,x,20);CGContextAddQuadCurveToPoint(c,x+8,9,x+16,20);CGContextAddQuadCurveToPoint(c,x+8,31,x,20);CGContextClosePath(c);CGContextStrokePath(c);CGContextFillEllipseInRect(c,CGRectMake(x+4.5,16.5,7,7));}break;
     case 6: // Nose: side profile with a nostril.
         CGContextSetLineWidth(c,3.2);CGContextMoveToPoint(c,15,5);CGContextAddCurveToPoint(c,18,14,26,19,29.5,25.5);CGContextAddCurveToPoint(c,31,29,28.5,31.5,25,31);CGContextAddCurveToPoint(c,23,34,18.5,34,15.5,31.5);CGContextStrokePath(c);
         CGContextSetLineWidth(c,2.4);CGContextMoveToPoint(c,19,28);CGContextAddQuadCurveToPoint(c,21.5,25.5,24,28);CGContextStrokePath(c);break;
-    case 7: // Mouth: parted lips.
-        CGContextMoveToPoint(c,4,20);CGContextAddCurveToPoint(c,9,12,14,11,20,15);CGContextAddCurveToPoint(c,26,11,31,12,36,20);CGContextClosePath(c);CGContextFillPath(c);
-        CGContextMoveToPoint(c,4,22.5);CGContextAddLineToPoint(c,36,22.5);CGContextAddCurveToPoint(c,32,31,27,33,20,33);CGContextAddCurveToPoint(c,13,33,8,31,4,22.5);CGContextClosePath(c);CGContextFillPath(c);break;
+    case 7: // Mouth: Wii-style full lips, a cupid's-bow upper lip over a slimmer lower lip, parted by a straight line.
+        CGContextMoveToPoint(c,3,22);CGContextAddCurveToPoint(c,4,15,9.5,10,14.5,10);CGContextAddCurveToPoint(c,17,10,18.5,11.5,20,13.5);CGContextAddCurveToPoint(c,21.5,11.5,23,10,25.5,10);CGContextAddCurveToPoint(c,30.5,10,36,15,37,22);CGContextClosePath(c);CGContextFillPath(c);
+        CGContextMoveToPoint(c,3.5,25);CGContextAddLineToPoint(c,36.5,25);CGContextAddCurveToPoint(c,35,30.5,28.5,33,20,33);CGContextAddCurveToPoint(c,11.5,33,5,30.5,3.5,25);CGContextClosePath(c);CGContextFillPath(c);break;
     case 8: // Facial hair: a curled mustache.
         CGContextMoveToPoint(c,20,17);CGContextAddCurveToPoint(c,15,10,8,12,7,18);CGContextAddCurveToPoint(c,6,21,3,21,2,19);CGContextAddCurveToPoint(c,2,26,10,29,16,25.5);CGContextAddQuadCurveToPoint(c,19,23.5,20,22);
         CGContextAddQuadCurveToPoint(c,21,23.5,24,25.5);CGContextAddCurveToPoint(c,30,29,38,26,38,19);CGContextAddCurveToPoint(c,37,21,34,21,33,18);CGContextAddCurveToPoint(c,32,12,25,10,20,17);CGContextClosePath(c);CGContextFillPath(c);break;
@@ -389,7 +392,7 @@ static void KPControlIcon(CGContextRef c,CGRect rect,KPGlyph kind,int direction,
 }
 
 static constexpr unsigned KPLookAlikeCount=12;
-enum class KPAction{Category,Select,Adjust,Page,Mode,Toggle,Rotate,Front,Quit,Save,Discard,Birthday,Undo,Redo,More,Gender,Start,LookAlike,Shuffle,Back,Slider,Sound};
+enum class KPAction{Category,Select,Adjust,Page,Mode,Section,Toggle,Rotate,Front,Quit,Save,Discard,Birthday,Undo,Redo,More,Gender,Start,LookAlike,Shuffle,Back,Slider,Sound};
 struct KPItem{KPAction action;CGRect rect;unsigned field=0;int value=0;NSString *__strong label;BOOL enabled=YES;BOOL selected=NO;};
 @class KPMiiCanvas, KPMiiWiiButton;
 #if TARGET_OS_OSX
@@ -408,6 +411,8 @@ struct KPItem{KPAction action;CGRect rect;unsigned field=0;int value=0;NSString 
 @property(nonatomic) NSUInteger slot;
 @property(nonatomic) NSInteger category;
 @property(nonatomic) unsigned feature,page;
+// The part of a split page showing: the grid (or Name), Color (or Details), Adjust.
+@property(nonatomic) unsigned section;
 @property(nonatomic) BOOL creating,duplicating,allowClose,previewLoaded;
 @property(nonatomic) unsigned gender;
 // Create Mii: the look-alike grid, and its faces (one seed per tile, so changing gender keeps the shuffle).
@@ -464,6 +469,8 @@ struct KPItem{KPAction action;CGRect rect;unsigned field=0;int value=0;NSString 
     std::vector<KPItem> _items;
     CGRect _previewRect,_panelRect;
     CGFloat _footerY;
+    BOOL _stacked,_shortHeader;
+    CGFloat _statusWidth;
     CGRect _nameRect;
     NSUInteger _hoverIndex;
 }
@@ -723,13 +730,13 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
         if(item.action==KPAction::Redo)item.enabled=self.editor->_history.CanRedo();
         if(item.action==KPAction::Save)item.enabled=[self.editor dirty];
         button.enabled=item.enabled;
-        NSString *value=item.action==KPAction::Toggle?(KPToggleOn(item,a)?@"On":@"Off"):item.action==KPAction::Sound?(sound?@"On":@"Off"):item.action==KPAction::Mode&&item.selected?@"Selected":item.action==KPAction::Birthday&&item.field?KPBirthdayPart(a,item.field):nil;
+        NSString *value=item.action==KPAction::Toggle?(KPToggleOn(item,a)?@"On":@"Off"):item.action==KPAction::Sound?(sound?@"On":@"Off"):(item.action==KPAction::Mode||item.action==KPAction::Section)&&item.selected?@"Selected":item.action==KPAction::Birthday&&item.field?KPBirthdayPart(a,item.field):nil;
         // Adjustments say where they are in their range, as the meter above them shows.
         if(item.action==KPAction::Adjust){auto f=kartpad::mii::AppearanceFields[item.field];value=[NSString stringWithFormat:@"%u of %u",a.Get(item.field)-f.minimum+1,f.maximum-f.minimum+1];}
 #if TARGET_OS_OSX
         if(item.action==KPAction::Sound)[button setAccessibilityValue:@(sound)];else [button setAccessibilityValue:value];
 #else
-        BOOL selected=item.action==KPAction::Category||item.action==KPAction::Mode?item.selected:item.action==KPAction::Select?a.Get(item.field)==unsigned(item.value):item.action==KPAction::Sound?sound:item.action==KPAction::Toggle&&KPToggleOn(item,a);button.accessibilityTraits=UIAccessibilityTraitButton|(selected?UIAccessibilityTraitSelected:0)|(!item.enabled?UIAccessibilityTraitNotEnabled:0);button.accessibilityValue=value;
+        BOOL selected=item.action==KPAction::Category||item.action==KPAction::Mode||item.action==KPAction::Section?item.selected:item.action==KPAction::Select?a.Get(item.field)==unsigned(item.value):item.action==KPAction::Sound?sound:item.action==KPAction::Toggle&&KPToggleOn(item,a);button.accessibilityTraits=UIAccessibilityTraitButton|(selected?UIAccessibilityTraitSelected:0)|(!item.enabled?UIAccessibilityTraitNotEnabled:0);button.accessibilityValue=value;
 #endif
         // Every state drawItem reads besides hover, press and focus, which repaint themselves.
         BOOL chosen=item.action==KPAction::Select?a.Get(item.field)==unsigned(item.value):item.selected;
@@ -752,21 +759,31 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
     for(id view in self.subviews.copy)if(view!=self.editor.preview)[view removeFromSuperview];
     _hoverIndex=NSNotFound;self.buttons=[NSMutableArray array];self.editor.nameFields=[NSMutableArray array];self.editor.nameHints=[NSMutableArray array];self.editor.meters=[NSMutableArray array];_items.clear();
     CGFloat w=self.bounds.size.width,h=self.bounds.size.height;BOOL compact=w<680;
-    CGFloat margin=compact?12:24,top=compact?154:114;
-    // Footer actions sit on the bottom edge; compact layouts keep a status line above them.
-    _footerY=h-44-(compact?10:16);CGFloat contentBottom=_footerY-(compact?28:16);
-    CGFloat previewWidth=compact?w-2*margin:(w-3*margin)*.34;
-    _previewRect=compact?CGRectMake(margin,top,previewWidth,std::min(CGFloat(216),std::max(CGFloat(150),(contentBottom-top)*.38))):CGRectMake(margin,top,previewWidth,std::max(CGFloat(120),contentBottom-top));
-    CGFloat panelX=compact?margin:CGRectGetMaxX(_previewRect)+margin,panelY=compact?CGRectGetMaxY(_previewRect)+10:top;
-    _panelRect=CGRectMake(panelX,panelY,w-margin-panelX,std::max(CGFloat(140),contentBottom-panelY));
+    // Portrait phones stack the preview above the panel; short screens (landscape phones) put the
+    // category tabs in the title row.
+    _stacked=compact&&h>w;_shortHeader=!_stacked&&h<540;
+    CGFloat margin=compact?12:24,top=_stacked?154:_shortHeader?58:114;
+    _footerY=h-44-(compact?10:16);
+    CGFloat previewWidth=_stacked?w-2*margin:(w-3*margin)*.34;
+    if(_stacked){
+        // Footer actions sit on the bottom edge with the status line beside them.
+        CGFloat contentBottom=_footerY-10;
+        _previewRect=CGRectMake(margin,top,previewWidth,std::min(CGFloat(216),std::max(CGFloat(124),(contentBottom-top)*.3)));
+        _panelRect=CGRectMake(margin,CGRectGetMaxY(_previewRect)+10,previewWidth,std::max(CGFloat(140),contentBottom-CGRectGetMaxY(_previewRect)-10));
+    }else{
+        // Save and Cancel sit under the preview, below the status line, so the panel runs to the bottom.
+        _previewRect=CGRectMake(margin,top,previewWidth,std::max(CGFloat(120),_footerY-30-top));
+        CGFloat panelX=CGRectGetMaxX(_previewRect)+margin;
+        _panelRect=CGRectMake(panelX,top,w-margin-panelX,std::max(CGFloat(140),_footerY+44-top));
+    }
     // The card header holds the name and turn controls; the Metal view fills the rest on a matching background.
-    BOOL tight=compact||h<500;CGFloat header=tight?42:50,turn=tight?32:38;
+    BOOL tight=compact||h<560;CGFloat header=tight?42:50,turn=tight?32:38;
     _nameRect=CGRectMake(_previewRect.origin.x+16,_previewRect.origin.y+2,_previewRect.size.width-32-3*turn-20,header);
     self.editor.preview.frame=CGRectMake(_previewRect.origin.x+8,_previewRect.origin.y+header,_previewRect.size.width-16,_previewRect.size.height-header-8);
     self.editor.preview.clearColor=MTLClearColorMake(((KPP->well>>16)&255)/255.,((KPP->well>>8)&255)/255.,(KPP->well&255)/255.,1);
     self.editor.preview.hidden=self.editor.creating;
     auto add=[&](KPAction action,CGRect rect,NSString *label,unsigned field=0,int value=0,BOOL selected=NO){_items.push_back({action,rect,field,value,label,YES,selected});};
-    id form=nil;CGFloat x=_panelRect.origin.x+12,y=_panelRect.origin.y+12,pw=_panelRect.size.width-24;
+    id form=nil;CGFloat x=_panelRect.origin.x+12,y=_panelRect.origin.y+12,pw=_panelRect.size.width-24,ph=_panelRect.size.height-24;
     if(self.editor.creating){
         // Title block, a small gender switch, then either the two ways to start or the look-alike grid.
         CGFloat available=_footerY-16-54;BOOL picking=self.editor.pickingLookAlike;
@@ -793,72 +810,108 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
         __weak KPMiiCanvas *weak=self;void(^ready)(void)=^{[weak redraw];};
         KPMiiRequestPortrait([self.editor scratch],ready);for(NSData *mii in self.editor.lookAlikes)KPMiiRequestPortrait(mii,ready);
     }else{
-        CGFloat gap=compact?5:8;int cols=compact?5:10;CGFloat tw=(w-2*margin-gap*(cols-1))/cols;
-        for(unsigned i=0;i<10;i++)add(KPAction::Category,CGRectMake(margin+(i%cols)*(tw+gap),54+(i/cols)*48,tw,46),[NSString stringWithUTF8String:kartpad::mii::EditorCategories[i]],i,0,self.editor.category==i);
+        // Category tabs: one row, two on portrait phones, or beside undo, redo and ⋯ on short screens
+        // (where Sound effects moves into the ⋯ menu).
+        CGFloat gap=compact?5:8;int cols=_stacked?5:10;CGFloat tabsW=_shortHeader?w-2*margin-136-12:w-2*margin,tw=(tabsW-gap*(cols-1))/cols,tabY=_shortHeader?8:54;
+        for(unsigned i=0;i<10;i++)add(KPAction::Category,CGRectMake(margin+(i%cols)*(tw+gap),tabY+(i/cols)*48,tw,_shortHeader?40:46),[NSString stringWithUTF8String:kartpad::mii::EditorCategories[i]],i,0,self.editor.category==i);
         CGFloat tx=CGRectGetMaxX(_previewRect)-8-turn,ty=_previewRect.origin.y+(header-turn)/2+2;
         add(KPAction::Rotate,CGRectMake(tx-2*(turn+6),ty,turn,turn),@"Turn left",0,-1);
         add(KPAction::Front,CGRectMake(tx-turn-6,ty,turn,turn),@"Face front");
         add(KPAction::Rotate,CGRectMake(tx,ty,turn,turn),@"Turn right",0,1);
         CGFloat saveW=compact?150:164,cancelW=compact?110:120;
-        add(KPAction::Save,CGRectMake(w-margin-saveW,_footerY,saveW,44),@"Save");
-        add(KPAction::Discard,CGRectMake(w-margin-saveW-10-cancelW,_footerY,cancelW,44),@"Cancel");
-        add(KPAction::Sound,CGRectMake(w-margin-136-12-96,6,96,40),@"Sound effects");
-        add(KPAction::Undo,CGRectMake(w-margin-136,6,40,40),@"Undo");add(KPAction::Redo,CGRectMake(w-margin-88,6,40,40),@"Redo");add(KPAction::More,CGRectMake(w-margin-40,6,40,40),@"More");
+        if(_stacked){
+            saveW=std::min(saveW,(w-2*margin)*.3);cancelW=std::min(cancelW,(w-2*margin)*.24);_statusWidth=w-2*margin-saveW-cancelW-20;
+            add(KPAction::Save,CGRectMake(w-margin-saveW,_footerY,saveW,44),@"Save");
+            add(KPAction::Discard,CGRectMake(w-margin-saveW-10-cancelW,_footerY,cancelW,44),@"Cancel");
+        }else{
+            if(saveW+10+cancelW>previewWidth){saveW=(previewWidth-10)*.56;cancelW=previewWidth-10-saveW;}
+            add(KPAction::Save,CGRectMake(CGRectGetMaxX(_previewRect)-saveW,_footerY,saveW,44),@"Save");
+            add(KPAction::Discard,CGRectMake(CGRectGetMaxX(_previewRect)-saveW-10-cancelW,_footerY,cancelW,44),@"Cancel");
+        }
+        CGFloat ay=_shortHeader?8:6;
+        if(!_shortHeader)add(KPAction::Sound,CGRectMake(w-margin-136-12-96,6,96,40),@"Sound effects");
+        add(KPAction::Undo,CGRectMake(w-margin-136,ay,40,40),@"Undo");add(KPAction::Redo,CGRectMake(w-margin-88,ay,40,40),@"Redo");add(KPAction::More,CGRectMake(w-margin-40,ay,40,40),@"More");
         auto appearance=kartpad::mii::Appearance::Decode(Bytes(self.editor.draft));
         CGRect frame=CGRectInset(_panelRect,12,12);
 #if TARGET_OS_OSX
-        NSScrollView *scroll=[[NSScrollView alloc]initWithFrame:frame];scroll.hasVerticalScroller=YES;scroll.drawsBackground=NO;scroll.automaticallyAdjustsContentInsets=NO;
-        KPMiiCanvas *document=[[KPMiiCanvas alloc]initWithFrame:CGRectMake(0,0,frame.size.width,frame.size.height)];scroll.documentView=document;[self addSubview:scroll];form=document;
+        // Every page fits its panel, so the form is a plain view.
+        KPMiiCanvas *document=[[KPMiiCanvas alloc]initWithFrame:frame];[self addSubview:document];form=document;
 #else
-        UIScrollView *scroll=[[UIScrollView alloc]initWithFrame:frame];scroll.showsVerticalScrollIndicator=YES;scroll.keyboardDismissMode=UIScrollViewKeyboardDismissModeOnDrag;[self addSubview:scroll];form=scroll;
+        // Every page fits its panel; the scroll view is only there to lift a name field above the keyboard.
+        UIScrollView *scroll=[[UIScrollView alloc]initWithFrame:frame];scroll.contentSize=frame.size;scroll.showsVerticalScrollIndicator=NO;scroll.keyboardDismissMode=UIScrollViewKeyboardDismissModeOnDrag;[self addSubview:scroll];form=scroll;
 #endif
-        CGFloat contentHeight=0;
+        // A page that can't show everything at once splits into parts, picked from a strip of tabs on
+        // the panel's right edge (as the Mii Maker does on small screens). Returns the width left of it.
+        auto strip=[&](std::vector<KPItem> tabs)->CGFloat{
+            CGFloat sw=compact?76:84;for(size_t i=0;i<tabs.size();i++){tabs[i].rect=CGRectMake(x+pw-sw,y+i*50,sw,44);_items.push_back(tabs[i]);}
+            return pw-sw-12;};
         if(self.editor.category==0){
-            // Two columns when the panel is wide enough; otherwise one stacked column.
-            BOOL two=pw>=420;CGFloat cw=two?(pw-16)/2:pw,fy=0;
-            for(unsigned n=0;n<2;n++){
-                CGFloat fx=two?n*(cw+16):0,ry=two?0:n*94;
-                [form addSubview:KPLabelView(n?@"Creator":@"Nickname",CGRectMake(fx+2,ry,cw,22),14,YES,YES)];
+            // Laid out at a given width, all at once (part -1) or as the Name (0) or Details (1) part, with
+            // roomy or dense spacing. Returns the height used; only adds controls when emit is set.
+            auto profile=[&](CGFloat cw,int part,BOOL dense,CGFloat g,BOOL emit)->CGFloat{
+                BOOL two=cw>=432;CGFloat fy=0,labelH=dense?18:22,below=dense?20:26,button=dense?40:44,block=below+button;
+                auto label=[&](NSString *text,CGFloat lx,CGFloat ly,CGFloat lw){if(emit)[form addSubview:KPLabelView(text,CGRectMake(lx+2,ly,lw-2,labelH),dense?13:14,YES,YES)];};
+                auto birthday=[&](CGFloat bx,CGFloat bw){
+                    label(@"Birthday",bx,fy,bw);if(!emit)return;
 #if TARGET_OS_OSX
-                NSTextField *field=[NSTextField textFieldWithString:KPMiiName(self.editor.draft,n?54:2)];field.font=[NSFont systemFontOfSize:18];field.delegate=self.editor;field.frame=CGRectMake(fx,ry+26,cw,34);field.bezelStyle=NSTextFieldRoundedBezel;
+                    // Month and day: Wii faces like Male/Female that open a menu of choices.
+                    CGFloat mw=(bw-8)*.62;
+                    add(KPAction::Birthday,CGRectMake(x+bx,y+fy+below,mw,button),@"Birthday month",1);
+                    add(KPAction::Birthday,CGRectMake(x+bx+mw+8,y+fy+below,bw-8-mw,button),@"Birthday day",2);_items.back().enabled=appearance.Get(1)>0;
 #else
-                UITextField *field=[[UITextField alloc]initWithFrame:CGRectMake(fx,ry+26,cw,36)];field.text=KPMiiName(self.editor.draft,n?54:2);field.font=[UIFontMetrics.defaultMetrics scaledFontForFont:[UIFont systemFontOfSize:18] maximumPointSize:24];field.adjustsFontForContentSizeCategory=YES;field.borderStyle=UITextBorderStyleRoundedRect;field.autocorrectionType=UITextAutocorrectionTypeNo;field.delegate=self.editor;[field addTarget:self.editor action:@selector(nameChanged:) forControlEvents:UIControlEventEditingChanged];
+                    add(KPAction::Birthday,CGRectMake(x+bx,y+fy+below,bw,button),KPBirthdayLabel(appearance));
 #endif
+                };
+                if(part!=1){
+                    // Nickname and Creator side by side when there is room; each has its count below.
+                    BOOL pair=cw>=300;CGFloat nw=pair?(cw-16)/2:cw,fieldH=dense?32:34,name=below+fieldH+(dense?18:24);
+                    for(unsigned n=0;n<2&&emit;n++){
+                        CGFloat fx=pair?n*(nw+16):0,ry=pair?0:n*(name+g);
+                        label(n?@"Creator":@"Nickname",fx,ry,nw);
 #if TARGET_OS_OSX
-                field.toolTip=KPMiiNameRule;
+                        NSTextField *field=[NSTextField textFieldWithString:KPMiiName(self.editor.draft,n?54:2)];field.font=[NSFont systemFontOfSize:18];field.delegate=self.editor;field.frame=CGRectMake(fx,ry+below,nw,fieldH);field.bezelStyle=NSTextFieldRoundedBezel;
+                        field.toolTip=KPMiiNameRule;
 #else
-                field.accessibilityHint=KPMiiNameRule;
+                        UITextField *field=[[UITextField alloc]initWithFrame:CGRectMake(fx,ry+below,nw,fieldH+2)];field.text=KPMiiName(self.editor.draft,n?54:2);field.font=[UIFontMetrics.defaultMetrics scaledFontForFont:[UIFont systemFontOfSize:18] maximumPointSize:24];field.adjustsFontForContentSizeCategory=YES;field.borderStyle=UITextBorderStyleRoundedRect;field.autocorrectionType=UITextAutocorrectionTypeNo;field.delegate=self.editor;[field addTarget:self.editor action:@selector(nameChanged:) forControlEvents:UIControlEventEditingChanged];
+                        field.accessibilityHint=KPMiiNameRule;
 #endif
-                field.tag=n?54:2;[form addSubview:field];[self.editor.nameFields addObject:field];
-                id hint=KPLabelView(KPMiiNameCount(KPMiiName(self.editor.draft,field.tag)),CGRectMake(fx+2,ry+64,cw,20),12,NO,YES);[hint setTag:field.tag];[form addSubview:hint];[self.editor.nameHints addObject:hint];
+                        field.tag=n?54:2;[form addSubview:field];[self.editor.nameFields addObject:field];
+                        id hint=KPLabelView(KPMiiNameCount(KPMiiName(self.editor.draft,field.tag)),CGRectMake(fx+2,ry+below+fieldH+4,nw-2,dense?16:20),12,NO,YES);[hint setTag:field.tag];[form addSubview:hint];[self.editor.nameHints addObject:hint];
+                    }
+                    fy+=(pair?name:2*name+g)+g;
+                    CGFloat gw=two?(cw-16)/2:cw;
+                    label(@"Gender",0,fy,gw);
+                    if(emit){add(KPAction::Select,CGRectMake(x,y+fy+below,(gw-8)/2,button),@"Male",0,0);add(KPAction::Select,CGRectMake(x+(gw+8)/2,y+fy+below,(gw-8)/2,button),@"Female",0,1);}
+                    if(two&&part<0)birthday(gw+16,gw);
+                    fy+=block+g;
+                }
+                if(part==0)return fy-g;
+                if(!(two&&part<0)){birthday(0,two?(cw-16)/2:cw);fy+=block+g;}
+                // Favorite and Mingle side by side when there is room.
+                BOOL pair=cw>=272;CGFloat sw=pair?(cw-12)/2:cw,toggle=dense?40:46;
+                if(emit){add(KPAction::Toggle,CGRectMake(x,y+fy,sw,toggle),@"Favorite",4);add(KPAction::Toggle,CGRectMake(pair?x+sw+12:x,pair?y+fy:y+fy+toggle+8,sw,toggle),@"Mingle",10);}
+                fy+=(pair?toggle:2*toggle+8)+g;
+                label(@"Favorite color",0,fy,cw);
+                unsigned perRow=cw>=12*36+11*6?12:cw>=6*34+5*6?6:4;CGFloat chipW=std::min(CGFloat(50),(cw-(perRow-1)*6)/perRow),chipH=std::min(CGFloat(46),std::max(CGFloat(dense?36:38),chipW));
+                for(unsigned i=0;i<12&&emit;i++)add(KPAction::Select,CGRectMake(x+(i%perRow)*(chipW+6),y+fy+labelH+6+(i/perRow)*(chipH+6),chipW,chipH),@"Favorite color",3,i);
+                return fy+labelH+6+((11+perRow)/perRow)*(chipH+6)-6;
+            };
+            // Roomy, then tighter, then dense on one page; failing that, split into Name and Details.
+            if(profile(pw,-1,NO,16,NO)<=ph)profile(pw,-1,NO,16,YES);
+            else if(profile(pw,-1,NO,10,NO)<=ph)profile(pw,-1,NO,10,YES);
+            else if(profile(pw,-1,YES,8,NO)<=ph)profile(pw,-1,YES,8,YES);
+            else{
+                self.editor.section=std::min(self.editor.section,1u);
+                CGFloat cw=strip({{KPAction::Section,{},0,0,@"Name",YES,self.editor.section==0},{KPAction::Section,{},0,1,@"Details",YES,self.editor.section==1}});
+                BOOL dense=profile(cw,int(self.editor.section),NO,10,NO)>ph;profile(cw,int(self.editor.section),dense,dense?8:10,YES);
             }
-            fy=two?100:188;
-            [form addSubview:KPLabelView(@"Gender",CGRectMake(2,fy,cw,22),14,YES,YES)];
-            add(KPAction::Select,CGRectMake(x,y+fy+26,(cw-8)/2,44),@"Male",0,0);
-            add(KPAction::Select,CGRectMake(x+(cw+8)/2,y+fy+26,(cw-8)/2,44),@"Female",0,1);
-            CGFloat bx=two?cw+16:0,by=two?fy:fy+86;
-            [form addSubview:KPLabelView(@"Birthday",CGRectMake(bx+2,by,cw,22),14,YES,YES)];
-#if TARGET_OS_OSX
-            // Month and day: Wii faces like Male/Female that open a menu of choices.
-            CGFloat mw=(cw-8)*.62;
-            add(KPAction::Birthday,CGRectMake(x+bx,y+by+26,mw,44),@"Birthday month",1);
-            add(KPAction::Birthday,CGRectMake(x+bx+mw+8,y+by+26,cw-8-mw,44),@"Birthday day",2);_items.back().enabled=appearance.Get(1)>0;
-#else
-            add(KPAction::Birthday,CGRectMake(x+bx,y+by+26,cw,44),KPBirthdayLabel(appearance));
-#endif
-            fy=by+90;
-            add(KPAction::Toggle,CGRectMake(x,y+fy,(pw-12)/2,46),@"Favorite",4);
-            add(KPAction::Toggle,CGRectMake(x+(pw+12)/2,y+fy,(pw-12)/2,46),@"Mingle",10);
-            fy+=62;
-            [form addSubview:KPLabelView(@"Favorite color",CGRectMake(2,fy,pw,22),14,YES,YES)];
-            unsigned perRow=pw>=12*40+11*6?12:6;CGFloat sw=std::min(CGFloat(50),(pw-(perRow-1)*6)/perRow);
-            for(unsigned i=0;i<12;i++)add(KPAction::Select,CGRectMake(x+(i%perRow)*(sw+6),y+fy+28+(i/perRow)*52,sw,46),@"Favorite color",3,i);
-            contentHeight=fy+28+(12/perRow)*52;
         }else if(self.editor.category==1){
+            // Height and weight rows give up space down to a compact gauge before the note does.
+            CGFloat noteH=pw<400?66:44,row=std::clamp((ph-32-noteH)/2,CGFloat(76),CGFloat(124));
             for(unsigned n=0;n<2;n++){
-                CGFloat sy=n*124+8;
+                CGFloat sy=n*row;
                 [form addSubview:KPLabelView(n?@"Weight":@"Height",CGRectMake(4,sy,pw-8,26),18,YES)];
-                KPMiiBodySlider *slider=[[KPMiiBodySlider alloc]initWithFrame:CGRectMake(0,sy+34,pw,64)];slider.editor=self.editor;slider.field=n?6:5;
+                KPMiiBodySlider *slider=[[KPMiiBodySlider alloc]initWithFrame:CGRectMake(0,sy+28,pw,std::min(CGFloat(64),row-32))];slider.editor=self.editor;slider.field=n?6:5;
 #if TARGET_OS_OSX
                 [slider setAccessibilityLabel:n?@"Weight":@"Height"];
 #else
@@ -867,41 +920,23 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
                 [form addSubview:slider];
             }
             // The game snaps height + weight to one of three body models; say which one the preview shows.
-            id build=KPLabelView(KPBuildName(appearance),CGRectMake(4,2*124+12,pw-8,24),17,YES);[form addSubview:build];self.editor.buildLabel=build;
-            id note=KPLabelView(@"Mario Kart Wii uses height and weight together to pick a small, medium or large Mii. This also sets its kart and bike size.",CGRectMake(4,2*124+40,pw-8,compact?66:44),13,NO,YES);[form addSubview:note];
-            contentHeight=2*124+40+(compact?66:44);
+            id build=KPLabelView(KPBuildName(appearance),CGRectMake(4,2*row+4,pw-8,24),17,YES);[form addSubview:build];self.editor.buildLabel=build;
+            id note=KPLabelView(@"Mario Kart Wii uses height and weight together to pick a small, medium or large Mii. This also sets its kart and bike size.",CGRectMake(4,2*row+32,pw-8,noteH),13,NO,YES);[form addSubview:note];
         }else{
             auto ids=kartpad::mii::FeatureIds(self.editor.feature);unsigned pages=unsigned((ids.size()+11)/12);self.editor.page=std::min(self.editor.page,std::max(1u,pages)-1);
-            CGFloat side=compact?138:std::min(CGFloat(164),pw*.36),gap2=compact?8:14;
-            // The pager only appears when a feature has more than one page.
-            CGFloat pager=pages>1?52:0,tileGap=compact?7:10;
-            CGFloat gridW=pw-side-gap2,gridH=_panelRect.size.height-24-pager;
-            CGFloat tileW=(gridW-2*tileGap)/3,tileH=std::max(CGFloat(44),std::min(tileW,(gridH-3*tileGap)/4));
-            if(pages>1){
-                add(KPAction::Page,CGRectMake(x,y,44,44),@"Previous page",0,-1);_items.back().enabled=self.editor.page>0;
-                add(KPAction::Page,CGRectMake(x+gridW-44,y,44,44),@"Next page",0,1);_items.back().enabled=self.editor.page+1<pages;
-                id label=KPLabelView([NSString stringWithFormat:gridW-104<110?@"%u / %u":@"Page %u of %u",self.editor.page+1,pages],CGRectMake(52,11,gridW-104,22),14,YES,YES);
-#if TARGET_OS_OSX
-                [label setAlignment:NSTextAlignmentCenter];
-#else
-                [label setTextAlignment:NSTextAlignmentCenter];
-#endif
-                [form addSubview:label];
-            }
-            for(unsigned i=0;i<12&&self.editor.page*12+i<ids.size();i++){unsigned value=ids[self.editor.page*12+i];add(KPAction::Select,CGRectMake(x+(i%3)*(tileW+tileGap),y+pager+(i/3)*(tileH+tileGap),tileW,tileH),@"Feature",self.editor.feature,value);}
-            CGFloat sx=x+gridW+gap2,sy=y;
-            unsigned colorField=self.editor.category==2?8:self.editor.category==3?12:self.editor.category==4?22:self.editor.category==5?17:self.editor.category==7?30:self.editor.category==8?39:self.editor.category==9?34:99;
-            if(colorField!=99){unsigned count=kartpad::mii::AppearanceFields[colorField].maximum+1;CGFloat sw=(side-12)/3,shH=std::min(CGFloat(46),sw);for(unsigned i=0;i<count;i++)add(KPAction::Select,CGRectMake(sx+(i%3)*(sw+6),sy+(i/3)*(shH+6),sw,shH),@"Color",colorField,i);sy+=((count+2)/3)*(shH+6)+10;}
-            // Two-part switches name both pages and highlight the one showing.
-            auto modes=[&](unsigned first,NSString *firstLabel,unsigned second,NSString *secondLabel){CGFloat half=(side-4)/2;add(KPAction::Mode,CGRectMake(sx,sy,half,44),firstLabel,first,0,self.editor.feature==first);add(KPAction::Mode,CGRectMake(sx+half+4,sy,half,44),secondLabel,second,0,self.editor.feature==second);sy+=54;};
-            if(self.editor.category==2)modes(7,@"Shape",9,@"Details");
-            if(self.editor.category==3){add(KPAction::Toggle,CGRectMake(sx,sy,side,46),@"Flip hair",13);sy+=56;}
-            if(self.editor.category==8){modes(37,@"Mustache",38,@"Beard");add(KPAction::Toggle,CGRectMake(sx,sy,side,46),@"Mole",42);sy+=56;}
+            unsigned category=unsigned(self.editor.category);
+            unsigned colorField=category==2?8:category==3?12:category==4?22:category==5?17:category==7?30:category==8?39:category==9?34:99;
+            unsigned colors=colorField!=99?kartpad::mii::AppearanceFields[colorField].maximum+1:0;
+            // Two-part switches name both grids and highlight the one showing.
+            std::vector<std::pair<unsigned,NSString*>> modes;
+            if(category==2)modes={{7,@"Shape"},{9,@"Details"}};
+            if(category==8)modes={{37,@"Mustache"},{38,@"Beard"}};
+            unsigned toggleField=category==3?13:category==8?42:0;NSString *toggleLabel=category==3?@"Flip hair":@"Mole";
             // Each adjustment names its section and spells out both directions for VoiceOver and tooltips.
             struct KPAdjustment{unsigned field;NSString *title,*less,*more;};
             NSString *up=@"Move up",*down=@"Move down",*smaller=@"Smaller",*larger=@"Larger";
             std::vector<KPAdjustment> adjustments;
-            switch(self.editor.category){
+            switch(category){
             case 4:adjustments={{24,@"Position",up,down},{23,@"Size",smaller,larger},{21,@"Tilt",@"Tilt outer ends down",@"Tilt outer ends up"},{25,@"Spacing",@"Closer together",@"Farther apart"}};break;
             case 5:adjustments={{16,@"Position",up,down},{18,@"Size",smaller,larger},{15,@"Tilt",@"Tilt outer ends down",@"Tilt outer ends up"},{19,@"Spacing",@"Closer together",@"Farther apart"}};break;
             case 6:adjustments={{28,@"Position",up,down},{27,@"Size",smaller,larger}};break;
@@ -909,19 +944,78 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
             case 8:adjustments=appearance.Get(42)?std::vector<KPAdjustment>{{44,@"Mole position",up,down},{43,@"Mole size",smaller,larger},{45,@"Mole sideways",@"Move left",@"Move right"}}:std::vector<KPAdjustment>{{41,@"Position",up,down},{40,@"Size",smaller,larger}};break;
             case 9:adjustments={{36,@"Position",up,down},{35,@"Size",smaller,larger}};break;
             }
-            // Title, where the value sits in its range, then the two directions.
-            for(const auto &adjustment:adjustments){
-                [form addSubview:KPLabelView(adjustment.title,CGRectMake(sx-x+2,sy-y,side,18),12,YES,YES)];
-                KPMiiRangeMeter *meter=[[KPMiiRangeMeter alloc]initWithFrame:CGRectMake(sx-x+2,sy-y+20,side-4,12)];meter.editor=self.editor;meter.field=adjustment.field;[form addSubview:meter];[self.editor.meters addObject:meter];
-                add(KPAction::Adjust,CGRectMake(sx,sy+36,(side-6)/2,44),adjustment.less,adjustment.field,-1);add(KPAction::Adjust,CGRectMake(sx+(side+6)/2,sy+36,(side-6)/2,44),adjustment.more,adjustment.field,1);sy+=88;}
-            contentHeight=std::max(pager+4*(tileH+tileGap),sy-y+4);
-        }
-        contentHeight=std::max(contentHeight+4,frame.size.height);
+            CGFloat pager=pages>1?52:0,tileGap=compact?7:10,gap2=compact?8:14;
+            // The style grid: three across, four down, with the pager above it only when there is more than one page.
+            auto grid=[&](CGFloat gw){
+                CGFloat tileW=(gw-2*tileGap)/3,tileH=std::max(CGFloat(40),std::min(tileW,(ph-pager-3*tileGap)/4));
+                if(pages>1){
+                    add(KPAction::Page,CGRectMake(x,y,44,44),@"Previous page",0,-1);_items.back().enabled=self.editor.page>0;
+                    add(KPAction::Page,CGRectMake(x+gw-44,y,44,44),@"Next page",0,1);_items.back().enabled=self.editor.page+1<pages;
+                    id label=KPLabelView([NSString stringWithFormat:gw-104<110?@"%u / %u":@"Page %u of %u",self.editor.page+1,pages],CGRectMake(52,11,gw-104,22),14,YES,YES);
 #if TARGET_OS_OSX
-        [(NSView*)form setFrameSize:NSMakeSize(frame.size.width,contentHeight)];
+                    [label setAlignment:NSTextAlignmentCenter];
 #else
-        ((UIScrollView*)form).contentSize=CGSizeMake(frame.size.width,contentHeight);
+                    [label setTextAlignment:NSTextAlignmentCenter];
 #endif
+                    [form addSubview:label];
+                }
+                for(unsigned i=0;i<12&&self.editor.page*12+i<ids.size();i++){unsigned value=ids[self.editor.page*12+i];add(KPAction::Select,CGRectMake(x+(i%3)*(tileW+tileGap),y+pager+(i/3)*(tileH+tileGap),tileW,tileH),@"Feature",self.editor.feature,value);}
+            };
+            // Color chips perRow across, at most chipMax tall.
+            auto chips=[&](CGFloat sx,CGFloat sy,CGFloat cw,unsigned perRow,CGFloat chipMax,BOOL emit)->CGFloat{
+                CGFloat chipW=std::min(chipMax*1.25,(cw-(perRow-1)*6)/perRow),chipH=std::min(chipMax,chipW);
+                for(unsigned i=0;i<colors&&emit;i++)add(KPAction::Select,CGRectMake(sx+(i%perRow)*(chipW+6),sy+(i/perRow)*(chipH+6),chipW,chipH),@"Color",colorField,i);
+                return ((colors+perRow-1)/perRow)*(chipH+6)-6;};
+            // A column wide enough for the longest title puts each adjustment on one row (less, title over
+            // meter, more); a narrower one stacks the title and meter above the two buttons.
+            CGFloat oneRow=176;
+            for(const auto &adjustment:adjustments){CGFloat size=TARGET_OS_OSX?12:14;oneRow=std::max(oneRow,std::ceil([adjustment.title sizeWithAttributes:@{NSFontAttributeName:[KPMiiFont systemFontOfSize:size weight:NSFontWeightSemibold]}].width)+108);}
+            auto adjust=[&](CGFloat sx,CGFloat sy,CGFloat cw,BOOL emit)->CGFloat{
+                BOOL inline_=cw>=oneRow;CGFloat sy0=sy;
+                for(const auto &adjustment:adjustments){
+                    CGFloat lx=inline_?sx+52:sx+2,lw=inline_?cw-104:cw-4,ly=inline_?sy+3:sy;
+                    if(emit){
+                        [form addSubview:KPLabelView(adjustment.title,CGRectMake(lx-x,ly-y,lw,18),12,YES,YES)];
+                        KPMiiRangeMeter *meter=[[KPMiiRangeMeter alloc]initWithFrame:CGRectMake(lx-x,ly-y+(inline_?22:20),lw,12)];meter.editor=self.editor;meter.field=adjustment.field;[form addSubview:meter];[self.editor.meters addObject:meter];
+                        if(inline_){add(KPAction::Adjust,CGRectMake(sx,sy,44,44),adjustment.less,adjustment.field,-1);add(KPAction::Adjust,CGRectMake(sx+cw-44,sy,44,44),adjustment.more,adjustment.field,1);}
+                        else{add(KPAction::Adjust,CGRectMake(sx,sy+36,(cw-6)/2,44),adjustment.less,adjustment.field,-1);add(KPAction::Adjust,CGRectMake(sx+(cw+6)/2,sy+36,(cw-6)/2,44),adjustment.more,adjustment.field,1);}
+                    }
+                    sy+=inline_?52:88;}
+                return std::max(CGFloat(0),sy-sy0-8);};
+            auto modeSwitch=[&](CGFloat sx,CGFloat sy,CGFloat cw){CGFloat half=(cw-4)/2;for(size_t i=0;i<modes.size();i++)add(KPAction::Mode,CGRectMake(sx+i*(half+4),sy,half,44),modes[i].second,modes[i].first,0,self.editor.feature==modes[i].first);};
+            // Everything on one page: the grid, then a column of colors, switches and adjustments.
+            CGFloat side=compact?138:std::min(CGFloat(164),pw*.36);
+            if(!adjustments.empty()&&side<oneRow&&(pw-oneRow-gap2-2*tileGap)/3>=56)side=oneRow;
+            auto column=[&](BOOL emit)->CGFloat{
+                CGFloat sx=x+pw-side,sy=y;
+                if(colors){sy+=chips(sx,sy,side,3,46,emit)+10;}
+                if(!modes.empty()){if(emit)modeSwitch(sx,sy,side);sy+=54;}
+                if(toggleField){if(emit)add(KPAction::Toggle,CGRectMake(sx,sy,side,46),toggleLabel,toggleField);sy+=56;}
+                sy+=adjust(sx,sy,side,emit);
+                return sy-y;};
+            CGFloat gridW=pw-side-gap2,tileW=(gridW-2*tileGap)/3,tileH=std::min(tileW,(ph-pager-3*tileGap)/4);
+            if(column(NO)<=ph&&tileH>=44){grid(gridW);column(YES);}
+            else{
+                // Split: the grid (one tab per switch position), the colors, then the switch and adjustments.
+                std::vector<KPItem> tabs;
+                for(const auto &mode:modes)tabs.push_back({KPAction::Mode,{},mode.first,0,mode.second,YES,self.editor.section==0&&self.editor.feature==mode.first});
+                if(modes.empty())tabs.push_back({KPAction::Section,{},0,0,@"Style",YES,self.editor.section==0});
+                if(colors)tabs.push_back({KPAction::Section,{},0,1,@"Color",YES,self.editor.section==1});
+                if(toggleField||!adjustments.empty())tabs.push_back({KPAction::Section,{},0,2,@"Adjust",YES,self.editor.section==2});
+                if(std::none_of(tabs.begin(),tabs.end(),[&](const KPItem &tab){return tab.action==KPAction::Mode?self.editor.section==0:tab.value==int(self.editor.section);})){self.editor.section=0;for(auto &tab:tabs)tab.selected=tab.action==KPAction::Mode?self.editor.feature==tab.field:tab.value==0;}
+                CGFloat cw=strip(tabs);
+                if(self.editor.section==0)grid(cw);
+                else if(self.editor.section==1){
+                    // As few rows as fit, with chips no larger than 64 points.
+                    unsigned perRow=3;while(perRow<colors&&chips(x,y,cw,perRow,64,NO)>ph)perRow++;
+                    chips(x,y,cw,perRow,64,YES);
+                }else{
+                    CGFloat sy=y;
+                    if(toggleField){add(KPAction::Toggle,CGRectMake(x,sy,std::min(cw,CGFloat(240)),46),toggleLabel,toggleField);sy+=56;}
+                    adjust(x,sy,std::min(cw,std::max(oneRow,CGFloat(360))),YES);
+                }
+            }
+        }
     }
     for(NSUInteger i=0;i<_items.size();i++){
         auto &item=_items[i];KPMiiWiiButton *button=[[KPMiiWiiButton alloc]initWithFrame:item.rect];button.canvas=self;button.index=i;button.look=NSUIntegerMax;
@@ -953,14 +1047,16 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
         KPText(picking?@"Choose a look-alike":@"Create a Mii",CGRectMake(_nameRect.origin.x,_nameRect.origin.y,_nameRect.size.width,38),28,KPP->text,YES);
         KPText(note,CGRectMake(_nameRect.origin.x,_nameRect.origin.y+40,_nameRect.size.width,24),16,KPP->secondaryText);
         return;}
-    KPText([NSString stringWithUTF8String:kartpad::mii::EditorCategories[self.editor.category]],CGRectMake(compact?12:24,13,w-200,28),21,KPP->text,YES,NSTextAlignmentLeft);
+    // Short screens show the category only as the selected tab.
+    if(!_shortHeader)KPText([NSString stringWithUTF8String:kartpad::mii::EditorCategories[self.editor.category]],CGRectMake(compact?12:24,13,w-200,28),21,KPP->text,YES,NSTextAlignmentLeft);
     for(CGRect card:{_previewRect,_panelRect}){KPFill(c,CGRectOffset(card,0,2),0x000000,18,KPP->shadow*.6);KPFill(c,card,KPP->panel,18);KPStroke(c,card,KPP->panelStroke,1,18);}
     CGRect well=CGRectInset(self.editor.preview.frame,-4,-4);KPFill(c,well,KPP->well,13);
     KPCenteredText(KPMiiName(self.editor.draft,2),_nameRect,_nameRect.size.height<46?16:18,KPP->text,YES,NSTextAlignmentLeft);
     NSString *message=self.editor.validationMessage.length?self.editor.validationMessage:self.editor.previewMessage;
     unsigned tone=self.editor.validationMessage.length?0xd64545:KPP->secondaryText;
     CGFloat margin=compact?12:24;
-    if(message.length){if(compact)KPText(message,CGRectMake(margin,_footerY-24,w-2*margin,18),11,tone,NO,NSTextAlignmentLeft);else KPCenteredText(message,CGRectMake(margin,_footerY,w-2*margin-310,44),12,tone,NO,NSTextAlignmentLeft);}
+    // Beside Save and Cancel when stacked; otherwise under the preview, above them.
+    if(message.length){if(_stacked)KPText(message,CGRectMake(margin,_footerY+4,_statusWidth,36),11,tone,NO,NSTextAlignmentLeft);else KPText(message,CGRectMake(margin+4,_footerY-25,_previewRect.size.width-8,18),compact?11:12,tone,NO,NSTextAlignmentLeft);}
 }
 - (void)drawItem:(NSUInteger)i context:(CGContextRef)c pressed:(BOOL)pressed{
     if(i>=_items.size())return;KPUsePalette(self);const auto &item=_items[i];auto a=kartpad::mii::Appearance::Decode(Bytes(self.editor.draft));
@@ -1036,7 +1132,7 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
             CGContextMoveToPoint(c,cx-6,cy-3);CGContextAddLineToPoint(c,cx,cy+3);CGContextAddLineToPoint(c,cx+6,cy-3);CGContextStrokePath(c);
         }
         break;
-    case KPAction::Mode:KPCenteredText(item.label,face,face.size.width<80?13:14,selected?KPP->accentStroke:KPP->text,YES);break;
+    case KPAction::Mode:case KPAction::Section:KPCenteredText(item.label,face,face.size.width<80?13:14,selected?KPP->accentStroke:KPP->text,YES);break;
     default:KPCenteredText(item.label,face,style==KPStyle::Primary?16:15,style==KPStyle::Primary?0xffffff:KPP->text,YES);break;
     }
     CGContextRestoreGState(c);
@@ -1080,7 +1176,7 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
 }
 - (void)categoryChangedTo:(unsigned)category{
     if(![self commitNames])return;
-    self.category=category;self.feature=kartpad::mii::PrimaryFeatures[category];
+    self.category=category;self.feature=kartpad::mii::PrimaryFeatures[category];self.section=0;
     auto a=kartpad::mii::Appearance::Decode(Bytes(self.draft));self.page=kartpad::mii::FeaturePage(self.feature,a.Get(self.feature));
     self.preview.fullBody=category<=1;if(category>=2)[self.preview faceFront];[self rebuild];[self refreshPreview];
 }
@@ -1114,7 +1210,8 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
     switch(item.action){
     case KPAction::Category:if(![self commitNames])return;KPPlay(item.field==unsigned(self.category)?KPSound::Same:KPSound::Tab);[self categoryChangedTo:item.field];return;
     case KPAction::Page:KPPlay(item.value>0?KPSound::PageNext:KPSound::PagePrevious);self.page+=item.value;[self rebuild];[self refreshPreview];return;
-    case KPAction::Mode:KPPlay(item.field==self.feature?KPSound::Same:KPSound::Tab);self.feature=item.field;self.page=kartpad::mii::FeaturePage(item.field,a.Get(item.field));[self rebuild];[self refreshPreview];return;
+    case KPAction::Section:if(![self commitNames])return;KPPlay(unsigned(item.value)==self.section?KPSound::Same:KPSound::Tab);self.section=unsigned(item.value);[self rebuild];return;
+    case KPAction::Mode:KPPlay(item.field==self.feature&&!self.section?KPSound::Same:KPSound::Tab);self.feature=item.field;self.section=0;self.page=kartpad::mii::FeaturePage(item.field,a.Get(item.field));[self rebuild];[self refreshPreview];return;
     case KPAction::Gender:KPPlay(self.gender==unsigned(item.value)?KPSound::Same:KPSound::Confirm);self.gender=item.value;[self makeLookAlikes];[self rebuild];return;
     case KPAction::Start:if(item.value){KPPlay(KPSound::Press);self.pickingLookAlike=YES;[self rebuild];return;}[self begin:[self scratch]];return;
     case KPAction::LookAlike:if(NSUInteger(item.value)<self.lookAlikes.count)[self begin:self.lookAlikes[item.value]];return;
@@ -1130,7 +1227,7 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
     case KPAction::Toggle:a.Set(item.field,!a.Get(item.field));KPPlay(KPToggleOn(item,a)?KPSound::Confirm:KPSound::Same);[self applyAppearance:a];if(item.field==42)[self rebuild];return;
     case KPAction::Rotate:KPPlay(item.value<0?KPSound::Left:KPSound::Right);[self.preview noteInteraction];self.preview.yaw+=item.value*.35f;return;
     case KPAction::Front:KPPlay(KPSound::Tab);[self.preview noteInteraction];self.preview.yaw=0;return;
-    case KPAction::Sound:{KPMiiSounds *sounds=[KPMiiSounds shared];sounds.enabled=!sounds.enabled;if(sounds.enabled)KPPlay(KPSound::Confirm);return;}
+    case KPAction::Sound:[self toggleSound];return;
     case KPAction::Undo:if(![self commitNames])return;if(!_history.CanUndo()){KPPlay(KPSound::Same);return;}KPPlay(KPSound::PagePrevious);a=kartpad::mii::Appearance::Decode(Bytes(self.draft));self.draft=[NSMutableData dataWithBytes:_history.Undo(a).bytes.data() length:74];[self historyChanged];return;
     case KPAction::Redo:if(![self commitNames])return;if(!_history.CanRedo()){KPPlay(KPSound::Same);return;}KPPlay(KPSound::PageNext);a=kartpad::mii::Appearance::Decode(Bytes(self.draft));self.draft=[NSMutableData dataWithBytes:_history.Redo(a).bytes.data() length:74];[self historyChanged];return;
     case KPAction::Quit:[self quit];return;
@@ -1295,6 +1392,7 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
     UIActivityViewController *share=[[UIActivityViewController alloc]initWithActivityItems:@[url] applicationActivities:nil];share.popoverPresentationController.sourceView=self.canvas;share.popoverPresentationController.sourceRect=CGRectMake(self.canvas.bounds.size.width-52,7,40,28);share.completionWithItemsHandler=^(UIActivityType type,BOOL complete,NSArray *items,NSError *e){if(complete)KPPlay(KPSound::Saved);[NSFileManager.defaultManager removeItemAtPath:directory error:nil];};[self presentViewController:share animated:YES completion:nil];
 #endif
 }
+- (void)toggleSound{KPMiiSounds *sounds=[KPMiiSounds shared];sounds.enabled=!sounds.enabled;if(sounds.enabled)KPPlay(KPSound::Confirm);}
 - (void)toggleAnimation{BOOL on=!KPMiiPreviewAnimation();KPPlay(on?KPSound::Confirm:KPSound::Same);[NSUserDefaults.standardUserDefaults setBool:on forKey:KPMiiPreviewAnimationKey];self.preview.animated=on;}
 // A new Mii can go back to the create screen to pick another way to start (asking first if edited).
 - (void)startOver{
@@ -1317,9 +1415,12 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
 #if TARGET_OS_OSX
     NSMenu *menu=[NSMenu new];menu.autoenablesItems=NO;NSMutableArray *titles=[NSMutableArray arrayWithObjects:@"Export…",@"Reset Changes…",nil];if(self.blank)[titles addObject:@"Start Over…"];
     for(NSString *title in titles){NSMenuItem *item=[[NSMenuItem alloc]initWithTitle:title action:[title hasPrefix:@"Export"]?@selector(exportMii):[title hasPrefix:@"Reset"]?@selector(reset):@selector(startOver) keyEquivalent:@""];item.target=self;item.enabled=![title hasPrefix:@"Reset"]||[self edited];[menu addItem:item];}
-    [menu addItem:NSMenuItem.separatorItem];NSMenuItem *animate=[[NSMenuItem alloc]initWithTitle:@"Animate Preview" action:@selector(toggleAnimation) keyEquivalent:@""];animate.target=self;animate.state=KPMiiPreviewAnimation()?NSControlStateValueOn:NSControlStateValueOff;[menu addItem:animate];[menu popUpMenuPositioningItem:nil atLocation:CGPointMake(self.canvas.bounds.size.width-100,38) inView:self.canvas];
+    [menu addItem:NSMenuItem.separatorItem];NSMenuItem *animate=[[NSMenuItem alloc]initWithTitle:@"Animate Preview" action:@selector(toggleAnimation) keyEquivalent:@""];animate.target=self;animate.state=KPMiiPreviewAnimation()?NSControlStateValueOn:NSControlStateValueOff;[menu addItem:animate];
+    // Short screens have no room for the Sound effects switch, so it lives here.
+    if(self.canvas->_shortHeader){NSMenuItem *sound=[[NSMenuItem alloc]initWithTitle:@"Sound Effects" action:@selector(toggleSound) keyEquivalent:@""];sound.target=self;sound.state=[KPMiiSounds shared].enabled?NSControlStateValueOn:NSControlStateValueOff;[menu addItem:sound];}
+    [menu popUpMenuPositioningItem:nil atLocation:CGPointMake(self.canvas.bounds.size.width-100,38) inView:self.canvas];
 #else
-    UIAlertController *menu=[UIAlertController alertControllerWithTitle:nil message:nil preferredStyle:UIAlertControllerStyleActionSheet];[menu addAction:[UIAlertAction actionWithTitle:@"Export…" style:UIAlertActionStyleDefault handler:^(UIAlertAction*action){[self exportMii];}]];UIAlertAction *reset=[UIAlertAction actionWithTitle:@"Reset Changes…" style:UIAlertActionStyleDestructive handler:^(UIAlertAction*action){[self reset];}];reset.enabled=[self edited];[menu addAction:reset];if(self.blank)[menu addAction:[UIAlertAction actionWithTitle:@"Start Over…" style:UIAlertActionStyleDestructive handler:^(UIAlertAction*action){[self startOver];}]];[menu addAction:[UIAlertAction actionWithTitle:KPMiiPreviewAnimation()?@"Stop Preview Animation":@"Animate Preview" style:UIAlertActionStyleDefault handler:^(UIAlertAction*action){[self toggleAnimation];}]];[menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];menu.popoverPresentationController.sourceView=self.canvas;menu.popoverPresentationController.sourceRect=CGRectMake(self.canvas.bounds.size.width-52,7,40,28);[self presentViewController:menu animated:YES completion:nil];
+    UIAlertController *menu=[UIAlertController alertControllerWithTitle:nil message:nil preferredStyle:UIAlertControllerStyleActionSheet];[menu addAction:[UIAlertAction actionWithTitle:@"Export…" style:UIAlertActionStyleDefault handler:^(UIAlertAction*action){[self exportMii];}]];UIAlertAction *reset=[UIAlertAction actionWithTitle:@"Reset Changes…" style:UIAlertActionStyleDestructive handler:^(UIAlertAction*action){[self reset];}];reset.enabled=[self edited];[menu addAction:reset];if(self.blank)[menu addAction:[UIAlertAction actionWithTitle:@"Start Over…" style:UIAlertActionStyleDestructive handler:^(UIAlertAction*action){[self startOver];}]];[menu addAction:[UIAlertAction actionWithTitle:KPMiiPreviewAnimation()?@"Stop Preview Animation":@"Animate Preview" style:UIAlertActionStyleDefault handler:^(UIAlertAction*action){[self toggleAnimation];}]];if(self.canvas->_shortHeader)[menu addAction:[UIAlertAction actionWithTitle:[KPMiiSounds shared].enabled?@"Turn Off Sound Effects":@"Turn On Sound Effects" style:UIAlertActionStyleDefault handler:^(UIAlertAction*action){[self toggleSound];}]];[menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];menu.popoverPresentationController.sourceView=self.canvas;menu.popoverPresentationController.sourceRect=CGRectMake(self.canvas.bounds.size.width-52,7,40,28);[self presentViewController:menu animated:YES completion:nil];
 #endif
 }
 - (NSString*)saveQuestion{NSString *name=KPMiiName(self.draft,2);return name.length?[NSString stringWithFormat:@"Save Changes to “%@”?",name]:@"Save Changes to This Mii?";}

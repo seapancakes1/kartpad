@@ -2,7 +2,7 @@
 #include "portrait.h"
 #include "body.h"
 namespace kartpad::mii {
-struct ScenePart { Mesh mesh; Color color; Image texture; bool unlit=false; bool translucent=false; bool doubleSided=false; bool bodyPart=false; Image lightMap, highlightMap; };
+struct ScenePart { Mesh mesh; Color color; Image texture; bool unlit=false; bool translucent=false; bool doubleSided=false; bool bodyPart=false; float alphaThreshold=0; Image lightMap, highlightMap; };
 // What the animated preview needs to re-pose the body each frame, in head units like the parts.
 struct PreviewRig {
     std::vector<BodyJoint> joints; std::vector<BodyPose> idle; BodyMatrix standFace, idleFace; unsigned face=0;
@@ -51,7 +51,7 @@ struct PreviewScene {
             for(const auto&part:model.parts){s.rig.parts.push_back(s.parts.size());s.rig.local.push_back(part.local);s.rig.joint.push_back(part.joint);
                 Mesh mesh=part.mesh;
                 for(auto&v:mesh.triangles){v.x*=inverse;v.y=(v.y-model.neckY-model.headAttachment[1])*inverse;v.z=(v.z-model.neckZ-model.headAttachment[2])*inverse;s.bottom=std::min(s.bottom,v.y);}
-                s.Add(mesh,part.favoriteColor?shirt:Color{255,255,255},1,0,0,0,false,part.texture.width?&part.texture:nullptr);s.parts.back().bodyPart=true;s.parts.back().lightMap=part.lightMap;s.parts.back().highlightMap=part.highlightMap;
+                s.Add(mesh,part.favoriteColor?shirt:Color{255,255,255},1,0,0,0,false,part.texture.width?&part.texture:nullptr);s.parts.back().bodyPart=true;s.parts.back().lightMap=part.lightMap;s.parts.back().highlightMap=part.highlightMap;s.parts.back().alphaThreshold=part.alphaThreshold;
             }
         }
         const auto&face=r.Shape(3,g(7));

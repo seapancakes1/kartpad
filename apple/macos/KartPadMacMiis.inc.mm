@@ -1,7 +1,7 @@
 // The Miis window: one place on Mac to create, edit, duplicate, import, export and remove Miis, and
 // to rename, relink and delete licenses. The screen itself is shared with iPhone and iPad
-// (KartPadMiiBrowser.inc.mm); this file keeps it above the game. The Player menu and Settings open
-// it, and the Mii editor opens above it.
+// (KartPadMiiBrowser.inc.mm); this file keeps it above the game. Player → Miis… and Settings open
+// it, the Mii editor opens above it, and closing it returns the keyboard to the game.
 
 static NSWindow *KPGameWindow() {
   // The SDL game window has no window controller; the Mii editor has one.
@@ -37,9 +37,6 @@ static void KPCenterOnGameScreen(NSWindow *window) {
 @property(nonatomic, strong) NSPanel *panel;
 @property(nonatomic, strong) NSViewController<KartPadMiiBrowser> *browser;
 - (void)show;
-- (void)createMii:(id)sender;
-- (void)editSlot:(NSUInteger)slot;
-- (void)importMii:(id)sender;
 @end
 
 @implementation KPMiisWindow
@@ -64,7 +61,24 @@ static void KPCenterOnGameScreen(NSWindow *window) {
   self.browser.restart = ^{ [NSApp sendAction:@selector(restartKartPad:) to:weakSelf.owner from:nil]; };
 }
 
+// When the last Mii window (this one or the editor) closes, the keyboard goes back to the game.
++ (void)returnFocusToGameAfterClosing {
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    [NSNotificationCenter.defaultCenter addObserverForName:NSWindowWillCloseNotification object:nil queue:nil
+        usingBlock:^(NSNotification *note) {
+      if (!KartPadMiiWindowsVisible()) return;
+      NSWindow *closing = note.object;
+      dispatch_async(dispatch_get_main_queue(), ^{
+        if (KartPadMiiWindowsVisible() || !NSApp.active || closing.visible) return;
+        [KPGameWindow() makeKeyAndOrderFront:nil];
+      });
+    }];
+  });
+}
+
 - (void)show {
+  [KPMiisWindow returnFocusToGameAfterClosing];
   if (self.panel == nil) {
     [self build];
     KPCenterOnGameScreen(self.panel);
@@ -87,18 +101,117 @@ static void KPCenterOnGameScreen(NSWindow *window) {
   [self.browser willClose];
 }
 
-- (void)createMii:(id)sender {
-  (void)sender;
-  [self.browser createMii];
-}
-
-- (void)editSlot:(NSUInteger)slot {
-  [self.browser editSlot:slot];
-}
-
-- (void)importMii:(id)sender {
-  (void)sender;
-  [self.browser importMii];
-}
-
 @end
+
+// Controllers on the Miis window and the Mii editor (KartPadMiiGamepad.inc.mm decides what each
+// press does). While either is open the game ignores the pads, and it keeps ignoring them until
+// they are let go, so the B that closes the window doesn't also go back in the game. A timer reads
+// them, since the game loop (and its pad updates) stops while an alert or menu runs its own loop.
+static NSTimer *KPMiiPadTimer;
+// When the game loop last ran; after that stops, the reader updates the pads itself.
+static NSTimeInterval KPGameLoopTime;
+static uint32_t KPMiiPadHeld;
+static bool KPMiiPadOwned;
+static NSTimeInterval KPMiiPadRepeatAt;
+static constexpr uint32_t KPMiiPadDirections =
+    1u << KartPadMiiPadUp | 1u << KartPadMiiPadDown | 1u << KartPadMiiPadLeft | 1u << KartPadMiiPadRight;
+
+static bool KPMiiPadOwnsInput() { return KPMiiPadOwned || KartPadMiiWindowsVisible(); }
+
+// Every connected pad counts. The bottom and right face buttons are the game's confirm and back.
+static uint32_t KPMiiPadRead(bool *anyHeld) {
+  uint32_t held = 0;
+  *anyHeld = false;
+  for (unsigned i = 0; i < PADCount(); ++i) {
+    SDL_Gamepad *pad = PADGetSDLGamepadForIndex(i);
+    if (pad == nullptr) continue;
+    auto down = [&](SDL_GamepadButton button) { return SDL_GetGamepadButton(pad, button); };
+    auto set = [&](KartPadMiiPadButton button, bool on) { if (on) held |= 1u << button; };
+    for (int button = 0; button < SDL_GAMEPAD_BUTTON_COUNT; ++button)
+      *anyHeld |= down((SDL_GamepadButton)button);
+    // The stick moves along its stronger axis once past half way.
+    const int x = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTX);
+    const int y = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTY);
+    const bool horizontal = std::abs(x) >= std::abs(y), tilted = std::max(std::abs(x), std::abs(y)) > 16000;
+    *anyHeld |= tilted;
+    set(KartPadMiiPadUp, down(SDL_GAMEPAD_BUTTON_DPAD_UP) || (tilted && !horizontal && y < 0));
+    set(KartPadMiiPadDown, down(SDL_GAMEPAD_BUTTON_DPAD_DOWN) || (tilted && !horizontal && y > 0));
+    set(KartPadMiiPadLeft, down(SDL_GAMEPAD_BUTTON_DPAD_LEFT) || (tilted && horizontal && x < 0));
+    set(KartPadMiiPadRight, down(SDL_GAMEPAD_BUTTON_DPAD_RIGHT) || (tilted && horizontal && x > 0));
+    set(KartPadMiiPadConfirm, down(SDL_GAMEPAD_BUTTON_SOUTH));
+    set(KartPadMiiPadBack, down(SDL_GAMEPAD_BUTTON_EAST));
+    set(KartPadMiiPadUndo, down(SDL_GAMEPAD_BUTTON_WEST));
+    set(KartPadMiiPadRedo, down(SDL_GAMEPAD_BUTTON_NORTH));
+    set(KartPadMiiPadPreviousTab, down(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER));
+    set(KartPadMiiPadNextTab, down(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER));
+    set(KartPadMiiPadStart, down(SDL_GAMEPAD_BUTTON_START));
+  }
+  return held;
+}
+
+// Each press runs from its own turn of the run loop, so one that opens an alert or menu (which
+// runs a loop of its own) leaves the reader free to drive it.
+static void KPMiiPadSend(KartPadMiiPadButton button, BOOL down) {
+  NSTimer *timer = [NSTimer timerWithTimeInterval:0 repeats:NO block:^(NSTimer *t) {
+    (void)t;
+    @autoreleasepool { KartPadMiiPadPress(button, down); }
+  }];
+  [NSRunLoop.mainRunLoop addTimer:timer forMode:NSRunLoopCommonModes];
+}
+
+static void KPMiiPadPoll() {
+  const NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
+  if (now - KPGameLoopTime > 0.1) SDL_UpdateGamepads();
+  const bool visible = KartPadMiiWindowsVisible();
+  bool anyHeld = false;
+  const uint32_t held = KPMiiPadRead(&anyHeld);
+  // Buttons already down when a window opens aren't presses for it, and don't repeat.
+  const bool listening = KPMiiPadOwned && visible;
+  if (visible && !KPMiiPadOwned) KPMiiPadRepeatAt = DBL_MAX;
+  const uint32_t pressed = listening ? held & ~KPMiiPadHeld : 0;
+  const uint32_t released = listening ? KPMiiPadHeld & ~held : 0;
+  uint32_t fire = pressed;
+  // Directions repeat while held, after a pause.
+  if (pressed & KPMiiPadDirections) {
+    KPMiiPadRepeatAt = now + 0.4;
+  } else if (listening && (held & KPMiiPadDirections) && now >= KPMiiPadRepeatAt) {
+    fire |= held & KPMiiPadDirections;
+    KPMiiPadRepeatAt = now + 0.11;
+  }
+  KPMiiPadHeld = held;
+  if (visible) {
+    KPMiiPadOwned = true;
+  } else if (!anyHeld) {
+    KPMiiPadOwned = false;
+    [KPMiiPadTimer invalidate];
+    KPMiiPadTimer = nil;
+    return;
+  }
+  for (int button = 0; button < KartPadMiiPadButtonCount; ++button) {
+    if (fire & (1u << button)) KPMiiPadSend((KartPadMiiPadButton)button, YES);
+    if (button == KartPadMiiPadConfirm && (released & (1u << button))) KPMiiPadSend(KartPadMiiPadConfirm, NO);
+  }
+}
+
+// From the game loop: start reading once a Mii window is open.
+static void KPMiiPadTick() {
+  if (KPMiiPadTimer != nil || !KartPadMiiWindowsVisible()) return;
+  KPMiiPadOwned = false;
+  KPMiiPadTimer = [NSTimer timerWithTimeInterval:1.0 / 60 repeats:YES block:^(NSTimer *t) {
+    (void)t;
+    @autoreleasepool { KPMiiPadPoll(); }
+  }];
+  [NSRunLoop.mainRunLoop addTimer:KPMiiPadTimer forMode:NSRunLoopCommonModes];
+  KPMiiPadPoll();
+}
+
+extern "C" void KartPadControllersTick() {
+  @autoreleasepool {
+    KPGameLoopTime = NSProcessInfo.processInfo.systemUptime;
+    [KPControllers() tick];
+    KPMiiPadTick();
+  }
+}
+// The runtime keeps pad and keyboard input from the game (and the pointer visible) while this is
+// true: the Controllers window is open, or the pads belong to the Mii windows.
+extern "C" bool KartPadControllersVisible() { return KPControllers().panel.visible || KPMiiPadOwnsInput(); }

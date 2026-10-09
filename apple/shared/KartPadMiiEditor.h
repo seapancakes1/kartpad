@@ -21,4 +21,21 @@ void KartPadPresentMiiEditor(id parent, NSUInteger slot);
 - (void)importMii;
 @end
 id<KartPadMiiBrowser> KartPadMakeMiiBrowser(void);
+
+#if TARGET_OS_OSX
+// Controller navigation for the Miis window and the Mii editor (KartPadMiiGamepad.inc.mm). The Mac
+// shell reads the pads and sends each press here; the game ignores the pads meanwhile.
+typedef NS_ENUM(NSInteger, KartPadMiiPadButton) {
+    KartPadMiiPadUp, KartPadMiiPadDown, KartPadMiiPadLeft, KartPadMiiPadRight,
+    // A and B (the game's confirm and back buttons), X and Y, LB and RB, and Start.
+    KartPadMiiPadConfirm, KartPadMiiPadBack, KartPadMiiPadUndo, KartPadMiiPadRedo,
+    KartPadMiiPadPreviousTab, KartPadMiiPadNextTab, KartPadMiiPadStart,
+    KartPadMiiPadButtonCount
+};
+// The Miis window or the Mii editor is on screen.
+BOOL KartPadMiiWindowsVisible(void);
+// down is NO when the button is released; only Confirm acts on release. Directions repeat while
+// held, as further presses.
+void KartPadMiiPadPress(KartPadMiiPadButton button, BOOL down);
+#endif
 NS_ASSUME_NONNULL_END

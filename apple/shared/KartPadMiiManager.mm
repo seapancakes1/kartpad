@@ -1337,4 +1337,5 @@ static BOOL KartPadApplyPendingSaveRestore(NSError **error){
     (TARGET_OS_OSX || (TARGET_OS_IOS && !TARGET_OS_TV))
 #include "KartPadMiiEditor.inc.mm"
 #include "KartPadMiiBrowser.inc.mm"
+#include "KartPadMiiGamepad.inc.mm"
 #endif
