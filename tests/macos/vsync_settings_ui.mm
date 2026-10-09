@@ -52,6 +52,7 @@ static TestControllers *KPControllers(){static TestControllers *c=[TestControlle
 @property(nonatomic,strong) NSArray<NSPopUpButton *> *padShortcutHolds;
 @property(nonatomic) NSInteger capturingShortcut;
 @property(nonatomic,strong) NSButton *backgroundPauseSwitch;
+@property(nonatomic,strong) NSPopUpButton *vibrationChoice;
 @property(nonatomic,strong) NSButton *settingsRestart;
 @property(nonatomic) BOOL restartPending;
 @property(nonatomic) int restarts;
@@ -83,11 +84,15 @@ int main(int argc,char **argv){@autoreleasepool {
   [vsync performClick:nil];assert(RuntimeConfigFile::LoadConfigFile().vsync==false);
   assert(reloadCalls==0);[c.settingsPanel close];puts("PASS: native checkbox persisted across process restart");return 0;
  }
- // Game & Data: a row for each controller shortcut, and the background pause.
+ // Controllers: vibration and a line for each controller shortcut, all below the mapping panel.
+ // Game & Data: the background pause.
  assert(c.padShortcutSwitches.count==2);
+ for(NSButton *row in c.padShortcutSwitches)assert(NSMaxY(row.frame)<=NSMinY(KPControllers().content.frame));
+ assert(c.padShortcutSwitches[0].superview==KPControllers().content.superview);
  assert(c.padShortcutSwitches[0].state==NSControlStateValueOff&&c.padShortcutSwitches[1].state==NSControlStateValueOn);
- assert([c.padShortcutSwitches[1].title containsString:@"Open Settings"]);
- assert([c.padShortcutButtons[1].stringValue isEqual:@"Buttons: View + Menu"]);
+ assert([c.padShortcutSwitches[1].title isEqual:@"Open Settings"]);
+ assert([c.padShortcutButtons[1].stringValue isEqual:@"Hold View + Menu"]);
+ assert(c.vibrationChoice.indexOfSelectedItem==2);
  assert(!c.padShortcutChoose[0].enabled&&c.padShortcutChoose[1].enabled);
  assert(c.padShortcutHolds[0].indexOfSelectedItem==1&&c.padShortcutHolds[1].indexOfSelectedItem==2);
  assert(c.backgroundPauseSwitch.state==NSControlStateValueOn);
@@ -122,5 +127,12 @@ int main(int argc,char **argv){@autoreleasepool {
       [NSString stringWithUTF8String:(expected/"settings-vsync.png").c_str()]];
   NSError *error=nil;assert([capture launchAndReturnError:&error]);[capture waitUntilExit];assert(capture.terminationStatus==0);
  }
+ // Strong turns rumble on at full strength, Off turns it off; each reloads the runtime's settings.
+ const int reloadsBefore=reloadCalls;
+ [c.vibrationChoice selectItemAtIndex:3];[c.vibrationChoice sendAction:c.vibrationChoice.action to:c.vibrationChoice.target];
+ assert(RuntimeConfigFile::LoadConfigFile().rumbleEnabled==true&&RuntimeConfigFile::LoadConfigFile().rumbleStrength==1.0f);
+ [c.vibrationChoice selectItemAtIndex:0];[c.vibrationChoice sendAction:c.vibrationChoice.action to:c.vibrationChoice.target];
+ assert(RuntimeConfigFile::LoadConfigFile().rumbleEnabled==false);assert(reloadCalls==reloadsBefore+2);
+ [c refreshSettings];assert(c.vibrationChoice.indexOfSelectedItem==0);
  [c.settingsPanel close];puts("PASS: actual native checkbox action/save/error/reopen, adjacent controls, small-window scroll and row layout");
 }}

@@ -549,7 +549,7 @@ static bool KPBackgroundPauseEnabled() {
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSTextField *> *settingValues;
 @property(nonatomic, strong) NSTextField *settingsStatus;
 @property(nonatomic, strong) KPMiisWindow *miisWindow;
-// Settings → Game & Data: holding controller buttons opens Miis or Settings, a row for each
+// Settings → Controllers: holding controller buttons opens Miis or Settings, a row for each
 // (KPPadShortcutKind), and the shortcut whose buttons are being chosen (or -1).
 @property(nonatomic, strong) NSArray<NSButton *> *padShortcutSwitches;
 @property(nonatomic, strong) NSArray<NSTextField *> *padShortcutButtons;
@@ -557,6 +557,8 @@ static bool KPBackgroundPauseEnabled() {
 @property(nonatomic, strong) NSArray<NSPopUpButton *> *padShortcutHolds;
 @property(nonatomic) NSInteger capturingShortcut;
 @property(nonatomic, strong) NSButton *backgroundPauseSwitch;
+// Settings → Controllers: Off, Light, Medium or Strong.
+@property(nonatomic, strong) NSPopUpButton *vibrationChoice;
 // Changes waiting for a restart, by what they are. While there are any, the Game menu has Restart
 // KartPad and Settings has Restart Now.
 @property(nonatomic, strong) NSMutableSet<NSString *> *restartReasons;
@@ -817,6 +819,33 @@ static bool KPBackgroundPauseEnabled() {
   AppendSessionLine([NSString stringWithFormat:@"displayMode=%s; from=full-screen-toggle", next.c_str()]);
   KartPadRequestSettingsReload();
   if (self.settingsPanel.visible) [self refreshSettings];
+}
+
+// A short buzz at the chosen strength on every connected controller that says it can vibrate.
+- (void)testVibration:(id)sender {
+  (void)sender;
+  const RuntimeUserConfig config = RuntimeConfigFile::LoadConfigFile();
+  if (!config.rumbleEnabled.value_or(true)) {
+    self.settingsStatus.stringValue = @"Vibration is off. Choose Light, Medium or Strong to test it.";
+    return;
+  }
+  const auto level = static_cast<Uint16>(
+      std::lround(std::clamp(config.rumbleStrength.value_or(0.5f), 0.0f, 1.0f) * 65535.0f));
+  int tested = 0;
+  for (unsigned i = 0; i < PADCount(); ++i) {
+    SDL_Gamepad *pad = PADGetSDLGamepadForIndex(i);
+    if (pad == nullptr ||
+        !SDL_GetBooleanProperty(SDL_GetGamepadProperties(pad), SDL_PROP_GAMEPAD_CAP_RUMBLE_BOOLEAN, false)) {
+      continue;
+    }
+    if (SDL_RumbleGamepad(pad, level, level, 500)) ++tested;
+  }
+  AppendSessionLine([NSString stringWithFormat:@"vibrationTest=%d", tested]);
+  self.settingsStatus.stringValue = tested > 0
+      ? (tested == 1 ? @"Your controller should vibrate now. If it doesn’t, it may not support vibration on this Mac."
+                     : @"Your controllers should vibrate now. One that doesn’t may not support vibration on this Mac.")
+      : (PADCount() > 0 ? @"No connected controller can vibrate on this Mac."
+                        : @"Connect a controller to test vibration.");
 }
 
 - (BOOL)validateMenuItem:(NSMenuItem *)item {

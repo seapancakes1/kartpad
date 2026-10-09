@@ -232,7 +232,7 @@ static void KPMiiPadTick() {
 }
 
 // Holding buttons on any controller opens the Miis window or Settings, so both work without a
-// keyboard or mouse. Settings → Game & Data chooses the buttons for each (any held together) and how
+// keyboard or mouse. Settings → Controllers chooses the buttons for each (any held together) and how
 // long to hold them. Miis default to View (Select, Share, −) for a second, which the game doesn't
 // use; Settings to View + Menu, whose Menu pauses a race on the way. When one shortcut's buttons
 // include the other's, holding them all opens the larger one (Settings on a tie). Neither opens
@@ -302,10 +302,10 @@ static NSString *KPPadButtonsWarning(uint64_t buttons) {
       if (alternates[i].nativeButton < SDL_GAMEPAD_BUTTON_COUNT) game |= 1ull << alternates[i].nativeButton;
   }
   if (buttons & game)
-    return [NSString stringWithFormat:@"%@ also %@ in the game, so the game still responds while you hold %@.",
-        KPPadButtonNames(buttons & game), __builtin_popcountll(buttons & game) > 1 ? @"act" : @"acts",
-        __builtin_popcountll(buttons) > 1 ? @"them" : @"it"];
-  if (buttons & (1ull << SDL_GAMEPAD_BUTTON_GUIDE)) return @"macOS may also respond to the Guide button.";
+    return [NSString stringWithFormat:@"The game also uses %@, so it reacts while you hold %@.",
+        [KPPadButtonNames(buttons & game) stringByReplacingOccurrencesOfString:@" + " withString:@" and "],
+        __builtin_popcountll(buttons & game) > 1 ? @"them" : @"it"];
+  if (buttons & (1ull << SDL_GAMEPAD_BUTTON_GUIDE)) return @"macOS may also react to the Guide button.";
   return nil;
 }
 static bool KPPadCapturing() { return KPPadCapture != nil; }

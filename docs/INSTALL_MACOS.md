@@ -58,8 +58,12 @@ update.
   controller in races.
 - On a controller, hold **View + Menu** for a second to open Settings, or
   **View** to open Miis. The D-pad moves around Settings, left and right change
-  a choice or slider, A presses, LB and RB change tab, and B closes it. Settings
-  → Game & Data changes the buttons or turns the shortcuts off.
+  a choice or slider, A presses, LB and RB change tab, and B closes it.
+  **Settings → Controllers → Controller shortcuts** changes the buttons or
+  turns the shortcuts off.
+- Controllers that can vibrate do when the game rumbles. **Settings →
+  Controllers → Vibration** sets the strength (Off, Light, Medium or Strong)
+  and **Test Vibration** checks a controller.
 
 Settings and saves are in `~/Library/Application Support/KartPad`, graphics
 caches in `~/Library/Caches/KartPad`. Replacing the app keeps both.

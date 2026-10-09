@@ -36,6 +36,10 @@
   NSTextField *value=[self label:@"100%"];
   value.frame=NSMakeRect(648,y,90,24);[page addSubview:value];self.settingValues[key]=value;
 }
+- (void)settingsHeading:(NSString *)text page:(NSView *)page y:(CGFloat)y {
+  NSTextField *heading=[self label:text];heading.font=[NSFont boldSystemFontOfSize:13];
+  heading.frame=NSMakeRect(24,y,725,22);[page addSubview:heading];
+}
 - (void)settingsButton:(NSString *)title action:(SEL)action page:(NSView *)page y:(CGFloat)y {
   NSButton *button=[NSButton buttonWithTitle:title target:self action:action];
   button.frame=NSMakeRect(24,y,350,32);[page addSubview:button];
@@ -76,23 +80,39 @@
 // Settings changes them).
 static bool KPLaunchVsync,KPLaunchNotch;
 static NSArray<NSNumber *> *KPPadShortcutHolds() { return @[@0.5,@1,@2,@3]; }
+// "View for 1 second"
+static NSString *KPPadShortcutPhrase(int kind) {
+  const NSTimeInterval hold=KPPadShortcutHold(kind);
+  NSString *time=hold<1?@"½ second":hold==1?@"1 second":[NSString stringWithFormat:@"%g seconds",hold];
+  return [NSString stringWithFormat:@"%@ for %@",KPPadButtonNames(KPPadShortcutButtons(kind)),time];
+}
+// Off, then Light, Medium and Strong: the rumble strengths behind them.
+static NSArray<NSNumber *> *KPVibrationStrengths() { return @[@0,@0.25,@0.5,@1]; }
 - (void)refreshPadShortcuts {
   const bool capturing=KPPadCapturing();
   for(int kind=0;kind<KPPadShortcutCount;++kind) {
     const bool on=KPPadShortcutEnabled(kind),choosing=capturing&&self.capturingShortcut==kind;
     self.padShortcutSwitches[kind].state=on?NSControlStateValueOn:NSControlStateValueOff;
-    self.padShortcutButtons[kind].stringValue=choosing?@"Hold buttons on a controller…":[@"Buttons: " stringByAppendingString:KPPadButtonNames(KPPadShortcutButtons(kind))];
+    self.padShortcutButtons[kind].stringValue=choosing?@"Hold the new buttons…":[@"Hold " stringByAppendingString:KPPadButtonNames(KPPadShortcutButtons(kind))];
     self.padShortcutButtons[kind].textColor=on?NSColor.labelColor:NSColor.disabledControlTextColor;
-    self.padShortcutChoose[kind].title=choosing?@"Cancel":@"Choose Buttons…";
+    self.padShortcutChoose[kind].title=choosing?@"Cancel":@"Change Buttons…";
     self.padShortcutChoose[kind].enabled=on&&(!capturing||choosing);self.padShortcutHolds[kind].enabled=on&&!choosing;
     NSUInteger index=[KPPadShortcutHolds() indexOfObject:@(KPPadShortcutHold(kind))];
     [self.padShortcutHolds[kind] selectItemAtIndex:index==NSNotFound?1:index];
   }
+  const auto c=RuntimeConfigFile::LoadConfigFile();
+  NSInteger vibration=0;
+  if(c.rumbleEnabled.value_or(true)) {
+    // The nearest of Light, Medium and Strong.
+    const float strength=std::clamp(c.rumbleStrength.value_or(0.5f),0.0f,1.0f);
+    vibration=strength<0.375f?1:strength<0.75f?2:3;
+  }
+  [self.vibrationChoice selectItemAtIndex:vibration];
   self.backgroundPauseSwitch.state=KPBackgroundPauseEnabled()?NSControlStateValueOn:NSControlStateValueOff;
   self.settingsRestart.hidden=!self.restartPending;
 }
 - (NSString *)padShortcutSaved:(int)kind {
-  return KPPadShortcutEnabled(kind)?[NSString stringWithFormat:@"Saved. Hold %@ to open %@.",KPPadButtonNames(KPPadShortcutButtons(kind)),KPPadShortcuts[kind].opens]:
+  return KPPadShortcutEnabled(kind)?[NSString stringWithFormat:@"Saved. Hold %@ to open %@.",KPPadShortcutPhrase(kind),KPPadShortcuts[kind].opens]:
       [NSString stringWithFormat:@"Saved. Controllers no longer open %@.",KPPadShortcuts[kind].opens];
 }
 - (void)padShortcutChanged:(NSControl *)sender {
@@ -111,7 +131,7 @@ static NSArray<NSNumber *> *KPPadShortcutHolds() { return @[@0.5,@1,@2,@3]; }
   const int kind=(int)sender.tag;
   if(KPPadCapturing()) {
     KPPadCancelCapture();
-    self.settingsStatus.stringValue=[NSString stringWithFormat:@"The %@ buttons are unchanged.",KPPadShortcuts[kind].opens];
+    self.settingsStatus.stringValue=[NSString stringWithFormat:@"%@ still opens with %@.",KPPadShortcuts[kind].opens,KPPadButtonNames(KPPadShortcutButtons(kind))];
     [self refreshPadShortcuts];return;
   }
   self.capturingShortcut=kind;
@@ -122,8 +142,19 @@ static NSArray<NSNumber *> *KPPadShortcutHolds() { return @[@0.5,@1,@2,@3]; }
     weak.settingsStatus.stringValue=warning?[NSString stringWithFormat:@"%@ %@",saved,warning]:saved;
     [weak refreshPadShortcuts];
   });
-  self.settingsStatus.stringValue=@"Let go of everything, then hold the buttons you want together on a controller and let go.";
+  self.settingsStatus.stringValue=[NSString stringWithFormat:@"Hold the new buttons together on any controller, then let go. Cancel keeps %@.",KPPadButtonNames(KPPadShortcutButtons(kind))];
   [self refreshPadShortcuts];
+}
+- (void)vibrationChanged:(NSPopUpButton *)sender {
+  const NSInteger index=sender.indexOfSelectedItem;
+  std::ostringstream strength;strength<<KPVibrationStrengths()[index].floatValue;
+  if(!RuntimeConfigFile::WriteSetting("controller","rumble",index>0?"true":"false")||
+     (index>0&&!RuntimeConfigFile::WriteSetting("controller","rumble_strength",strength.str()))) {
+    self.settingsStatus.stringValue=@"Could not save this setting. Check that Config.toml is writable.";
+    [self refreshPadShortcuts];return;
+  }
+  self.settingsStatus.stringValue=index>0?[NSString stringWithFormat:@"Saved. Vibration is %@.",sender.titleOfSelectedItem.lowercaseString]:@"Saved. Controllers no longer vibrate.";
+  KartPadRequestSettingsReload();
 }
 - (void)backgroundPauseChanged:(NSButton *)sender {
   const BOOL on=sender.state==NSControlStateValueOn;
@@ -242,46 +273,59 @@ static NSArray<NSNumber *> *KPPadShortcutHolds() { return @[@0.5,@1,@2,@3]; }
     [self setting:@"audio.mix_worker" checkbox:@"Mix audio on a worker thread" page:audio y:245];
     [self settingsLabel:@"The worker normally improves performance. Turn it off when troubleshooting audio problems." page:audio y:180];
 
+    // Controllers: the mapping panel, then vibration and the controller shortcuts below it.
     NSView *controllers=[self settingsPage:@"Controllers"];
+    [controllers setFrameSize:NSMakeSize(780,1160)];
     [KPControllers() prepareInPanel:self.settingsPanel];
-    KPControllers().content.frame=NSMakeRect(0,0,760,740);
+    KPControllers().content.frame=NSMakeRect(0,420,760,740);
     KPControllers().content.autoresizingMask=NSViewWidthSizable;
     [controllers addSubview:KPControllers().content];
-
-    NSView *data=[self settingsPage:@"Game & Data"];
-    [data setFrameSize:NSMakeSize(780,900)];
-    [self settingsLabel:@"Game, Player & Data" page:data y:840].font=[NSFont boldSystemFontOfSize:19];
-    [self settingsButton:@"Choose Mario Kart Wii Data…" action:@selector(chooseGameData:) page:data y:775];
-#if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)
-    [self settingsButton:@"Choose Retro Rewind Data…" action:@selector(chooseRetroRewindData:) page:data y:730];
-#endif
-    [self settingsLabel:@"Game-data changes apply after restarting. Existing saves are preserved." page:data y:665];
-    [self settingsButton:@"Miis…" action:@selector(showMiis:) page:data y:600];
-    [self settingsLabel:@"Create, edit and import Miis, and rename, relink or delete licenses." page:data y:555];
-    // One row for each controller shortcut: on or off, its buttons, and how long to hold them.
+    [self settingsHeading:@"Vibration" page:controllers y:372];
+    [self settingsLabel:@"Strength" page:controllers y:312];
+    self.vibrationChoice=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(180,336,190,28) pullsDown:NO];
+    [self.vibrationChoice addItemsWithTitles:@[@"Off",@"Light",@"Medium",@"Strong"]];
+    self.vibrationChoice.target=self;self.vibrationChoice.action=@selector(vibrationChanged:);
+    self.vibrationChoice.accessibilityLabel=@"Vibration strength";
+    [controllers addSubview:self.vibrationChoice];
+    NSButton *test=[NSButton buttonWithTitle:@"Test Vibration" target:self action:@selector(testVibration:)];
+    test.frame=NSMakeRect(384,334,160,32);[controllers addSubview:test];
+    [self settingsLabel:@"Controllers that can vibrate do when the game rumbles, for example when you crash or get hit. If nothing happens, check that rumble is on in the game’s own options." page:controllers y:280];
+    [self settingsHeading:@"Controller shortcuts" page:controllers y:224];
+    [self settingsLabel:@"Hold buttons on any controller to open these without a keyboard or mouse." page:controllers y:174];
+    // One line for each shortcut: on or off, its buttons, how long to hold them, and changing them.
     NSMutableArray *switches=[NSMutableArray array],*names=[NSMutableArray array],*choose=[NSMutableArray array],*holds=[NSMutableArray array];
     for(int kind=0;kind<KPPadShortcutCount;++kind) {
-      const CGFloat y=514-kind*90;
-      NSButton *on=[NSButton checkboxWithTitle:[NSString stringWithFormat:@"Open %@ by holding buttons on a controller",KPPadShortcuts[kind].opens] target:self action:@selector(padShortcutChanged:)];
-      on.frame=NSMakeRect(24,y,715,28);on.tag=kind;[data addSubview:on];[switches addObject:on];
-      NSTextField *buttons=[self label:@""];buttons.frame=NSMakeRect(44,y-36,240,20);
-      buttons.lineBreakMode=NSLineBreakByTruncatingTail;[data addSubview:buttons];[names addObject:buttons];
-      NSButton *pick=[NSButton buttonWithTitle:@"Choose Buttons…" target:self action:@selector(choosePadShortcutButtons:)];
-      pick.frame=NSMakeRect(290,y-44,180,32);pick.tag=kind;[data addSubview:pick];[choose addObject:pick];
-      NSPopUpButton *hold=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(480,y-42,190,28) pullsDown:NO];
-      [hold addItemsWithTitles:@[@"Hold for ½ second",@"Hold for 1 second",@"Hold for 2 seconds",@"Hold for 3 seconds"]];
+      const CGFloat y=150-kind*44;
+      NSButton *on=[NSButton checkboxWithTitle:[@"Open " stringByAppendingString:KPPadShortcuts[kind].opens] target:self action:@selector(padShortcutChanged:)];
+      on.frame=NSMakeRect(24,y,150,28);on.tag=kind;[controllers addSubview:on];[switches addObject:on];
+      NSTextField *buttons=[self label:@""];buttons.frame=NSMakeRect(180,y+2,200,20);
+      buttons.lineBreakMode=NSLineBreakByTruncatingTail;[controllers addSubview:buttons];[names addObject:buttons];
+      NSPopUpButton *hold=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(384,y,160,28) pullsDown:NO];
+      [hold addItemsWithTitles:@[@"for ½ second",@"for 1 second",@"for 2 seconds",@"for 3 seconds"]];
       hold.target=self;hold.action=@selector(padShortcutChanged:);hold.tag=kind;
       hold.accessibilityLabel=[NSString stringWithFormat:@"How long to hold the %@ buttons",KPPadShortcuts[kind].opens];
-      [data addSubview:hold];[holds addObject:hold];
+      [controllers addSubview:hold];[holds addObject:hold];
+      NSButton *pick=[NSButton buttonWithTitle:@"Change Buttons…" target:self action:@selector(choosePadShortcutButtons:)];
+      pick.frame=NSMakeRect(554,y-2,170,32);pick.tag=kind;[controllers addSubview:pick];[choose addObject:pick];
     }
     self.padShortcutSwitches=switches;self.padShortcutButtons=names;self.padShortcutChoose=choose;self.padShortcutHolds=holds;
     self.capturingShortcut=-1;
+
+    NSView *data=[self settingsPage:@"Game & Data"];
+    [self settingsLabel:@"Game, Player & Data" page:data y:680].font=[NSFont boldSystemFontOfSize:19];
+    [self settingsButton:@"Choose Mario Kart Wii Data…" action:@selector(chooseGameData:) page:data y:615];
+#if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)
+    [self settingsButton:@"Choose Retro Rewind Data…" action:@selector(chooseRetroRewindData:) page:data y:570];
+#endif
+    [self settingsLabel:@"Game-data changes apply after restarting. Existing saves are preserved." page:data y:505];
+    [self settingsButton:@"Miis…" action:@selector(showMiis:) page:data y:440];
+    [self settingsLabel:@"Create, edit and import Miis, and rename, relink or delete licenses. To open Miis from a controller, see Controllers → Controller shortcuts." page:data y:395];
     self.backgroundPauseSwitch=[NSButton checkboxWithTitle:@"Pause the game while another app is in front" target:self action:@selector(backgroundPauseChanged:)];
-    self.backgroundPauseSwitch.frame=NSMakeRect(24,330,715,28);[data addSubview:self.backgroundPauseSwitch];
-    [self settingsLabel:@"It keeps going while it loads and while you’re online. Turn this off to keep playing with a controller while another app is in front." page:data y:280];
-    [self settingsButton:@"Open Application Support" action:@selector(showApplicationSupport:) page:data y:215];
-    [self settingsButton:@"Open Cache Folder" action:@selector(showCache:) page:data y:170];
-    [self settingsButton:@"Control Reference…" action:@selector(showControls:) page:data y:100];
+    self.backgroundPauseSwitch.frame=NSMakeRect(24,350,715,28);[data addSubview:self.backgroundPauseSwitch];
+    [self settingsLabel:@"It keeps going while it loads and while you’re online. Turn this off to keep playing with a controller while another app is in front." page:data y:300];
+    [self settingsButton:@"Open Application Support" action:@selector(showApplicationSupport:) page:data y:240];
+    [self settingsButton:@"Open Cache Folder" action:@selector(showCache:) page:data y:195];
+    [self settingsButton:@"Control Reference…" action:@selector(showControls:) page:data y:125];
 
     NSView *advanced=[self settingsPage:@"Advanced"];
     [self settingsLabel:@"Advanced & Diagnostics" page:advanced y:680].font=[NSFont boldSystemFontOfSize:19];
