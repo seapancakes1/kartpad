@@ -532,6 +532,11 @@ static bool KPFullscreenAcrossNotch() {
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSTextField *> *settingValues;
 @property(nonatomic, strong) NSTextField *settingsStatus;
 @property(nonatomic, strong) KPMiisWindow *miisWindow;
+// Settings → Game & Data: holding controller buttons opens the Miis window.
+@property(nonatomic, strong) NSButton *miisPadSwitch;
+@property(nonatomic, strong) NSButton *miisPadChoose;
+@property(nonatomic, strong) NSTextField *miisPadButtons;
+@property(nonatomic, strong) NSPopUpButton *miisPadHold;
 @end
 
 @implementation KartPadMacShellController
@@ -980,6 +985,8 @@ static KartPadMacShellController *Controller() {
   dispatch_once(&once, ^{ controller = [KartPadMacShellController new]; });
   return controller;
 }
+
+static void KPOpenMiisFromController() { [Controller() showMiis:nil]; }
 
 extern "C" void KartPadOpenSettingsFromShortcut() {
   // SDL event handling can run inside a guest fiber. Open AppKit UI on the

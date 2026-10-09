@@ -7,6 +7,9 @@
 // saves; on the Miis screen Start is Done. Alerts move their default button and press it with A,
 // and B picks Cancel. Pop-up menus take arrows and Return, and B closes them. A press hides the
 // mouse pointer until the mouse moves.
+// Names are typed on the controller keyboard (KartPadMiiPadKeyboard.inc.mm): A on the editor's
+// Nickname or Creator field opens it, and so does an alert asking for a name, as soon as the pad
+// brings one up. File panels take arrows, Return and Escape, and LB/RB as Shift-Tab/Tab.
 #if TARGET_OS_OSX
 #import <objc/runtime.h>
 
@@ -31,11 +34,15 @@
 static __weak NSMenu *KPPadMenu;
 // The control A went down on, which its release presses.
 static __weak NSView *KPPadPressed;
+// When the pad last pressed or released anything.
+static NSTimeInterval KPPadLastPress;
+static void KPPadAlertBecameKey(NSWindow *window);
 static void KPPadWatchMenus(){
     static dispatch_once_t once;
     dispatch_once(&once,^{
         [NSNotificationCenter.defaultCenter addObserverForName:NSMenuDidBeginTrackingNotification object:nil queue:nil usingBlock:^(NSNotification *note){KPPadMenu=note.object;}];
         [NSNotificationCenter.defaultCenter addObserverForName:NSMenuDidEndTrackingNotification object:nil queue:nil usingBlock:^(NSNotification *note){if(KPPadMenu==note.object)KPPadMenu=nil;}];
+        [NSNotificationCenter.defaultCenter addObserverForName:NSWindowDidBecomeKeyNotification object:nil queue:nil usingBlock:^(NSNotification *note){KPPadAlertBecameKey(note.object);}];
     });
 }
 
@@ -82,15 +89,34 @@ static NSView *KPPadNearest(NSArray<NSView*> *candidates,NSView *from,int dx,int
     return best;
 }
 static void KPPadFocus(NSView *view){[view.window makeFirstResponder:view];[view scrollRectToVisible:view.bounds];}
+// While a field is being edited its window's field editor is the first responder; this gives the field.
+static NSResponder *KPPadResponder(NSWindow *window){
+    NSResponder *responder=window.firstResponder;
+    if([responder isKindOfClass:NSTextView.class]&&[(NSTextView*)responder isFieldEditor]&&[(id)[(NSTextView*)responder delegate] isKindOfClass:NSTextField.class])return (NSTextField*)[(NSTextView*)responder delegate];
+    return responder;
+}
+static BOOL KPPadNameField(NSView *view){return [view isKindOfClass:NSTextField.class]&&[(NSTextField*)view isEditable]&&[(NSTextField*)view isEnabled];}
+// Off the edge of the keyboard, the far end of the same row or column.
+static NSView *KPPadWrap(NSArray<NSView*> *candidates,NSView *from,int dx,int dy){
+    NSRect here=KPPadFrame(from);NSView *best=nil;CGFloat bestScore=-CGFLOAT_MAX;
+    for(NSView *view in candidates){
+        NSRect there=KPPadFrame(view);
+        BOOL inLine=dx?NSMinY(there)<NSMaxY(here)&&NSMinY(here)<NSMaxY(there):NSMinX(there)<NSMaxX(here)&&NSMinX(here)<NSMaxX(there);
+        // Window coordinates run upwards, so wrapping down goes to the highest row.
+        CGFloat score=dx?-dx*NSMidX(there):dy*NSMidY(there);
+        if(view!=from&&inLine&&score>bestScore){bestScore=score;best=view;}
+    }
+    return best;
+}
 static BOOL KPPadDirection(KartPadMiiPadButton button,int *dx,int *dy){
     *dx=button==KartPadMiiPadLeft?-1:button==KartPadMiiPadRight?1:0;*dy=button==KartPadMiiPadUp?-1:button==KartPadMiiPadDown?1:0;
     return *dx||*dy;
 }
 // A key press for the loops that only read keys (pop-up menus and file panels).
-static void KPPadKey(unsigned short code,unichar character){
+static void KPPadKey(unsigned short code,unichar character,NSEventModifierFlags flags=0){
     NSString *text=[NSString stringWithCharacters:&character length:1];
     for(NSEventType type:{NSEventTypeKeyDown,NSEventTypeKeyUp})
-        [NSApp postEvent:[NSEvent keyEventWithType:type location:NSZeroPoint modifierFlags:0 timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:NSApp.keyWindow.windowNumber context:nil characters:text charactersIgnoringModifiers:text isARepeat:NO keyCode:code] atStart:NO];
+        [NSApp postEvent:[NSEvent keyEventWithType:type location:NSZeroPoint modifierFlags:flags timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:NSApp.keyWindow.windowNumber context:nil characters:text charactersIgnoringModifiers:text isARepeat:NO keyCode:code] atStart:NO];
 }
 static void KPPadArrow(int dx,int dy){
     if(dx)KPPadKey(dx<0?123:124,dx<0?NSLeftArrowFunctionKey:NSRightArrowFunctionKey);
@@ -135,7 +161,7 @@ static void KPPadBrowserPress(KPMiiBrowser *browser,KartPadMiiPadButton button){
 
 #pragma mark Editor
 
-static BOOL KPPadEditorControl(NSView *view){return ([view isKindOfClass:KPMiiWiiButton.class]&&[(KPMiiWiiButton*)view isEnabled])||[view isKindOfClass:KPMiiBodySlider.class];}
+static BOOL KPPadEditorControl(NSView *view){return ([view isKindOfClass:KPMiiWiiButton.class]&&[(KPMiiWiiButton*)view isEnabled])||[view isKindOfClass:KPMiiBodySlider.class]||KPPadNameField(view);}
 static NSArray<NSView*> *KPPadEditorControls(KPMiiEditor *editor){
     NSMutableArray *controls=[NSMutableArray array];KPPadCollect(editor.window.contentView,^BOOL(NSView *view){return KPPadEditorControl(view);},controls);return controls;
 }
@@ -171,7 +197,7 @@ static void KPPadEditorRelease(KPMiiWiiButton *button){
     if(editor.window.visible)KPPadEditorRefocus(editor,action,field,value);
 }
 static void KPPadEditorPress(KPMiiEditor *editor,KartPadMiiPadButton button){
-    NSResponder *responder=editor.window.firstResponder;
+    NSResponder *responder=KPPadResponder(editor.window);
     NSView *focus=[responder isKindOfClass:NSView.class]&&KPPadEditorControl((NSView*)responder)?(NSView*)responder:nil;
     int dx,dy;
     if(KPPadDirection(button,&dx,&dy)||(button==KartPadMiiPadConfirm&&!focus)){
@@ -188,6 +214,12 @@ static void KPPadEditorPress(KPMiiEditor *editor,KartPadMiiPadButton button){
     KPItem item{};
     switch(button){
     case KartPadMiiPadConfirm:{
+        // Nickname and Creator are typed on the keyboard; OK keeps the name as the field does.
+        if(KPPadNameField(focus)){
+            NSTextField *field=(NSTextField*)focus;__weak KPMiiEditor *weak=editor;
+            KPPadKeyboardOpen(field,field.tag==54?@"Creator":@"Nickname",field.tag==2,^(BOOL ok){if(ok)[weak commitNames];});
+            return;
+        }
         if(![focus isKindOfClass:KPMiiWiiButton.class])return;
         KPMiiWiiButton *control=(KPMiiWiiButton*)focus;if(!control.enabled)return;
         [control highlight:YES];KPPadPressed=control;if([control holds])[control down];
@@ -232,12 +264,47 @@ static NSButton *KPPadCancelButton(NSWindow *window,NSArray<NSButton*> *buttons)
     for(NSButton *button in buttons)if([button.title isEqual:@"Cancel"]||[button.title isEqual:@"Keep Editing"])return button;
     return nil;
 }
+// The name field of an alert asking for one (Rename…). File panels' name fields don't count.
+static NSTextField *KPPadDialogField(NSWindow *window){
+    if([window isKindOfClass:NSSavePanel.class])return nil;
+    NSMutableArray<NSView*> *fields=[NSMutableArray array];KPPadCollect(window.contentView,^BOOL(NSView *view){return KPPadNameField(view);},fields);
+    return (NSTextField*)fields.firstObject;
+}
+static const void *KPPadKeyboardUsedKey=&KPPadKeyboardUsedKey;
+// The name is typed on the keyboard: its OK presses the alert's action (Rename), Cancel its Cancel.
+static void KPPadDialogKeyboard(NSWindow *window,NSTextField *field){
+    NSArray<NSButton*> *buttons=KPPadDialogButtons(window);NSButton *cancel=KPPadCancelButton(window,buttons),*action=nil;
+    for(NSButton *candidate in buttons)if(candidate!=cancel&&(!action||[candidate.keyEquivalent isEqual:@"\r"]))action=candidate;
+    NSString *title=@"Name";NSMutableArray<NSView*> *labels=[NSMutableArray array];
+    KPPadCollect(window.contentView,^BOOL(NSView *view){return [view isKindOfClass:NSTextField.class]&&![(NSTextField*)view isEditable]&&([[(NSTextField*)view font].fontDescriptor symbolicTraits]&NSFontDescriptorTraitBold);},labels);
+    if([(NSTextField*)labels.firstObject stringValue].length)title=[(NSTextField*)labels.firstObject stringValue];
+    objc_setAssociatedObject(window,KPPadKeyboardUsedKey,@YES,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    KPPadKeyboardOpen(field,title,YES,^(BOOL ok){NSButton *press=ok?action:cancel;if(press.enabled)[press performClick:nil];});
+}
+// An alert asking for a name that the pad brought up (it was pressed just now) opens the keyboard.
+static void KPPadAlertBecameKey(NSWindow *window){
+    if(NSProcessInfo.processInfo.systemUptime-KPPadLastPress>1||objc_getAssociatedObject(window,KPPadKeyboardUsedKey))return;
+    NSWindow *parent=window.sheetParent;
+    if(!parent||(parent!=KPPadBrowserWindow()&&parent!=KPPadEditorWindow()))return;
+    NSTextField *field=KPPadDialogField(window);if(!field)return;
+    dispatch_async(dispatch_get_main_queue(),^{
+        if(window.isKeyWindow&&window.sheetParent&&!KPPadKeyboardWindow()&&!objc_getAssociatedObject(window,KPPadKeyboardUsedKey))KPPadDialogKeyboard(window,field);
+    });
+}
 static void KPPadDialogPress(NSWindow *window,KartPadMiiPadButton button){
     int dx,dy;BOOL direction=KPPadDirection(button,&dx,&dy);
-    // File panels (and anything without alert buttons) get the keys instead.
+    // B cancels an alert asking for a name; anything else opens the keyboard for it.
+    if(NSTextField *field=KPPadDialogField(window)){
+        if(button!=KartPadMiiPadBack){KPPadDialogKeyboard(window,field);return;}
+        if(NSButton *cancel=KPPadCancelButton(window,KPPadDialogButtons(window)))[cancel performClick:nil];
+        return;
+    }
+    // File panels (and anything without alert buttons) get the keys instead. LB/RB move between
+    // the sidebar, the files and the buttons.
     NSArray<NSButton*> *buttons=[window isKindOfClass:NSSavePanel.class]?@[]:KPPadDialogButtons(window);
     if(!buttons.count){
         if(direction)KPPadArrow(dx,dy);else if(button==KartPadMiiPadConfirm)KPPadKey(36,'\r');else if(button==KartPadMiiPadBack)KPPadKey(53,0x1b);
+        else if(button==KartPadMiiPadNextTab)KPPadKey(48,'\t');else if(button==KartPadMiiPadPreviousTab)KPPadKey(48,0x19,NSEventModifierFlagShift);
         return;
     }
     NSButton *current=nil;
@@ -262,12 +329,34 @@ static void KPPadMenuPress(NSMenu *menu,KartPadMiiPadButton button){
     else if(button==KartPadMiiPadBack)[menu cancelTracking];
 }
 
+#pragma mark Keyboard
+
+static void KPPadKeyboardPress(KartPadMiiPadButton button){
+    KPPadKeyboard *keyboard=KPPadActiveKeyboard;NSArray<NSView*> *keys=keyboard.keys;NSResponder *responder=keyboard.panel.firstResponder;
+    KPPadKeyButton *focus=[responder isKindOfClass:KPPadKeyButton.class]?(KPPadKeyButton*)responder:nil;
+    int dx,dy;
+    if(KPPadDirection(button,&dx,&dy)||(button==KartPadMiiPadConfirm&&!focus)){
+        NSView *next=focus?KPPadNearest(keys,focus,dx,dy)?:KPPadWrap(keys,focus,dx,dy):keys[10];
+        if(next){KPPadFocus(next);KPPlay(KPSound::Hover);}
+        return;
+    }
+    switch(button){
+    case KartPadMiiPadConfirm:[focus press:YES];KPPadPressed=focus;return;
+    case KartPadMiiPadBack:[keyboard erase];return;
+    case KartPadMiiPadUndo:[keyboard toggleShift];return;
+    case KartPadMiiPadRedo:[keyboard type:@" "];return;
+    case KartPadMiiPadPreviousTab:case KartPadMiiPadNextTab:[keyboard togglePage];return;
+    case KartPadMiiPadStart:[keyboard finish:YES];return;
+    default:return;
+    }
+}
+
 // The controller is in use, so the pointer gets out of the way; moving the mouse brings it back.
 // (The runtime's show-cursor calls only reset cursor rects, which leave it hidden.)
 static void KPPadHidePointer(){[NSCursor setHiddenUntilMouseMoves:YES];}
 
 void KartPadMiiPadPress(KartPadMiiPadButton button,BOOL down){
-    KPPadWatchMenus();
+    KPPadWatchMenus();KPPadLastPress=NSProcessInfo.processInfo.systemUptime;
     if(!down){
         // A's release presses what its press went down on, wherever the focus is now.
         if(button!=KartPadMiiPadConfirm)return;
@@ -278,6 +367,8 @@ void KartPadMiiPadPress(KartPadMiiPadButton button,BOOL down){
     }
     if(!NSApp.active)return;
     if(NSMenu *menu=KPPadMenu){KPPadHidePointer();KPPadMenuPress(menu,button);return;}
+    // The keyboard takes every press while it is up; one that has dropped behind comes back first.
+    if(NSWindow *keyboard=KPPadKeyboardWindow()){KPPadHidePointer();if(keyboard.isKeyWindow)KPPadKeyboardPress(button);else [keyboard makeKeyAndOrderFront:nil];return;}
     NSWindow *browserWindow=KPPadBrowserWindow(),*editorWindow=KPPadEditorWindow(),*key=NSApp.keyWindow;
     if(!browserWindow&&!editorWindow)return;
     if(key&&key==editorWindow){KPPadHidePointer();KPPadEditorPress(KPMiiActiveEditor,button);return;}
@@ -288,5 +379,10 @@ void KartPadMiiPadPress(KartPadMiiPadButton button,BOOL down){
     if([key isKindOfClass:NSPanel.class])return;
     // The game window is in front: bring the Mii window back, and let this press only do that.
     NSWindow *front=editorWindow?:browserWindow;[NSApp activateIgnoringOtherApps:YES];[front makeKeyAndOrderFront:nil];KPPadHidePointer();
+}
+void KartPadMiiPadShowFocus(void){
+    NSWindow *window=KPPadBrowserWindow();
+    if(!window.isKeyWindow||[window.firstResponder isKindOfClass:KPMiiBrowserButton.class])return;
+    KPPadHidePointer();KPPadBrowserPress(KPPadBrowser(),KartPadMiiPadConfirm);
 }
 #endif

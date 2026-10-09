@@ -37,5 +37,7 @@ BOOL KartPadMiiWindowsVisible(void);
 // down is NO when the button is released; only Confirm acts on release. Directions repeat while
 // held, as further presses.
 void KartPadMiiPadPress(KartPadMiiPadButton button, BOOL down);
+// The Miis window has just opened from a controller: show the focus ring on the selected Mii.
+void KartPadMiiPadShowFocus(void);
 #endif
 NS_ASSUME_NONNULL_END

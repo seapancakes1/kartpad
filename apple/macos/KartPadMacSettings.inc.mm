@@ -70,6 +70,48 @@
       self.settingValues[key].stringValue=[NSString stringWithFormat:@"%.0f%%",control.doubleValue];
     } else [(NSButton *)control setState:[value boolValue]?NSControlStateValueOn:NSControlStateValueOff];
   }
+  [self refreshMiisPad];
+}
+static NSArray<NSNumber *> *KPMiisPadHolds() { return @[@0.5,@1,@2,@3]; }
+- (void)refreshMiisPad {
+  const bool on=KPMiisPadEnabled(),capturing=KPMiisPadCapturing();
+  self.miisPadSwitch.state=on?NSControlStateValueOn:NSControlStateValueOff;
+  self.miisPadButtons.stringValue=capturing?@"Hold buttons on a controller…":[@"Buttons: " stringByAppendingString:KPMiisPadButtonNames(KPMiisPadButtons())];
+  self.miisPadButtons.textColor=on?NSColor.labelColor:NSColor.disabledControlTextColor;
+  self.miisPadChoose.title=capturing?@"Cancel":@"Choose Buttons…";
+  self.miisPadChoose.enabled=on;self.miisPadHold.enabled=on&&!capturing;
+  NSUInteger index=[KPMiisPadHolds() indexOfObject:@(KPMiisPadHold())];
+  [self.miisPadHold selectItemAtIndex:index==NSNotFound?1:index];
+}
+- (void)miisPadChanged:(id)sender {
+  NSUserDefaults *defaults=NSUserDefaults.standardUserDefaults;
+  if(sender==self.miisPadSwitch) {
+    [defaults setBool:self.miisPadSwitch.state==NSControlStateValueOn forKey:KPMiisPadEnabledKey];
+    if(!KPMiisPadEnabled())KPMiisPadCancelCapture();
+  } else if(sender==self.miisPadHold) {
+    [defaults setDouble:KPMiisPadHolds()[self.miisPadHold.indexOfSelectedItem].doubleValue forKey:KPMiisPadHoldKey];
+  }
+  self.settingsStatus.stringValue=KPMiisPadEnabled()?[NSString stringWithFormat:@"Saved. Hold %@ to open Miis.",KPMiisPadButtonNames(KPMiisPadButtons())]:@"Saved. Controllers no longer open Miis.";
+  [self refreshMiisPad];
+}
+// The buttons are whatever is held together on a controller before everything is let go.
+- (void)chooseMiisPadButtons:(id)sender {
+  (void)sender;
+  if(KPMiisPadCapturing()) {
+    KPMiisPadCancelCapture();
+    self.settingsStatus.stringValue=@"The Miis buttons are unchanged.";
+    [self refreshMiisPad];return;
+  }
+  __weak KartPadMacShellController *weak=self;
+  KPMiisPadBeginCapture(^(uint64_t buttons) {
+    KPMiisPadSetButtons(buttons);
+    NSString *saved=[NSString stringWithFormat:@"Saved. Hold %@ to open Miis.",KPMiisPadButtonNames(buttons)];
+    NSString *warning=KPMiisPadWarning(buttons);
+    weak.settingsStatus.stringValue=warning?[NSString stringWithFormat:@"%@ %@",saved,warning]:saved;
+    [weak refreshMiisPad];
+  });
+  self.settingsStatus.stringValue=@"Let go of everything, then hold the buttons you want together on a controller and let go.";
+  [self refreshMiisPad];
 }
 - (void)settingChanged:(NSControl *)sender {
   NSString *key=sender.identifier;NSArray *parts=[key componentsSeparatedByString:@"."];
@@ -182,6 +224,16 @@
     [self settingsLabel:@"Game-data changes apply after restarting. Existing saves are preserved." page:data y:505];
     [self settingsButton:@"Miis…" action:@selector(showMiis:) page:data y:440];
     [self settingsLabel:@"Create, edit and import Miis, and rename, relink or delete licenses." page:data y:395];
+    self.miisPadSwitch=[NSButton checkboxWithTitle:@"Open Miis by holding buttons on a controller" target:self action:@selector(miisPadChanged:)];
+    self.miisPadSwitch.frame=NSMakeRect(24,354,715,28);[data addSubview:self.miisPadSwitch];
+    self.miisPadButtons=[self label:@""];self.miisPadButtons.frame=NSMakeRect(44,318,240,20);
+    self.miisPadButtons.lineBreakMode=NSLineBreakByTruncatingTail;[data addSubview:self.miisPadButtons];
+    self.miisPadChoose=[NSButton buttonWithTitle:@"Choose Buttons…" target:self action:@selector(chooseMiisPadButtons:)];
+    self.miisPadChoose.frame=NSMakeRect(290,310,180,32);[data addSubview:self.miisPadChoose];
+    self.miisPadHold=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(480,312,190,28) pullsDown:NO];
+    [self.miisPadHold addItemsWithTitles:@[@"Hold for ½ second",@"Hold for 1 second",@"Hold for 2 seconds",@"Hold for 3 seconds"]];
+    self.miisPadHold.target=self;self.miisPadHold.action=@selector(miisPadChanged:);self.miisPadHold.accessibilityLabel=@"How long to hold the buttons";
+    [data addSubview:self.miisPadHold];
     [self settingsButton:@"Open Application Support" action:@selector(showApplicationSupport:) page:data y:270];
     [self settingsButton:@"Open Cache Folder" action:@selector(showCache:) page:data y:225];
     [self settingsButton:@"Control Reference…" action:@selector(showControls:) page:data y:155];
