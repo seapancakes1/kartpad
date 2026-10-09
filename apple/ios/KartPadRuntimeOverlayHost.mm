@@ -1782,16 +1782,41 @@ static NSString *const kKartPadPreferredGameKey = @"KartPadPreferredGame";
   self.window.windowLevel = UIWindowLevelAlert + 1.0;
   self.window.rootViewController = self.root;
   [self.window makeKeyAndVisible];
-  if (self.pendingMiiFailure) {
+  // Discarding the waiting Mii changes lets the game start; the rest of the apply is then retried.
+  while (self.pendingMiiFailure) {
+    __block BOOL discard = NO;
+    const BOOL discardable = KartPadCanDiscardPendingMiiChanges();
+    // As in showMessage, wait for the alert to finish dismissing before another can appear.
+    void (^finish)(BOOL) = ^(BOOL discarding) {
+      discard = discarding;
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)),
+                     dispatch_get_main_queue(), ^{ self.finished = YES; });
+    };
     dispatch_async(dispatch_get_main_queue(), ^{
-      [self showMessage:@"Pending Mii Changes Could Not Be Applied"
-                 detail:[NSString stringWithFormat:@"%@\n\nBackups and pending changes have been retained. Fully close and reopen KartPad to retry.", self.pendingMiiFailure.localizedDescription]
-             completion:^{ self.finished = YES; self.succeeded = NO; }];
+      UIAlertController *alert = [UIAlertController
+          alertControllerWithTitle:@"Pending Mii Changes Couldn’t Be Applied"
+                           message:[NSString stringWithFormat:@"%@\n\nBackups and pending changes have been retained. Fully close KartPad from the app switcher and reopen it to retry.%@",
+                                       self.pendingMiiFailure.localizedDescription,
+                                       discardable ? @" Discard Mii Changes drops the waiting Mii and license changes and starts the game." : @""]
+                    preferredStyle:UIAlertControllerStyleAlert];
+      [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel
+                                              handler:^(UIAlertAction *action) { (void)action; finish(NO); }]];
+      if (discardable) {
+        [alert addAction:[UIAlertAction actionWithTitle:@"Discard Mii Changes" style:UIAlertActionStyleDestructive
+                                                handler:^(UIAlertAction *action) { (void)action; finish(YES); }]];
+      }
+      [self.root presentViewController:alert animated:YES completion:nil];
     });
     while (!self.finished) [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
-    self.window.hidden = YES;
-    self.window = nil;
-    return NO;
+    self.finished = NO;
+    NSError *error = nil;
+    if (!discard || !KartPadDiscardPendingMiiChanges(&error)) {
+      self.succeeded = NO;
+      self.window.hidden = YES;
+      self.window = nil;
+      return NO;
+    }
+    self.pendingMiiFailure = KartPadApplyPendingMiiDatabase(&error) ? nil : error;
   }
   // The game runtime has no dialog of its own on iPhone/iPad, so a fatal error (for
   // example incomplete game data, #370) only closed the game. The runtime leaves its

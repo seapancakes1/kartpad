@@ -16,6 +16,8 @@ using KPMiiColor=UIColor;
 #define NSFontWeightSemibold UIFontWeightSemibold
 #define NSFontWeightRegular UIFontWeightRegular
 #endif
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+__asm__(".linker_option \"-framework\", \"UniformTypeIdentifiers\"");
 #include "KartPadMiiPreview.inc.mm"
 #include "KartPadMiiSounds.inc.mm"
 static NSString *KPMiiResourcePath() {
@@ -73,6 +75,43 @@ static BOOL KPMiiSetName(NSMutableData *data, NSString *name, NSUInteger offset)
     memcpy((uint8_t *)data.mutableBytes + offset, bytes.bytes, bytes.length);
     return YES;
 }
+// Wording and checks shared by the editor and the Miis screen, so names, files and restarts read
+// the same everywhere. A name holds 10 UTF-16 units; NSString lengths count the same units.
+static NSString *const KPMiiNameRule=@"Up to 10 characters. Emoji and some symbols take up more than one.";
+static NSString *KPMiiNameCount(NSString *text){return [NSString stringWithFormat:@"%lu of 10 characters",(unsigned long)text.length];}
+// nil when the name can be stored. An empty name is only a problem where one is required.
+static NSString *KPMiiNameProblem(NSString *text,BOOL required){
+    if(!text.length)return required?@"Enter a name.":nil;
+    if(text.length>10)return @"This name is too long. Please shorten it.";
+    NSData *bytes=[text dataUsingEncoding:NSUTF16BigEndianStringEncoding];
+    return bytes&&kartpad::mii::ValidateUtf16BigEndianName(Bytes(bytes))?nil:@"This name has a character a Mii can’t use.";
+}
+static NSString *KPMiiFileName(NSString *name){
+    NSString *clean=[[name componentsSeparatedByCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"/:\\"]] componentsJoinedByString:@"-"];
+    return [(clean.length?clean:@"Mii") stringByAppendingPathExtension:@"mii"];
+}
+// Mac restarts KartPad itself; iPhone and iPad are closed from the app switcher.
+static NSString *KPMiiRestartAdvice(NSUInteger count){
+#if TARGET_OS_OSX
+    return count>1?@"Restart KartPad to apply them.":@"Restart KartPad to apply it.";
+#else
+    return count>1?@"Fully close KartPad from the app switcher and reopen it to apply them.":@"Fully close KartPad from the app switcher and reopen it to apply it.";
+#endif
+}
+// A pending ghost import or save restore waits alone, so Mii changes wait for it.
+static NSString *KPMiiRestartFirstTitle(){
+#if TARGET_OS_OSX
+    return @"Restart KartPad First";
+#else
+    return @"Reopen KartPad First";
+#endif
+}
+static NSString *KPMiiRestartFirstMessage(){return [@"A ghost import or save restore is waiting for the next launch. " stringByAppendingString:KPMiiRestartAdvice(1)];}
+// The Miis screen hears about each saved Mii, so its banner names the change and it can select the Mii.
+@protocol KPMiiEditorListener <NSObject>
+- (void)miiEditorSaved:(NSString*)description mii:(NSData*)mii slot:(NSUInteger)slot;
+@end
+static __weak id<KPMiiEditorListener> KPMiiSaveListener;
 static KPMiiImage *KPMiiImageFromPixels(const kartpad::mii::Image &image, BOOL cropHead=NO) {
     NSData *data=[NSData dataWithBytes:image.rgba.data() length:image.rgba.size()];
     CGDataProviderRef provider=CGDataProviderCreateWithCFData((__bridge CFDataRef)data);
@@ -128,13 +167,44 @@ static KPMiiImage *KPMiiFeatureImage(const kartpad::mii::Resources&r,unsigned fi
     if((field==33||field==37)&&value)return KPMiiImageFromPixels(Portrait::AccessoryThumbnail(r,field,value,current.Get(field==33?34:39)),YES);
     // Face shapes share one framing (no per-tile crop) so their outlines can be compared.
     if(field==7)return KPMiiImageFromPixels(Portrait::FaceShapeThumbnail(r,value,Skin[current.Get(8)]));
+    // Other features sit on the Mii's own face shape so tiles match the preview.
     auto a=Appearance::Decode(CreateDefaultMii({0,0,0,0,0,0}));a.Set(field,value);
-    a.Set(8,current.Get(8));a.Set(12,current.Get(12));a.Set(39,current.Get(39));
+    a.Set(7,current.Get(7));a.Set(8,current.Get(8));a.Set(12,current.Get(12));a.Set(39,current.Get(39));
     if(field==9)a.Set(11,30);
     return KPMiiImageFromPixels(Portrait::Render(r,a),YES);
 }
-// Colours that feed the tiles; part of the thumbnail cache key so a colour change re-renders them.
-static NSString *KPMiiTileColors(const kartpad::mii::Appearance&a){return [NSString stringWithFormat:@"%u.%u.%u.%u.%u.%u.%u",a.Get(8),a.Get(12),a.Get(17),a.Get(22),a.Get(30),a.Get(34),a.Get(39)];}
+// Face shape and colours that feed the tiles; part of the thumbnail cache key so changing them re-renders the tiles.
+static NSString *KPMiiTileColors(const kartpad::mii::Appearance&a){return [NSString stringWithFormat:@"%u.%u.%u.%u.%u.%u.%u.%u",a.Get(7),a.Get(8),a.Get(12),a.Get(17),a.Get(22),a.Get(30),a.Get(34),a.Get(39)];}
+static void KPDrawImage(KPMiiImage *image,CGRect rect){
+    CGSize size=image.size;if(size.width<=0||size.height<=0)return;
+    CGFloat scale=std::min(rect.size.width/size.width,rect.size.height/size.height);
+    CGRect fit=CGRectMake(CGRectGetMidX(rect)-size.width*scale/2,CGRectGetMidY(rect)-size.height*scale/2,size.width*scale,size.height*scale);
+#if TARGET_OS_OSX
+    [image drawInRect:fit fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:@{NSImageHintInterpolation:@(NSImageInterpolationHigh)}];
+#else
+    [image drawInRect:fit];
+#endif
+}
+// Head portraits (the Miis screen and Create Mii) render on the resource worker and are cached by the Mii's 74 bytes, so an
+// unchanged Mii renders once per session. Without the imported RFL archive, tiles fall back to a
+// silhouette in the Mii's favorite color.
+static NSCache<NSData*,KPMiiImage*> *KPMiiPortraits(){static NSCache *cache;static dispatch_once_t once;dispatch_once(&once,^{cache=[NSCache new];});return cache;}
+static NSString *KPMiiPortraitProblem;
+static NSMutableSet<NSData*> *KPMiiPortraitsRendering(){static NSMutableSet *set;static dispatch_once_t once;dispatch_once(&once,^{set=[NSMutableSet set];});return set;}
+static void KPMiiRequestPortrait(NSData *mii,void(^ready)(void)){
+    if(mii.length!=kartpad::mii::kMiiBlockSize||[KPMiiPortraits() objectForKey:mii]||[KPMiiPortraitsRendering() containsObject:mii])return;
+    [KPMiiPortraitsRendering() addObject:mii];
+    dispatch_async(KPMiiWorkQueue(),^{
+        KPMiiImage *image=nil;NSString *problem=nil;
+        try{auto resources=KPMiiLoadResources();image=KPMiiImageFromPixels(kartpad::mii::Portrait::Render(*resources,kartpad::mii::Appearance::Decode(Bytes(mii))),YES);}
+        catch(const std::exception &e){problem=@(e.what());}
+        dispatch_async(dispatch_get_main_queue(),^{
+            [KPMiiPortraitsRendering() removeObject:mii];
+            if(image){[KPMiiPortraits() setObject:image forKey:mii];KPMiiPortraitProblem=nil;}else KPMiiPortraitProblem=problem;
+            ready();
+        });
+    });
+}
 // Mii Channel palette: silver gloss on pinstriped white, Wii-blue selection. Dark keeps the blue on graphite.
 struct KPPalette{unsigned background,stripe,panel,panelStroke,well,buttonTop,buttonBottom,buttonStroke,tabTop,tabBottom,selectedTop,selectedBottom,accentTop,accentBottom,accentStroke,text,secondaryText,icon,switchOff;CGFloat gloss,shadow;unsigned ledge,accentLedge;};
 static const KPPalette KPLightPalette{0xf2f4f5,0xe8ecee,0xfbfcfc,0xc9d1d6,0xe6ecef,0xffffff,0xdfe5e8,0xb3bdc3,0xfafbfc,0xd3dade,0xebf8fe,0xbde8fa,0x5ccbf3,0x1b9ad5,0x1784bc,0x3a4348,0x6a747a,0x5a646a,0xc3cbd0,.9,.20,0xb0bbc1,0x14709f};
@@ -147,6 +217,13 @@ static void KPUsePalette(id view){
     BOOL dark=[(UIView*)view traitCollection].userInterfaceStyle==UIUserInterfaceStyleDark;
 #endif
     KPP=dark?&KPDarkPalette:&KPLightPalette;
+}
+static void KPRefresh(id view){
+#if TARGET_OS_OSX
+    [(NSView*)view setNeedsDisplay:YES];
+#else
+    [(UIView*)view setNeedsDisplay];
+#endif
 }
 static KPMiiColor *KPColor(unsigned hex,CGFloat alpha=1){return [KPMiiColor colorWithRed:((hex>>16)&255)/255. green:((hex>>8)&255)/255. blue:(hex&255)/255. alpha:alpha];}
 static void KPSetInk(CGContextRef c,unsigned hex,CGFloat alpha=1){CGFloat r=((hex>>16)&255)/255.,g=((hex>>8)&255)/255.,b=(hex&255)/255.;CGContextSetRGBFillColor(c,r,g,b,alpha);CGContextSetRGBStrokeColor(c,r,g,b,alpha);}
@@ -219,9 +296,28 @@ static void KPIcon(CGContextRef c,unsigned category,CGRect rect,unsigned ink){
         CGContextSetLineWidth(c,2.6);KPLine(c,32,7,32,33);KPLine(c,28,3.5,36,3.5);KPLine(c,28,36.5,36,36.5);
         CGContextMoveToPoint(c,32,4.5);CGContextAddLineToPoint(c,28.5,9.5);CGContextAddLineToPoint(c,35.5,9.5);CGContextClosePath(c);CGContextFillPath(c);
         CGContextMoveToPoint(c,32,35.5);CGContextAddLineToPoint(c,28.5,30.5);CGContextAddLineToPoint(c,35.5,30.5);CGContextClosePath(c);CGContextFillPath(c);break;}
-    case 11:{ // Male body for the create screen and slider ends: the same Mii silhouette without the gauge.
-        CGContextFillEllipseInRect(c,CGRectMake(13.5,2,13,13));
-        CGContextMoveToPoint(c,15,17);CGContextAddLineToPoint(c,25,17);CGContextAddQuadCurveToPoint(c,28.5,17,29,20.5);CGContextAddLineToPoint(c,30.5,29);CGContextAddLineToPoint(c,26,29);CGContextAddLineToPoint(c,25.5,38);CGContextAddLineToPoint(c,21.2,38);CGContextAddLineToPoint(c,20,30.5);CGContextAddLineToPoint(c,18.8,38);CGContextAddLineToPoint(c,14.5,38);CGContextAddLineToPoint(c,14,29);CGContextAddLineToPoint(c,9.5,29);CGContextAddLineToPoint(c,11,20.5);CGContextAddQuadCurveToPoint(c,11.5,17,15,17);CGContextClosePath(c);CGContextFillPath(c);break;}
+    case 11:case 10:{ // Male and female Miis in Mii Channel proportions: a large round head over a short body,
+        // mitten arms and stubby legs; female wears an A-line dress. The arms are cut out of the body so they read apart.
+        BOOL female=category==10;CGFloat arm=female?4:4.4;
+        CGContextBeginTransparencyLayer(c,nullptr);
+        CGContextFillEllipseInRect(c,CGRectMake(12,1,16,15.5));
+        auto rounded=[&](CGRect r,CGFloat radius){CGPathRef path=CGPathCreateWithRoundedRect(r,radius,radius,nullptr);CGContextAddPath(c,path);CGContextFillPath(c);CGPathRelease(path);};
+        if(female){
+            CGContextMoveToPoint(c,16.5,17.5);CGContextAddLineToPoint(c,23.5,17.5);CGContextAddQuadCurveToPoint(c,26,17.5,26.6,20);CGContextAddLineToPoint(c,29.2,29.5);CGContextAddQuadCurveToPoint(c,29.8,32,27.2,32);
+            CGContextAddLineToPoint(c,12.8,32);CGContextAddQuadCurveToPoint(c,10.2,32,10.8,29.5);CGContextAddLineToPoint(c,13.4,20);CGContextAddQuadCurveToPoint(c,14,17.5,16.5,17.5);CGContextClosePath(c);CGContextFillPath(c);
+            for(CGFloat x:{15.4,20.8})rounded(CGRectMake(x,30,3.8,8),1.8);
+        }else{rounded(CGRectMake(13.5,17.5,13,12.5),4);for(CGFloat x:{14.2,20.9})rounded(CGRectMake(x,27,4.9,11),2.4);}
+        CGFloat inner=female?13.2:12.4,outer=female?10:9.4,top=female?20.5:20,bottom=female?27.5:28;
+        CGContextSetBlendMode(c,kCGBlendModeClear);CGContextSetLineWidth(c,arm+2.4);KPLine(c,inner,top,outer,bottom);KPLine(c,40-inner,top,40-outer,bottom);
+        CGContextSetBlendMode(c,kCGBlendModeNormal);CGContextSetLineWidth(c,arm);KPLine(c,inner,top,outer,bottom);KPLine(c,40-inner,top,40-outer,bottom);
+        CGContextEndTransparencyLayer(c);break;}
+    case 12:{ // Start from scratch, when portraits can't render: a plain face with a plus.
+        KPIcon(c,2,CGRectMake(0,4,34,34),ink);CGContextSetLineWidth(c,3);KPLine(c,34,2,34,12);KPLine(c,29,7,39,7);break;}
+    case 13:{ // Look-alikes, when portraits can't render: three faces.
+        CGContextBeginTransparencyLayer(c,nullptr);
+        KPIcon(c,2,CGRectMake(0,9,19,19),ink);KPIcon(c,2,CGRectMake(21,9,19,19),ink);
+        CGContextSetBlendMode(c,kCGBlendModeClear);CGContextFillEllipseInRect(c,CGRectMake(9,5,22,30));CGContextSetBlendMode(c,kCGBlendModeNormal);
+        KPIcon(c,2,CGRectMake(8,6,24,28),ink);CGContextEndTransparencyLayer(c);break;}
     case 2: // Face: a jaw outline with simple features.
         CGContextMoveToPoint(c,20,4);CGContextAddCurveToPoint(c,29,4,34,10,34,18);CGContextAddCurveToPoint(c,34,27,27,36,20,36);CGContextAddCurveToPoint(c,13,36,6,27,6,18);CGContextAddCurveToPoint(c,6,10,11,4,20,4);CGContextClosePath(c);CGContextStrokePath(c);
         CGContextFillEllipseInRect(c,CGRectMake(13,16,3.6,3.6));CGContextFillEllipseInRect(c,CGRectMake(23.4,16,3.6,3.6));
@@ -242,11 +338,6 @@ static void KPIcon(CGContextRef c,unsigned category,CGRect rect,unsigned ink){
     case 8: // Facial hair: a curled mustache.
         CGContextMoveToPoint(c,20,17);CGContextAddCurveToPoint(c,15,10,8,12,7,18);CGContextAddCurveToPoint(c,6,21,3,21,2,19);CGContextAddCurveToPoint(c,2,26,10,29,16,25.5);CGContextAddQuadCurveToPoint(c,19,23.5,20,22);
         CGContextAddQuadCurveToPoint(c,21,23.5,24,25.5);CGContextAddCurveToPoint(c,30,29,38,26,38,19);CGContextAddCurveToPoint(c,37,21,34,21,33,18);CGContextAddCurveToPoint(c,32,12,25,10,20,17);CGContextClosePath(c);CGContextFillPath(c);break;
-    case 10:{ // Female body for the create screen: a dress instead of a torso.
-        CGContextFillEllipseInRect(c,CGRectMake(15,2,10,10));
-        CGContextMoveToPoint(c,16,13.5);CGContextAddLineToPoint(c,24,13.5);CGContextAddQuadCurveToPoint(c,26,14,26.5,17);CGContextAddLineToPoint(c,29,29);CGContextAddLineToPoint(c,11,29);CGContextAddLineToPoint(c,13.5,17);CGContextAddQuadCurveToPoint(c,14,14,16,13.5);CGContextClosePath(c);CGContextFillPath(c);
-        CGContextSetLineWidth(c,3.4);KPLine(c,13,16,9,25);KPLine(c,27,16,31,25);
-        CGContextSetLineWidth(c,3.8);KPLine(c,17.5,29,17.2,37);KPLine(c,22.5,29,22.8,37);break;}
     case 9: // Glasses: lenses, bridge and arms.
         for(CGFloat x:{2.5,22.5}){CGPathRef lens=CGPathCreateWithRoundedRect(CGRectMake(x,13,15,13),5.5,5.5,nullptr);CGContextAddPath(c,lens);CGContextStrokePath(c);CGPathRelease(lens);}
         CGContextMoveToPoint(c,17.5,18);CGContextAddQuadCurveToPoint(c,20,15,22.5,18);CGContextStrokePath(c);KPLine(c,2.5,16,1.5,12.5);KPLine(c,37.5,16,38.5,12.5);break;
@@ -297,7 +388,8 @@ static void KPControlIcon(CGContextRef c,CGRect rect,KPGlyph kind,int direction,
     CGContextRestoreGState(c);
 }
 
-enum class KPAction{Category,Select,Adjust,Page,Mode,Toggle,Rotate,Front,Quit,Save,Discard,Birthday,Undo,Redo,More,Gender,Start,Slider,Sound};
+static constexpr unsigned KPLookAlikeCount=12;
+enum class KPAction{Category,Select,Adjust,Page,Mode,Toggle,Rotate,Front,Quit,Save,Discard,Birthday,Undo,Redo,More,Gender,Start,LookAlike,Shuffle,Back,Slider,Sound};
 struct KPItem{KPAction action;CGRect rect;unsigned field=0;int value=0;NSString *__strong label;BOOL enabled=YES;BOOL selected=NO;};
 @class KPMiiCanvas, KPMiiWiiButton;
 #if TARGET_OS_OSX
@@ -316,13 +408,19 @@ struct KPItem{KPAction action;CGRect rect;unsigned field=0;int value=0;NSString 
 @property(nonatomic) NSUInteger slot;
 @property(nonatomic) NSInteger category;
 @property(nonatomic) unsigned feature,page;
-@property(nonatomic) BOOL choosingGender,allowClose,previewLoaded;
+@property(nonatomic) BOOL creating,duplicating,allowClose,previewLoaded;
 @property(nonatomic) unsigned gender;
+// Create Mii: the look-alike grid, and its faces (one seed per tile, so changing gender keeps the shuffle).
+@property(nonatomic) BOOL pickingLookAlike;
+@property(nonatomic,copy) NSArray<NSNumber*> *lookSeeds;
+@property(nonatomic,copy) NSArray<NSData*> *lookAlikes;
+// The new Mii before a face was chosen, so Start Over can return to the create screen.
+@property(nonatomic,copy) NSData *blank;
 @property(nonatomic,strong) KPMiiCanvas *canvas;
 @property(nonatomic,strong) KPMiiMetalPreview *preview;
 @property(nonatomic,strong) NSMutableDictionary<NSString*,KPMiiImage*> *thumbnails;
 @property(nonatomic,copy) NSString *previewMessage,*validationMessage;
-@property(nonatomic,strong) NSMutableArray *nameFields,*nameHints;
+@property(nonatomic,strong) NSMutableArray *nameFields,*nameHints,*meters;
 @property(nonatomic) NSUInteger validationField;
 @property(nonatomic,weak) id buildLabel;
 // The last adjustment press, so held repeats tick instead of replaying the step sound.
@@ -341,11 +439,20 @@ struct KPItem{KPAction action;CGRect rect;unsigned field=0;int value=0;NSString 
 - (void)save;
 - (void)discard;
 - (BOOL)dirty;
+#if TARGET_OS_OSX
+- (void)birthday:(unsigned)field;
+#else
 - (void)birthday;
+#endif
 - (void)showMore;
 - (void)rebuild;
 - (BOOL)commitNames;
 - (void)setBody:(unsigned)field value:(unsigned)value;
+- (NSData*)scratch;
+- (void)shuffle;
+- (void)makeLookAlikes;
+- (void)begin:(NSData*)face;
+- (void)startOver;
 @end
 #if TARGET_OS_OSX
 @interface KPMiiCanvas : NSView
@@ -419,7 +526,8 @@ struct KPItem{KPAction action;CGRect rect;unsigned field=0;int value=0;NSString 
     }];
 }
 - (void)tap{if([self holds])return;KPMiiEditor *editor=self.canvas.editor;editor->_history.Begin();[self activate];editor->_history.End();}
-- (void)up{[self.repeatTimer invalidate];self.repeatTimer=nil;self.canvas.editor->_history.End();}
+// The editor can be gone when the window tears down its buttons.
+- (void)up{[self.repeatTimer invalidate];self.repeatTimer=nil;if(KPMiiEditor *editor=self.canvas.editor)editor->_history.End();}
 - (void)setHovered:(BOOL)hovered{
     KPMiiCanvas *canvas=self.canvas;if(!canvas)return;NSUInteger previous=canvas->_hoverIndex;
     if(hovered)canvas->_hoverIndex=self.index;else if(previous==self.index)canvas->_hoverIndex=NSNotFound;else return;
@@ -512,12 +620,50 @@ struct KPItem{KPAction action;CGRect rect;unsigned field=0;int value=0;NSString 
 - (void)accessibilityDecrement{[self step:-4];}
 #endif
 @end
+// Where an adjustment sits in its range, in the gauges' style: a recessed track with a Wii-blue
+// fill, a notch per step (every other step on long ranges) and a small handle. The two buttons
+// under it run from its left end to its right. They also carry the value for VoiceOver, so the
+// meter itself is decoration.
+#if TARGET_OS_OSX
+@interface KPMiiRangeMeter : NSView
+#else
+@interface KPMiiRangeMeter : UIView
+#endif
+@property(nonatomic,weak) KPMiiEditor *editor;
+@property(nonatomic) unsigned field;
+@end
+@implementation KPMiiRangeMeter
+#if TARGET_OS_OSX
+- (BOOL)isFlipped{return YES;}
+- (NSView*)hitTest:(NSPoint)point{return nil;}
+#else
+- (instancetype)initWithFrame:(CGRect)frame{if((self=[super initWithFrame:frame])){self.opaque=NO;self.backgroundColor=UIColor.clearColor;self.userInteractionEnabled=NO;self.isAccessibilityElement=NO;}return self;}
+#endif
+- (void)drawRect:(CGRect)rect{
+#if TARGET_OS_OSX
+    CGContextRef c=NSGraphicsContext.currentContext.CGContext;
+#else
+    CGContextRef c=UIGraphicsGetCurrentContext();
+#endif
+    KPUsePalette(self);auto f=kartpad::mii::AppearanceFields[self.field];unsigned span=std::max(1u,f.maximum-f.minimum);
+    unsigned value=std::clamp(kartpad::mii::Appearance::Decode(Bytes(self.editor.draft)).Get(self.field),f.minimum,f.maximum)-f.minimum;
+    CGRect t=CGRectMake(5,3,self.bounds.size.width-10,5);
+    KPFill(c,CGRectOffset(t,0,-1),KPP->ledge,2.5);KPFill(c,t,KPP->well,2.5);KPStroke(c,t,KPP->buttonStroke,1,2.5);
+    CGFloat x=t.origin.x+t.size.width*value/span;
+    if(x>t.origin.x+1.5)KPGradientFill(c,CGRectMake(t.origin.x+1,t.origin.y+1,x-t.origin.x-1,t.size.height-2),1.5,KPP->accentTop,KPP->accentBottom);
+    KPSetInk(c,KPP->buttonStroke);CGContextSetLineWidth(c,1);
+    for(unsigned i=0;i<=span;i+=span>12?2:1){CGFloat tx=t.origin.x+t.size.width*i/span;KPLine(c,tx,CGRectGetMaxY(t)+2,tx,CGRectGetMaxY(t)+4);}
+    CGRect handle=CGRectMake(x-4,.5,8,10);KPFill(c,CGRectOffset(handle,0,1),0x000000,3,.2);KPGradientFill(c,handle,3,0xffffff,0xe3e8eb);KPStroke(c,handle,KPP->buttonStroke,1,3);
+}
+@end
 // Preview idle animation (blink, smile, body loop, head sway). On unless the player turns it off.
 static NSString *const KPMiiPreviewAnimationKey=@"KartPadMiiPreviewAnimation";
 static BOOL KPMiiPreviewAnimation(){id value=[NSUserDefaults.standardUserDefaults objectForKey:KPMiiPreviewAnimationKey];return value?[value boolValue]:YES;}
 static unsigned KPBirthdayDays(unsigned month){return kartpad::mii::BirthdayDays(month);}
 static NSArray<NSString*> *KPBirthdayMonths(){return @[@"Not set",@"January",@"February",@"March",@"April",@"May",@"June",@"July",@"August",@"September",@"October",@"November",@"December"];}
 static NSString *KPBirthdayLabel(const kartpad::mii::Appearance &a){return a.Get(1)&&a.Get(2)?[NSString stringWithFormat:@"%@ %u",KPBirthdayMonths()[a.Get(1)],a.Get(2)]:@"Not set";}
+// Field 1 is the month, field 2 the day (shown as “Day” until a month is chosen).
+static NSString *KPBirthdayPart(const kartpad::mii::Appearance &a,unsigned field){return field==1?KPBirthdayMonths()[a.Get(1)]:a.Get(1)&&a.Get(2)?[NSString stringWithFormat:@"%u",a.Get(2)]:@"Day";}
 static id KPLabelView(NSString *text,CGRect frame,CGFloat size=16,BOOL bold=NO,BOOL secondary=NO){
     KPMiiColor *color=KPColor(secondary?KPP->secondaryText:KPP->text);auto weight=bold?NSFontWeightSemibold:NSFontWeightRegular;
 #if TARGET_OS_OSX
@@ -549,7 +695,15 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
 #else
     [self setNeedsDisplay];
 #endif
-    for(id hint in self.editor.nameHints){BOOL invalid=self.editor.validationMessage.length&&[hint tag]==self.editor.validationField;NSString *message=invalid?self.editor.validationMessage:@"Up to 10 characters";
+    // Each name field counts what it holds, or says what is wrong with it.
+    for(id hint in self.editor.nameHints){BOOL invalid=self.editor.validationMessage.length&&[hint tag]==self.editor.validationField;NSString *text=nil;for(id field in self.editor.nameFields)if([field tag]==[hint tag]){
+#if TARGET_OS_OSX
+            text=[field stringValue];
+#else
+            text=[field text];
+#endif
+        }
+        NSString *message=invalid?self.editor.validationMessage:KPMiiNameCount(text?:@"");
 #if TARGET_OS_OSX
         [hint setStringValue:message];[hint setTextColor:invalid?NSColor.systemRedColor:KPColor(KPP->secondaryText)];
 #else
@@ -557,13 +711,21 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
 #endif
     }
     auto a=kartpad::mii::Appearance::Decode(Bytes(self.editor.draft));BOOL sound=[KPMiiSounds shared].enabled;
+    for(id meter in self.editor.meters)KPRefresh(meter);
+#if TARGET_OS_OSX
+    // The close button's dot marks unsaved changes, and the title names the Mii.
+    if(NSWindow *window=self.editor.window){NSString *base=self.editor.slot!=NSNotFound?@"Edit Mii":self.editor.duplicating?@"Duplicate Mii":@"Create Mii",*name=KPMiiName(self.editor.draft,2);
+        window.title=self.editor.creating||!name.length?base:[NSString stringWithFormat:@"%@ — %@",base,name];window.documentEdited=!self.editor.creating&&[self.editor dirty];}
+#endif
     for(KPMiiWiiButton *button in self.buttons){auto &item=_items[button.index];
         if(item.action==KPAction::Adjust){auto f=kartpad::mii::AppearanceFields[item.field];int value=int(a.Get(item.field))+item.value;item.enabled=value>=int(f.minimum)&&value<=int(f.maximum);}
         if(item.action==KPAction::Undo)item.enabled=self.editor->_history.CanUndo();
         if(item.action==KPAction::Redo)item.enabled=self.editor->_history.CanRedo();
         if(item.action==KPAction::Save)item.enabled=[self.editor dirty];
         button.enabled=item.enabled;
-        NSString *value=item.action==KPAction::Toggle?(KPToggleOn(item,a)?@"On":@"Off"):item.action==KPAction::Sound?(sound?@"On":@"Off"):item.action==KPAction::Mode&&item.selected?@"Selected":nil;
+        NSString *value=item.action==KPAction::Toggle?(KPToggleOn(item,a)?@"On":@"Off"):item.action==KPAction::Sound?(sound?@"On":@"Off"):item.action==KPAction::Mode&&item.selected?@"Selected":item.action==KPAction::Birthday&&item.field?KPBirthdayPart(a,item.field):nil;
+        // Adjustments say where they are in their range, as the meter above them shows.
+        if(item.action==KPAction::Adjust){auto f=kartpad::mii::AppearanceFields[item.field];value=[NSString stringWithFormat:@"%u of %u",a.Get(item.field)-f.minimum+1,f.maximum-f.minimum+1];}
 #if TARGET_OS_OSX
         if(item.action==KPAction::Sound)[button setAccessibilityValue:@(sound)];else [button setAccessibilityValue:value];
 #else
@@ -573,6 +735,9 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
         BOOL chosen=item.action==KPAction::Select?a.Get(item.field)==unsigned(item.value):item.selected;
         NSUInteger look=NSUInteger(item.enabled)|NSUInteger(chosen)<<1|NSUInteger(item.action==KPAction::Toggle&&KPToggleOn(item,a))<<2|NSUInteger(item.action==KPAction::Sound&&sound)<<3|(item.action==KPAction::Birthday?NSUInteger(a.Get(1))<<4|NSUInteger(a.Get(2))<<8:0);
         id art=item.action==KPAction::Select&&item.field&&!KPColorField(item.field)?self.editor.thumbnails[[NSString stringWithFormat:@"%u:%d",item.field,item.value]]:nil;
+        if(item.action==KPAction::LookAlike&&NSUInteger(item.value)<self.editor.lookAlikes.count)art=[KPMiiPortraits() objectForKey:self.editor.lookAlikes[item.value]];
+        if(item.action==KPAction::Start&&item.value==0)art=[KPMiiPortraits() objectForKey:[self.editor scratch]];
+        if(item.action==KPAction::Start&&item.value==1){NSUInteger ready=0;for(NSUInteger k=0;k<4&&k<self.editor.lookAlikes.count;k++)ready+=[KPMiiPortraits() objectForKey:self.editor.lookAlikes[k]]!=nil;look|=ready<<16;}
         if(look==button.look&&art==button.art)continue;
         button.look=look;button.art=art;
 #if TARGET_OS_OSX
@@ -585,7 +750,7 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
 - (void)rebuild{
     if(!self.editor.draft)return;KPUsePalette(self);
     for(id view in self.subviews.copy)if(view!=self.editor.preview)[view removeFromSuperview];
-    _hoverIndex=NSNotFound;self.buttons=[NSMutableArray array];self.editor.nameFields=[NSMutableArray array];self.editor.nameHints=[NSMutableArray array];_items.clear();
+    _hoverIndex=NSNotFound;self.buttons=[NSMutableArray array];self.editor.nameFields=[NSMutableArray array];self.editor.nameHints=[NSMutableArray array];self.editor.meters=[NSMutableArray array];_items.clear();
     CGFloat w=self.bounds.size.width,h=self.bounds.size.height;BOOL compact=w<680;
     CGFloat margin=compact?12:24,top=compact?154:114;
     // Footer actions sit on the bottom edge; compact layouts keep a status line above them.
@@ -599,16 +764,34 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
     _nameRect=CGRectMake(_previewRect.origin.x+16,_previewRect.origin.y+2,_previewRect.size.width-32-3*turn-20,header);
     self.editor.preview.frame=CGRectMake(_previewRect.origin.x+8,_previewRect.origin.y+header,_previewRect.size.width-16,_previewRect.size.height-header-8);
     self.editor.preview.clearColor=MTLClearColorMake(((KPP->well>>16)&255)/255.,((KPP->well>>8)&255)/255.,(KPP->well&255)/255.,1);
-    self.editor.preview.hidden=self.editor.choosingGender;
+    self.editor.preview.hidden=self.editor.creating;
     auto add=[&](KPAction action,CGRect rect,NSString *label,unsigned field=0,int value=0,BOOL selected=NO){_items.push_back({action,rect,field,value,label,YES,selected});};
     id form=nil;CGFloat x=_panelRect.origin.x+12,y=_panelRect.origin.y+12,pw=_panelRect.size.width-24;
-    if(self.editor.choosingGender){
-        CGFloat bw=std::min(CGFloat(220),(w-60)/2);CGFloat center=h*.36;
-        add(KPAction::Gender,CGRectMake(w/2-bw-8,center,bw,164),@"Male",0,0,self.editor.gender==0);
-        add(KPAction::Gender,CGRectMake(w/2+8,center,bw,164),@"Female",0,1,self.editor.gender==1);
-        add(KPAction::Start,CGRectMake(w/2-120,center+196,240,52),@"Start from scratch");
-        add(KPAction::Quit,CGRectMake(margin,_footerY,120,44),@"Cancel");
+    if(self.editor.creating){
+        // Title block, a small gender switch, then either the two ways to start or the look-alike grid.
+        CGFloat available=_footerY-16-54;BOOL picking=self.editor.pickingLookAlike;
+        CGFloat cardW=std::min(CGFloat(250),(w-2*margin-16)/2),cardH=std::max(CGFloat(96),std::min({CGFloat(220),cardW*.9,available-150}));
+        CGFloat block=picking?available:136+cardH,top=54+std::max(CGFloat(0),(available-block)/2);
+        _nameRect=CGRectMake(margin,top,w-2*margin,66);
+        CGFloat pillW=compact?118:128,pillY=top+76;
+        add(KPAction::Gender,CGRectMake(w/2-pillW-6,pillY,pillW,44),@"Male",0,0,self.editor.gender==0);
+        add(KPAction::Gender,CGRectMake(w/2+6,pillY,pillW,44),@"Female",0,1,self.editor.gender==1);
+        CGFloat bodyY=pillY+44+(picking?18:24);
+        if(picking){
+            unsigned cols=compact?3:4,rows=KPLookAlikeCount/cols;CGFloat gap=compact?8:12,gridH=_footerY-16-bodyY;
+            CGFloat side=std::max(CGFloat(40),std::min({CGFloat(150),(w-2*margin-gap*(cols-1))/cols,(gridH-gap*(rows-1))/rows}));
+            CGFloat gx=(w-cols*side-gap*(cols-1))/2;
+            for(unsigned i=0;i<KPLookAlikeCount;i++)add(KPAction::LookAlike,CGRectMake(gx+(i%cols)*(side+gap),bodyY+(i/cols)*(side+gap),side,side),[NSString stringWithFormat:@"Look-alike %u",i+1],0,int(i));
+            add(KPAction::Back,CGRectMake(margin,_footerY,120,44),@"Back");
+            add(KPAction::Shuffle,CGRectMake(w-margin-140,_footerY,140,44),@"Shuffle");
+        }else{
+            add(KPAction::Start,CGRectMake(w/2-cardW-8,bodyY,cardW,cardH),@"Start from scratch",0,0);
+            add(KPAction::Start,CGRectMake(w/2+8,bodyY,cardW,cardH),@"Choose a look-alike",0,1);
+            add(KPAction::Quit,CGRectMake(margin,_footerY,120,44),@"Cancel");
+        }
         add(KPAction::Sound,CGRectMake(w-margin-96,6,96,40),@"Sound effects");
+        __weak KPMiiCanvas *weak=self;void(^ready)(void)=^{[weak redraw];};
+        KPMiiRequestPortrait([self.editor scratch],ready);for(NSData *mii in self.editor.lookAlikes)KPMiiRequestPortrait(mii,ready);
     }else{
         CGFloat gap=compact?5:8;int cols=compact?5:10;CGFloat tw=(w-2*margin-gap*(cols-1))/cols;
         for(unsigned i=0;i<10;i++)add(KPAction::Category,CGRectMake(margin+(i%cols)*(tw+gap),54+(i/cols)*48,tw,46),[NSString stringWithUTF8String:kartpad::mii::EditorCategories[i]],i,0,self.editor.category==i);
@@ -617,7 +800,7 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
         add(KPAction::Front,CGRectMake(tx-turn-6,ty,turn,turn),@"Face front");
         add(KPAction::Rotate,CGRectMake(tx,ty,turn,turn),@"Turn right",0,1);
         CGFloat saveW=compact?150:164,cancelW=compact?110:120;
-        add(KPAction::Save,CGRectMake(w-margin-saveW,_footerY,saveW,44),@"Save & Quit");
+        add(KPAction::Save,CGRectMake(w-margin-saveW,_footerY,saveW,44),@"Save");
         add(KPAction::Discard,CGRectMake(w-margin-saveW-10-cancelW,_footerY,cancelW,44),@"Cancel");
         add(KPAction::Sound,CGRectMake(w-margin-136-12-96,6,96,40),@"Sound effects");
         add(KPAction::Undo,CGRectMake(w-margin-136,6,40,40),@"Undo");add(KPAction::Redo,CGRectMake(w-margin-88,6,40,40),@"Redo");add(KPAction::More,CGRectMake(w-margin-40,6,40,40),@"More");
@@ -642,12 +825,12 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
                 UITextField *field=[[UITextField alloc]initWithFrame:CGRectMake(fx,ry+26,cw,36)];field.text=KPMiiName(self.editor.draft,n?54:2);field.font=[UIFontMetrics.defaultMetrics scaledFontForFont:[UIFont systemFontOfSize:18] maximumPointSize:24];field.adjustsFontForContentSizeCategory=YES;field.borderStyle=UITextBorderStyleRoundedRect;field.autocorrectionType=UITextAutocorrectionTypeNo;field.delegate=self.editor;[field addTarget:self.editor action:@selector(nameChanged:) forControlEvents:UIControlEventEditingChanged];
 #endif
 #if TARGET_OS_OSX
-                field.toolTip=@"Names fit 10 UTF-16 units. Emoji and some symbols use more than one unit.";
+                field.toolTip=KPMiiNameRule;
 #else
-                field.accessibilityHint=@"Up to 10 letters. Emoji and some symbols use more of the available space.";
+                field.accessibilityHint=KPMiiNameRule;
 #endif
                 field.tag=n?54:2;[form addSubview:field];[self.editor.nameFields addObject:field];
-                id hint=KPLabelView(@"Up to 10 characters",CGRectMake(fx+2,ry+64,cw,20),12,NO,YES);[hint setTag:field.tag];[form addSubview:hint];[self.editor.nameHints addObject:hint];
+                id hint=KPLabelView(KPMiiNameCount(KPMiiName(self.editor.draft,field.tag)),CGRectMake(fx+2,ry+64,cw,20),12,NO,YES);[hint setTag:field.tag];[form addSubview:hint];[self.editor.nameHints addObject:hint];
             }
             fy=two?100:188;
             [form addSubview:KPLabelView(@"Gender",CGRectMake(2,fy,cw,22),14,YES,YES)];
@@ -656,13 +839,10 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
             CGFloat bx=two?cw+16:0,by=two?fy:fy+86;
             [form addSubview:KPLabelView(@"Birthday",CGRectMake(bx+2,by,cw,22),14,YES,YES)];
 #if TARGET_OS_OSX
-            NSPopUpButton *month=[[NSPopUpButton alloc]initWithFrame:CGRectMake(bx,by+32,(cw-8)*.62,32) pullsDown:NO];
-            [month addItemsWithTitles:KPBirthdayMonths()];
-            [month selectItemAtIndex:appearance.Get(1)];month.tag=1;month.target=self.editor;month.action=@selector(birthdayChanged:);[month setAccessibilityLabel:@"Birthday month"];[form addSubview:month];
-            NSPopUpButton *day=[[NSPopUpButton alloc]initWithFrame:CGRectMake(bx+(cw-8)*.62+8,by+32,(cw-8)*.38,32) pullsDown:NO];
-            if(!appearance.Get(1))[day addItemWithTitle:@"Day"];
-            else for(unsigned d=1;d<=KPBirthdayDays(appearance.Get(1));d++)[day addItemWithTitle:[NSString stringWithFormat:@"%u",d]];
-            [day selectItemAtIndex:appearance.Get(2)?std::min(appearance.Get(2),KPBirthdayDays(appearance.Get(1)))-1:0];day.enabled=appearance.Get(1)>0;day.tag=2;day.target=self.editor;day.action=@selector(birthdayChanged:);[day setAccessibilityLabel:@"Birthday day"];[form addSubview:day];
+            // Month and day: Wii faces like Male/Female that open a menu of choices.
+            CGFloat mw=(cw-8)*.62;
+            add(KPAction::Birthday,CGRectMake(x+bx,y+by+26,mw,44),@"Birthday month",1);
+            add(KPAction::Birthday,CGRectMake(x+bx+mw+8,y+by+26,cw-8-mw,44),@"Birthday day",2);_items.back().enabled=appearance.Get(1)>0;
 #else
             add(KPAction::Birthday,CGRectMake(x+bx,y+by+26,cw,44),KPBirthdayLabel(appearance));
 #endif
@@ -729,9 +909,11 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
             case 8:adjustments=appearance.Get(42)?std::vector<KPAdjustment>{{44,@"Mole position",up,down},{43,@"Mole size",smaller,larger},{45,@"Mole sideways",@"Move left",@"Move right"}}:std::vector<KPAdjustment>{{41,@"Position",up,down},{40,@"Size",smaller,larger}};break;
             case 9:adjustments={{36,@"Position",up,down},{35,@"Size",smaller,larger}};break;
             }
+            // Title, where the value sits in its range, then the two directions.
             for(const auto &adjustment:adjustments){
                 [form addSubview:KPLabelView(adjustment.title,CGRectMake(sx-x+2,sy-y,side,18),12,YES,YES)];
-                add(KPAction::Adjust,CGRectMake(sx,sy+20,(side-6)/2,44),adjustment.less,adjustment.field,-1);add(KPAction::Adjust,CGRectMake(sx+(side+6)/2,sy+20,(side-6)/2,44),adjustment.more,adjustment.field,1);sy+=72;}
+                KPMiiRangeMeter *meter=[[KPMiiRangeMeter alloc]initWithFrame:CGRectMake(sx-x+2,sy-y+20,side-4,12)];meter.editor=self.editor;meter.field=adjustment.field;[form addSubview:meter];[self.editor.meters addObject:meter];
+                add(KPAction::Adjust,CGRectMake(sx,sy+36,(side-6)/2,44),adjustment.less,adjustment.field,-1);add(KPAction::Adjust,CGRectMake(sx+(side+6)/2,sy+36,(side-6)/2,44),adjustment.more,adjustment.field,1);sy+=88;}
             contentHeight=std::max(pager+4*(tileH+tileGap),sy-y+4);
         }
         contentHeight=std::max(contentHeight+4,frame.size.height);
@@ -766,7 +948,11 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
     KPUsePalette(self);KPFill(c,self.bounds,KPP->background);CGFloat w=self.bounds.size.width,h=self.bounds.size.height;BOOL compact=w<680;
     // Wii menu pinstripes.
     KPSetInk(c,KPP->stripe);CGContextSetLineWidth(c,1);for(CGFloat y=1.5;y<h;y+=4)KPLine(c,0,y,w,y);
-    if(self.editor.choosingGender){KPText(@"Create a Mii",CGRectMake(20,h*.16,w-40,40),30,KPP->text,YES);KPText(@"Choose Male or Female, then start from scratch.",CGRectMake(20,h*.16+46,w-40,48),17,KPP->secondaryText);return;}
+    if(self.editor.creating){BOOL picking=self.editor.pickingLookAlike;
+        NSString *note=!picking?@"Start from scratch, or pick from random look-alikes.":KPMiiPortraitProblem.length?@"Faces appear once game data is imported.":@"Pick a face to start from, or shuffle for new ones.";
+        KPText(picking?@"Choose a look-alike":@"Create a Mii",CGRectMake(_nameRect.origin.x,_nameRect.origin.y,_nameRect.size.width,38),28,KPP->text,YES);
+        KPText(note,CGRectMake(_nameRect.origin.x,_nameRect.origin.y+40,_nameRect.size.width,24),16,KPP->secondaryText);
+        return;}
     KPText([NSString stringWithUTF8String:kartpad::mii::EditorCategories[self.editor.category]],CGRectMake(compact?12:24,13,w-200,28),21,KPP->text,YES,NSTextAlignmentLeft);
     for(CGRect card:{_previewRect,_panelRect}){KPFill(c,CGRectOffset(card,0,2),0x000000,18,KPP->shadow*.6);KPFill(c,card,KPP->panel,18);KPStroke(c,card,KPP->panelStroke,1,18);}
     CGRect well=CGRectInset(self.editor.preview.frame,-4,-4);KPFill(c,well,KPP->well,13);
@@ -787,14 +973,30 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
     }
     BOOL selected=item.selected;if(item.action==KPAction::Select)selected=a.Get(item.field)==unsigned(item.value);
     KPAction action=item.action;BOOL round=action==KPAction::Undo||action==KPAction::Redo||action==KPAction::More||action==KPAction::Rotate||action==KPAction::Front||action==KPAction::Page;
-    KPStyle style=action==KPAction::Category?KPStyle::Tab:action==KPAction::Save||action==KPAction::Start?KPStyle::Primary:action==KPAction::Gender?KPStyle::Card:action==KPAction::Select&&item.field!=0?(KPColorField(item.field)?KPStyle::Tile:KPStyle::Art):round?KPStyle::Round:KPStyle::Plain;
+    KPStyle style=action==KPAction::Category?KPStyle::Tab:action==KPAction::Save?KPStyle::Primary:action==KPAction::Start?KPStyle::Card:action==KPAction::LookAlike?KPStyle::Art:action==KPAction::Select&&item.field!=0?(KPColorField(item.field)?KPStyle::Tile:KPStyle::Art):round?KPStyle::Round:KPStyle::Plain;
     KPButtonFace(c,r,style,selected,item.enabled,pressed,i==_hoverIndex);
     CGContextSaveGState(c);if(!item.enabled)CGContextSetAlpha(c,.42);if(pressed)CGContextTranslateCTM(c,0,2);
     unsigned ink=style==KPStyle::Primary||(style==KPStyle::Tab&&selected)?0xffffff:KPP->icon;
     CGFloat glyphSide=std::min(face.size.width,face.size.height)*(round?.6:.68);CGRect glyph=CGRectMake(CGRectGetMidX(face)-glyphSide/2,CGRectGetMidY(face)-glyphSide/2,glyphSide,glyphSide);
     switch(action){
     case KPAction::Category:{CGFloat side=std::min(CGFloat(32),face.size.height-10);KPIcon(c,item.field,CGRectMake(CGRectGetMidX(face)-side/2,CGRectGetMidY(face)-side/2,side,side),ink);break;}
-    case KPAction::Gender:KPIcon(c,item.value?10:11,CGRectMake(CGRectGetMidX(face)-32,20,64,80),selected?KPP->accentStroke:KPP->icon);KPCenteredText(item.label,CGRectMake(4,112,face.size.width-8,30),22,KPP->text,YES);break;
+    case KPAction::Gender:{CGFloat side=face.size.height-12;CGSize text=CGSizeMake(item.value?66:46,face.size.height);CGFloat left=CGRectGetMidX(face)-(side+6+text.width)/2;
+        KPIcon(c,item.value?10:11,CGRectMake(left,6,side,side),selected?KPP->accentStroke:KPP->icon);KPCenteredText(item.label,CGRectMake(left+side+6,0,text.width,face.size.height),16,selected?KPP->accentStroke:KPP->text,YES,NSTextAlignmentLeft);break;}
+    case KPAction::Start:{
+        // Light portrait wells, as on the Miis screen, so dark hair shows in dark mode.
+        CGFloat label=34,side=std::min(face.size.width-28,face.size.height-label-18);CGRect well=CGRectMake(CGRectGetMidX(face)-side/2,12,side,side);
+        KPFill(c,well,KPLightPalette.well,side*.12);
+        if(item.value==0){if(KPMiiImage *image=[KPMiiPortraits() objectForKey:[self.editor scratch]])KPDrawImage(image,CGRectInset(well,side*.1,side*.1));else KPIcon(c,12,CGRectInset(well,side*.16,side*.16),KPLightPalette.icon);}
+        else{// A 2 × 2 sample of the look-alike pool.
+            NSArray<NSData*> *faces=self.editor.lookAlikes;BOOL any=NO;CGFloat cell=side*.42,gap=side*.04;
+            for(NSUInteger k=0;k<4&&k<faces.count;k++)if(KPMiiImage *image=[KPMiiPortraits() objectForKey:faces[k]]){any=YES;KPDrawImage(image,CGRectMake(CGRectGetMidX(well)+(k%2?gap/2:-gap/2-cell),CGRectGetMidY(well)+(k/2?gap/2:-gap/2-cell),cell,cell));}
+            if(!any)KPIcon(c,13,CGRectInset(well,side*.12,side*.12),KPLightPalette.icon);}
+        KPCenteredText(item.label,CGRectMake(4,CGRectGetMaxY(well)+4,face.size.width-8,face.size.height-CGRectGetMaxY(well)-6),face.size.width<200?16:18,KPP->text,YES);break;}
+    case KPAction::LookAlike:{
+        NSData *mii=NSUInteger(item.value)<self.editor.lookAlikes.count?self.editor.lookAlikes[item.value]:nil;CGRect well=CGRectInset(face,face.size.width*.08,face.size.height*.08);
+        if(KPMiiImage *image=mii?[KPMiiPortraits() objectForKey:mii]:nil)KPDrawImage(image,well);
+        else{CGContextSetAlpha(c,.3);KPIcon(c,2,CGRectInset(well,well.size.width*.14,well.size.height*.14),KPLightPalette.icon);}
+        break;}
     case KPAction::Select:
         if(item.field==0){KPCenteredText(item.label,face,16,KPP->text,selected);break;}
         if(KPColorField(item.field)){
@@ -825,7 +1027,15 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
     case KPAction::Toggle:{
         CGRect track=CGRectMake(CGRectGetMaxX(face)-12-40,CGRectGetMidY(face)-12,40,24);
         KPCenteredText(item.label,CGRectMake(14,0,track.origin.x-20,face.size.height),face.size.width<150?13:15,KPP->text,NO,NSTextAlignmentLeft);KPSwitch(c,track,KPToggleOn(item,a));break;}
-    case KPAction::Birthday:KPCenteredText(KPBirthdayLabel(a),face,16,KPP->text);break;
+    case KPAction::Birthday:
+        if(!item.field){KPCenteredText(KPBirthdayLabel(a),face,16,KPP->text);break;}
+        {// A small down chevron marks the menu.
+            CGFloat cx=face.size.width-20,cy=CGRectGetMidY(face);
+            KPCenteredText(KPBirthdayPart(a,item.field),CGRectMake(14,0,cx-26,face.size.height),16,KPP->text,NO,NSTextAlignmentLeft);
+            KPSetInk(c,KPP->icon);CGContextSetLineWidth(c,2.6);CGContextSetLineCap(c,kCGLineCapRound);CGContextSetLineJoin(c,kCGLineJoinRound);
+            CGContextMoveToPoint(c,cx-6,cy-3);CGContextAddLineToPoint(c,cx,cy+3);CGContextAddLineToPoint(c,cx+6,cy-3);CGContextStrokePath(c);
+        }
+        break;
     case KPAction::Mode:KPCenteredText(item.label,face,face.size.width<80?13:14,selected?KPP->accentStroke:KPP->text,YES);break;
     default:KPCenteredText(item.label,face,style==KPStyle::Primary?16:15,style==KPStyle::Primary?0xffffff:KPP->text,YES);break;
     }
@@ -833,8 +1043,11 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
 }
 @end
 @implementation KPMiiEditor
-- (BOOL)dirty{
-    if((!self.choosingGender&&self.slot==NSNotFound)||![self.draft isEqualToData:self.original])return YES;
+// A new Mii is unsaved until it is saved; otherwise only edits since opening count.
+- (BOOL)dirty{return (!self.creating&&self.slot==NSNotFound)||[self edited];}
+// Changed since the editor opened, or since a new Mii's face was chosen.
+- (BOOL)edited{
+    if(![self.draft isEqualToData:self.original])return YES;
     for(id field in self.nameFields){
 #if TARGET_OS_OSX
         NSString *text=[field stringValue];
@@ -845,6 +1058,21 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
     }return NO;
 }
 - (void)rebuild{[self.canvas rebuild];}
+// The blank face for the chosen gender; female starts with the Mii Channel's female hair, eyes and eyebrows.
+- (NSData*)scratch{
+    auto a=kartpad::mii::Appearance::Decode(Bytes(self.draft));a.Set(0,self.gender);if(self.gender){a.Set(11,12);a.Set(14,4);a.Set(20,0);}
+    return [NSData dataWithBytes:a.bytes.data() length:a.bytes.size()];
+}
+- (void)shuffle{NSMutableArray *seeds=[NSMutableArray array];for(unsigned i=0;i<KPLookAlikeCount;i++)[seeds addObject:@(arc4random())];self.lookSeeds=seeds;[self makeLookAlikes];}
+- (void)makeLookAlikes{
+    auto base=kartpad::mii::Appearance::Decode(Bytes(self.draft));NSMutableArray *faces=[NSMutableArray array];
+    for(NSNumber *seed in self.lookSeeds){auto a=kartpad::mii::LookAlike(base,self.gender,seed.unsignedIntValue);[faces addObject:[NSData dataWithBytes:a.bytes.data() length:a.bytes.size()]];}
+    self.lookAlikes=faces;
+}
+// Leaves the create screen with the chosen face and opens Face.
+- (void)begin:(NSData*)face{
+    KPPlay(KPSound::NewMii);self.draft=face.mutableCopy;self.original=face.copy;self.creating=NO;self.pickingLookAlike=NO;self.lookAlikes=nil;[self categoryChangedTo:2];
+}
 - (void)applyAppearance:(const kartpad::mii::Appearance&)appearance{
     auto before=kartpad::mii::Appearance::Decode(Bytes(self.draft));_history.Record(before,appearance);
     self.draft=[NSMutableData dataWithBytes:appearance.bytes.data() length:appearance.bytes.size()];
@@ -887,8 +1115,11 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
     case KPAction::Category:if(![self commitNames])return;KPPlay(item.field==unsigned(self.category)?KPSound::Same:KPSound::Tab);[self categoryChangedTo:item.field];return;
     case KPAction::Page:KPPlay(item.value>0?KPSound::PageNext:KPSound::PagePrevious);self.page+=item.value;[self rebuild];[self refreshPreview];return;
     case KPAction::Mode:KPPlay(item.field==self.feature?KPSound::Same:KPSound::Tab);self.feature=item.field;self.page=kartpad::mii::FeaturePage(item.field,a.Get(item.field));[self rebuild];[self refreshPreview];return;
-    case KPAction::Gender:KPPlay(self.gender==unsigned(item.value)?KPSound::Same:KPSound::Confirm);self.gender=item.value;[self rebuild];return;
-    case KPAction::Start:{KPPlay(KPSound::NewMii);a.Set(0,self.gender);if(self.gender){a.Set(11,12);a.Set(14,4);a.Set(20,0);}self.draft=[NSMutableData dataWithBytes:a.bytes.data() length:74];self.original=self.draft.copy;self.choosingGender=NO;[self categoryChangedTo:2];return;}
+    case KPAction::Gender:KPPlay(self.gender==unsigned(item.value)?KPSound::Same:KPSound::Confirm);self.gender=item.value;[self makeLookAlikes];[self rebuild];return;
+    case KPAction::Start:if(item.value){KPPlay(KPSound::Press);self.pickingLookAlike=YES;[self rebuild];return;}[self begin:[self scratch]];return;
+    case KPAction::LookAlike:if(NSUInteger(item.value)<self.lookAlikes.count)[self begin:self.lookAlikes[item.value]];return;
+    case KPAction::Shuffle:KPPlay(KPSound::PageNext);[self shuffle];[self rebuild];return;
+    case KPAction::Back:KPPlay(KPSound::PagePrevious);self.pickingLookAlike=NO;[self rebuild];return;
     case KPAction::Select:{BOOL changed=a.Get(item.field)!=unsigned(item.value);KPPlay(!changed?KPSound::Same:item.field==0?KPSound::Confirm:KPColorField(item.field)?KPSound::Tab:KPSound::Press);a.Set(item.field,item.value);[self applyAppearance:a];if(changed)[self.preview react];return;}
     case KPAction::Adjust:{
         int value=int(a.Get(item.field))+item.value;auto f=kartpad::mii::AppearanceFields[item.field];
@@ -899,13 +1130,17 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
     case KPAction::Toggle:a.Set(item.field,!a.Get(item.field));KPPlay(KPToggleOn(item,a)?KPSound::Confirm:KPSound::Same);[self applyAppearance:a];if(item.field==42)[self rebuild];return;
     case KPAction::Rotate:KPPlay(item.value<0?KPSound::Left:KPSound::Right);[self.preview noteInteraction];self.preview.yaw+=item.value*.35f;return;
     case KPAction::Front:KPPlay(KPSound::Tab);[self.preview noteInteraction];self.preview.yaw=0;return;
-    case KPAction::Sound:{KPMiiSounds *sounds=[KPMiiSounds shared];sounds.enabled=!sounds.enabled;if(sounds.enabled)KPPlay(KPSound::Confirm);[self.canvas redraw];return;}
+    case KPAction::Sound:{KPMiiSounds *sounds=[KPMiiSounds shared];sounds.enabled=!sounds.enabled;if(sounds.enabled)KPPlay(KPSound::Confirm);return;}
     case KPAction::Undo:if(![self commitNames])return;if(!_history.CanUndo()){KPPlay(KPSound::Same);return;}KPPlay(KPSound::PagePrevious);a=kartpad::mii::Appearance::Decode(Bytes(self.draft));self.draft=[NSMutableData dataWithBytes:_history.Undo(a).bytes.data() length:74];[self historyChanged];return;
     case KPAction::Redo:if(![self commitNames])return;if(!_history.CanRedo()){KPPlay(KPSound::Same);return;}KPPlay(KPSound::PageNext);a=kartpad::mii::Appearance::Decode(Bytes(self.draft));self.draft=[NSMutableData dataWithBytes:_history.Redo(a).bytes.data() length:74];[self historyChanged];return;
     case KPAction::Quit:[self quit];return;
     case KPAction::Save:[self save];return;
     case KPAction::Discard:[self discard];return;
+#if TARGET_OS_OSX
+    case KPAction::Birthday:[self birthday:item.field];return;
+#else
     case KPAction::Birthday:[self birthday];return;
+#endif
     case KPAction::More:KPPlay(KPSound::Press);[self showMore];return;
     default:return;
     }
@@ -925,9 +1160,9 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
 #else
         NSString *text=[field text]?:@"";if([field markedTextRange]){self.validationField=[field tag];self.validationMessage=@"Finish entering this name first.";[self.canvas redraw];KPPlay(KPSound::Reject);return NO;}
 #endif
-        NSMutableData *data=self.draft.mutableCopy;
-        if((![text length]&&[field tag]==2)||!KPMiiSetName(data,text,[field tag])){
-            self.validationField=[field tag];self.validationMessage=![text length]?@"Enter a nickname.":@"This name is too long. Please shorten it.";[self.canvas redraw];KPPlay(KPSound::Reject);return NO;
+        NSMutableData *data=self.draft.mutableCopy;NSString *problem=KPMiiNameProblem(text,[field tag]==2);
+        if(problem||!KPMiiSetName(data,text,[field tag])){
+            self.validationField=[field tag];self.validationMessage=problem?:@"This name is too long. Please shorten it.";[self.canvas redraw];KPPlay(KPSound::Reject);return NO;
         }
         if(![data isEqual:self.draft]){auto a=kartpad::mii::Appearance::Decode(Bytes(data));[self applyAppearance:a];}
     }self.validationMessage=nil;return YES;
@@ -938,26 +1173,40 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
 - (void)controlTextDidChange:(NSNotification*)note{
     NSTextField *field=note.object;NSTextView *editor=(NSTextView*)field.currentEditor;if(editor.hasMarkedText)return;
     NSMutableData *data=self.draft.mutableCopy;NSUInteger before=KPMiiName(self.draft,field.tag).length;
-    if(KPMiiSetName(data,field.stringValue,field.tag)){KPPlay(field.stringValue.length<before?KPSound::Erase:KPSound::Key);[self applyAppearance:kartpad::mii::Appearance::Decode(Bytes(data))];}else{KPPlay(KPSound::Reject);self.validationField=field.tag;self.validationMessage=@"This name is too long. Please shorten it.";[self.canvas redraw];}
+    if(KPMiiSetName(data,field.stringValue,field.tag)){KPPlay(field.stringValue.length<before?KPSound::Erase:KPSound::Key);[self applyAppearance:kartpad::mii::Appearance::Decode(Bytes(data))];}else{KPPlay(KPSound::Reject);self.validationField=field.tag;self.validationMessage=KPMiiNameProblem(field.stringValue,NO)?:@"This name is too long. Please shorten it.";[self.canvas redraw];}
 }
 #else
 - (void)textFieldDidBeginEditing:(UITextField*)field{_history.Begin();}
 - (void)textFieldDidEndEditing:(UITextField*)field{[self commitNames];_history.End();}
 - (BOOL)textFieldShouldReturn:(UITextField*)field{if([self commitNames]){[field resignFirstResponder];return YES;}return NO;}
-- (void)nameChanged:(UITextField*)field{if(field.markedTextRange)return;NSMutableData *data=self.draft.mutableCopy;NSUInteger before=KPMiiName(self.draft,field.tag).length;if(KPMiiSetName(data,field.text?:@"",field.tag)){KPPlay(field.text.length<before?KPSound::Erase:KPSound::Key);[self applyAppearance:kartpad::mii::Appearance::Decode(Bytes(data))];}else{KPPlay(KPSound::Reject);self.validationField=field.tag;self.validationMessage=@"This name is too long. Please shorten it.";[self.canvas redraw];}}
+- (void)nameChanged:(UITextField*)field{if(field.markedTextRange)return;NSMutableData *data=self.draft.mutableCopy;NSUInteger before=KPMiiName(self.draft,field.tag).length;if(KPMiiSetName(data,field.text?:@"",field.tag)){KPPlay(field.text.length<before?KPSound::Erase:KPSound::Key);[self applyAppearance:kartpad::mii::Appearance::Decode(Bytes(data))];}else{KPPlay(KPSound::Reject);self.validationField=field.tag;self.validationMessage=KPMiiNameProblem(field.text?:@"",NO)?:@"This name is too long. Please shorten it.";[self.canvas redraw];}}
 - (NSArray<UIKeyCommand*>*)keyCommands{return @[[UIKeyCommand keyCommandWithInput:@"z" modifierFlags:UIKeyModifierCommand action:@selector(undoCommand:)],[UIKeyCommand keyCommandWithInput:@"z" modifierFlags:UIKeyModifierCommand|UIKeyModifierShift action:@selector(redoCommand:)],[UIKeyCommand keyCommandWithInput:UIKeyInputEscape modifierFlags:0 action:@selector(quit)]];}
 - (void)undoCommand:(id)sender{KPItem i{};i.action=KPAction::Undo;[self performItem:i];}
 - (void)redoCommand:(id)sender{KPItem i{};i.action=KPAction::Redo;[self performItem:i];}
 #endif
 #if TARGET_OS_OSX
-- (void)birthdayChanged:(NSPopUpButton*)sender{
+// The month or day menu drops from its button, with the current choice checked.
+- (void)birthday:(unsigned)field{
     if(![self commitNames])return;
     auto a=kartpad::mii::Appearance::Decode(Bytes(self.draft));
-    if(sender.tag==1){a.Set(1,sender.indexOfSelectedItem);a.Set(2,a.Get(1)?std::min(std::max(1u,a.Get(2)),KPBirthdayDays(a.Get(1))):0);}
-    else a.Set(2,sender.indexOfSelectedItem+1);
+    KPMiiWiiButton *anchor=nil;for(KPMiiWiiButton *button in self.canvas.buttons){const auto &item=self.canvas->_items[button.index];if(item.action==KPAction::Birthday&&item.field==field)anchor=button;}
+    if(!anchor)return;
+    NSMenu *menu=[NSMenu new];menu.autoenablesItems=NO;menu.minimumWidth=anchor.bounds.size.width;
+    unsigned first=field==1?0:1,last=field==1?12:KPBirthdayDays(a.Get(1));
+    for(unsigned value=first;value<=last;value++){
+        NSMenuItem *entry=[[NSMenuItem alloc]initWithTitle:field==1?KPBirthdayMonths()[value]:[NSString stringWithFormat:@"%u",value] action:@selector(birthdayChosen:) keyEquivalent:@""];
+        entry.target=self;entry.tag=NSInteger(field*100+value);entry.state=a.Get(field)==value?NSControlStateValueOn:NSControlStateValueOff;[menu addItem:entry];
+        if(field==1&&value==0)[menu addItem:NSMenuItem.separatorItem];
+    }
+    KPPlay(KPSound::Press);[menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(0,anchor.bounds.size.height+2) inView:anchor];
+}
+- (void)birthdayChosen:(NSMenuItem*)sender{
+    auto a=kartpad::mii::Appearance::Decode(Bytes(self.draft));unsigned field=unsigned(sender.tag)/100,value=unsigned(sender.tag)%100;
+    if(a.Get(field)==value){KPPlay(KPSound::Same);return;}
+    if(field==1){a.Set(1,value);a.Set(2,value?std::min(std::max(1u,a.Get(2)),KPBirthdayDays(value)):0);}
+    else a.Set(2,value);
     KPPlay(KPSound::Tab);[self applyAppearance:a];[self rebuild];
 }
-- (void)birthday{}
 #else
 - (NSInteger)numberOfComponentsInPickerView:(UIPickerView*)picker{return 2;}
 - (NSInteger)pickerView:(UIPickerView*)picker numberOfRowsInComponent:(NSInteger)component{return component?std::max(1u,KPBirthdayDays(self.birthdayMonth)):13;}
@@ -992,73 +1241,105 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
 #endif
         return;}
 #if TARGET_OS_OSX
-    NSAlert *alert=[NSAlert new];alert.messageText=@"Discard your changes?";alert.informativeText=self.slot==NSNotFound?@"This new Mii won’t be saved.":@"This Mii will stay as it was before you opened the editor.";[alert addButtonWithTitle:@"Keep Editing"];[alert addButtonWithTitle:@"Discard Changes"];KPPlay(KPSound::Dialog);if([alert runModal]==NSAlertSecondButtonReturn){KPPlay(KPSound::PagePrevious);self.allowClose=YES;[self close];}else KPPlay(KPSound::Close);
+    NSAlert *alert=[NSAlert new];alert.messageText=@"Discard Your Changes?";alert.informativeText=self.slot==NSNotFound?@"This new Mii won’t be saved.":@"This Mii will stay as it was before you opened the editor.";[alert addButtonWithTitle:@"Keep Editing"];[alert addButtonWithTitle:@"Discard Changes"];KPPlay(KPSound::Dialog);if([alert runModal]==NSAlertSecondButtonReturn){KPPlay(KPSound::PagePrevious);self.allowClose=YES;[self close];}else KPPlay(KPSound::Close);
 #else
-    UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Discard your changes?" message:self.slot==NSNotFound?@"This new Mii won’t be saved.":@"This Mii will stay as it was before you opened the editor." preferredStyle:UIAlertControllerStyleAlert];[alert addAction:[UIAlertAction actionWithTitle:@"Keep Editing" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action){KPPlay(KPSound::Close);}]];[alert addAction:[UIAlertAction actionWithTitle:@"Discard Changes" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action){KPPlay(KPSound::PagePrevious);self.allowClose=YES;[self dismissViewControllerAnimated:YES completion:nil];}]];KPPlay(KPSound::Dialog);[self presentViewController:alert animated:YES completion:nil];
+    UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Discard Your Changes?" message:self.slot==NSNotFound?@"This new Mii won’t be saved.":@"This Mii will stay as it was before you opened the editor." preferredStyle:UIAlertControllerStyleAlert];[alert addAction:[UIAlertAction actionWithTitle:@"Keep Editing" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action){KPPlay(KPSound::Close);}]];[alert addAction:[UIAlertAction actionWithTitle:@"Discard Changes" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action){KPPlay(KPSound::PagePrevious);self.allowClose=YES;[self dismissViewControllerAnimated:YES completion:nil];}]];KPPlay(KPSound::Dialog);[self presentViewController:alert animated:YES completion:nil];
 #endif
 }
-- (void)alert:(NSString*)message{
+- (void)tell:(NSString*)title message:(NSString*)message{
 #if TARGET_OS_OSX
-    NSAlert *alert=[NSAlert new];alert.messageText=@"Mii editor";alert.informativeText=message;[alert runModal];
+    NSAlert *alert=[NSAlert new];alert.messageText=title;alert.informativeText=message?:@"";[alert runModal];
 #else
-    UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Mii editor" message:message preferredStyle:UIAlertControllerStyleAlert];[alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];[self presentViewController:alert animated:YES completion:nil];
+    UIAlertController *alert=[UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleAlert];[alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];[self presentViewController:alert animated:YES completion:nil];
 #endif
 }
+// Saving closes the editor and hands the change to the Miis screen, whose banner names it and
+// explains the restart; that screen also offers Use for a License… for a new Mii.
 - (void)save{
     if(![self commitNames])return;
-    NSError *error=nil;if(!KartPadStageMiiEditor(self.slot,self.slot==NSNotFound?nil:self.original,self.draft,&error)){KPPlay(KPSound::Reject);[self alert:error.localizedDescription?:@"Could not save this Mii."];return;}
+    NSError *error=nil;if(!KartPadStageMiiEditor(self.slot,self.slot==NSNotFound?nil:self.original,self.draft,&error)){KPPlay(KPSound::Reject);[self tell:@"Mii Couldn’t Be Saved" message:error.localizedDescription?:@"This Mii couldn’t be saved."];return;}
     KPPlay(KPSound::Saved);
+    NSString *name=KPMiiName(self.draft,2),*before=KPMiiName(self.original,2),*description;
+    if(self.slot==NSNotFound)description=[NSString stringWithFormat:@"“%@” will be added.",name];
+    else if(![name isEqual:before])description=[NSString stringWithFormat:@"“%@” will be updated and renamed “%@”.",before,name];
+    else description=[NSString stringWithFormat:@"“%@” will be updated.",name];
+    NSData *mii=self.draft.copy;NSUInteger slot=self.slot;id<KPMiiEditorListener> listener=KPMiiSaveListener;self.allowClose=YES;
 #if TARGET_OS_OSX
-    [self alert:@"Mii saved for the next launch. Quit and reopen KartPad to apply it. Select new Miis in License Settings → Change Mii."];self.allowClose=YES;[self close];
+    // Without the Miis screen (not expected), say what happens next here instead.
+    if(!listener)[self tell:@"Mii Saved" message:[NSString stringWithFormat:@"%@ %@",description,KPMiiRestartAdvice(1)]];
+    // Tell the Miis screen before closing: closing makes it reload, and it finds a new Mii by
+    // comparing against the Miis it had.
+    [listener miiEditorSaved:description mii:mii slot:slot];[self close];
 #else
-    UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Mii saved" message:@"Fully close and reopen KartPad to apply it. Select new Miis in License Settings → Change Mii." preferredStyle:UIAlertControllerStyleAlert];[alert addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleDefault handler:^(UIAlertAction*action){self.allowClose=YES;[self dismissViewControllerAnimated:YES completion:nil];}]];[self presentViewController:alert animated:YES completion:nil];
+    if(!listener){UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Mii Saved" message:[NSString stringWithFormat:@"%@ %@",description,KPMiiRestartAdvice(1)] preferredStyle:UIAlertControllerStyleAlert];[alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:^(UIAlertAction*action){[self dismissViewControllerAnimated:YES completion:nil];}]];[self presentViewController:alert animated:YES completion:nil];return;}
+    [listener miiEditorSaved:description mii:mii slot:slot];[self dismissViewControllerAnimated:YES completion:nil];
 #endif
 }
 - (void)resetConfirmed{auto a=kartpad::mii::Appearance::Decode(Bytes(self.original));_history.End();[self applyAppearance:a];[self historyChanged];}
 - (void)reset{
-    if(![self dirty])return;
+    if(![self edited])return;NSString *message=self.slot==NSNotFound?@"The Mii goes back to the face you started from.":@"The Mii goes back to how it was when you opened it.";
 #if TARGET_OS_OSX
-    NSAlert *alert=[NSAlert new];alert.messageText=@"Reset all Mii changes?";[alert addButtonWithTitle:@"Keep Editing"];[alert addButtonWithTitle:@"Reset Changes"];KPPlay(KPSound::Dialog);if([alert runModal]==NSAlertSecondButtonReturn){KPPlay(KPSound::PagePrevious);[self resetConfirmed];}else KPPlay(KPSound::Close);
+    NSAlert *alert=[NSAlert new];alert.messageText=@"Reset All Changes?";alert.informativeText=message;[alert addButtonWithTitle:@"Keep Editing"];[alert addButtonWithTitle:@"Reset Changes"];KPPlay(KPSound::Dialog);if([alert runModal]==NSAlertSecondButtonReturn){KPPlay(KPSound::PagePrevious);[self resetConfirmed];}else KPPlay(KPSound::Close);
 #else
-    UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Reset all Mii changes?" message:nil preferredStyle:UIAlertControllerStyleAlert];[alert addAction:[UIAlertAction actionWithTitle:@"Keep Editing" style:UIAlertActionStyleCancel handler:^(UIAlertAction*action){KPPlay(KPSound::Close);}]];[alert addAction:[UIAlertAction actionWithTitle:@"Reset Changes" style:UIAlertActionStyleDestructive handler:^(UIAlertAction*action){KPPlay(KPSound::PagePrevious);[self resetConfirmed];}]];KPPlay(KPSound::Dialog);[self presentViewController:alert animated:YES completion:nil];
+    UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Reset All Changes?" message:message preferredStyle:UIAlertControllerStyleAlert];[alert addAction:[UIAlertAction actionWithTitle:@"Keep Editing" style:UIAlertActionStyleCancel handler:^(UIAlertAction*action){KPPlay(KPSound::Close);}]];[alert addAction:[UIAlertAction actionWithTitle:@"Reset Changes" style:UIAlertActionStyleDestructive handler:^(UIAlertAction*action){KPPlay(KPSound::PagePrevious);[self resetConfirmed];}]];KPPlay(KPSound::Dialog);[self presentViewController:alert animated:YES completion:nil];
 #endif
 }
 - (void)exportMii{
     if(![self commitNames])return;
-    NSError *error=nil;NSData *data=KartPadExportMii(self.draft,&error);if(!data){KPPlay(KPSound::Reject);[self alert:error.localizedDescription];return;}
+    NSError *error=nil;NSData *data=KartPadExportMii(self.draft,&error);if(!data){KPPlay(KPSound::Reject);[self tell:@"Mii Couldn’t Be Exported" message:error.localizedDescription];return;}
+    NSString *file=KPMiiFileName(KPMiiName(self.draft,2));
 #if TARGET_OS_OSX
-    NSSavePanel *panel=[NSSavePanel savePanel];panel.nameFieldStringValue=@"My Mii.mii";if([panel runModal]==NSModalResponseOK){if([data writeToURL:panel.URL options:NSDataWritingAtomic error:&error])KPPlay(KPSound::Saved);else{KPPlay(KPSound::Reject);[self alert:error.localizedDescription];}}
+    NSSavePanel *panel=[NSSavePanel savePanel];panel.nameFieldStringValue=file;panel.allowedContentTypes=@[[UTType typeWithFilenameExtension:@"mii" conformingToType:UTTypeData]?:UTTypeData];panel.message=@"Saves a standard 74-byte .mii file.";if([panel runModal]==NSModalResponseOK){if([data writeToURL:panel.URL options:NSDataWritingAtomic error:&error])KPPlay(KPSound::Saved);else{KPPlay(KPSound::Reject);[self tell:@"Mii Couldn’t Be Exported" message:error.localizedDescription];}}
 #else
-    NSString *directory=[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];[NSFileManager.defaultManager createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:&error];NSURL *url=[NSURL fileURLWithPath:[directory stringByAppendingPathComponent:@"My Mii.mii"]];if(![data writeToURL:url options:NSDataWritingAtomic error:&error]){KPPlay(KPSound::Reject);[self alert:error.localizedDescription];return;}
+    NSString *directory=[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];[NSFileManager.defaultManager createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:&error];NSURL *url=[NSURL fileURLWithPath:[directory stringByAppendingPathComponent:file]];if(![data writeToURL:url options:NSDataWritingAtomic error:&error]){KPPlay(KPSound::Reject);[self tell:@"Mii Couldn’t Be Exported" message:error.localizedDescription];return;}
     UIActivityViewController *share=[[UIActivityViewController alloc]initWithActivityItems:@[url] applicationActivities:nil];share.popoverPresentationController.sourceView=self.canvas;share.popoverPresentationController.sourceRect=CGRectMake(self.canvas.bounds.size.width-52,7,40,28);share.completionWithItemsHandler=^(UIActivityType type,BOOL complete,NSArray *items,NSError *e){if(complete)KPPlay(KPSound::Saved);[NSFileManager.defaultManager removeItemAtPath:directory error:nil];};[self presentViewController:share animated:YES completion:nil];
 #endif
 }
 - (void)toggleAnimation{BOOL on=!KPMiiPreviewAnimation();KPPlay(on?KPSound::Confirm:KPSound::Same);[NSUserDefaults.standardUserDefaults setBool:on forKey:KPMiiPreviewAnimationKey];self.preview.animated=on;}
-- (void)showMore{
+// A new Mii can go back to the create screen to pick another way to start (asking first if edited).
+- (void)startOver{
+    void(^restart)(void)=^{
+        KPPlay(KPSound::PagePrevious);
+#if !TARGET_OS_OSX
+        [self.view endEditing:YES];
+#endif
+        self->_history=kartpad::mii::DraftHistory{};self.draft=self.blank.mutableCopy;self.original=self.blank;self.creating=YES;self.pickingLookAlike=NO;self.validationMessage=nil;
+        [self makeLookAlikes];[self rebuild];
+    };
+    if(![self edited]){restart();return;}
 #if TARGET_OS_OSX
-    NSMenu *menu=[NSMenu new];for(NSString *title in @[@"Export…",@"Reset Changes…"]){NSMenuItem *item=[[NSMenuItem alloc]initWithTitle:title action:[title hasPrefix:@"Export"]?@selector(exportMii):@selector(reset) keyEquivalent:@""];item.target=self;[menu addItem:item];}
-    [menu addItem:NSMenuItem.separatorItem];NSMenuItem *animate=[[NSMenuItem alloc]initWithTitle:@"Animate Preview" action:@selector(toggleAnimation) keyEquivalent:@""];animate.target=self;animate.state=KPMiiPreviewAnimation()?NSControlStateValueOn:NSControlStateValueOff;[menu addItem:animate];[menu popUpMenuPositioningItem:nil atLocation:CGPointMake(self.canvas.bounds.size.width-100,38) inView:self.canvas];
+    NSAlert *alert=[NSAlert new];alert.messageText=@"Start Over?";alert.informativeText=@"Your changes to this Mii will be lost.";[alert addButtonWithTitle:@"Keep Editing"];[alert addButtonWithTitle:@"Start Over"];KPPlay(KPSound::Dialog);if([alert runModal]==NSAlertSecondButtonReturn)restart();else KPPlay(KPSound::Close);
 #else
-    UIAlertController *menu=[UIAlertController alertControllerWithTitle:nil message:nil preferredStyle:UIAlertControllerStyleActionSheet];[menu addAction:[UIAlertAction actionWithTitle:@"Export…" style:UIAlertActionStyleDefault handler:^(UIAlertAction*action){[self exportMii];}]];[menu addAction:[UIAlertAction actionWithTitle:@"Reset Changes…" style:UIAlertActionStyleDestructive handler:^(UIAlertAction*action){[self reset];}]];[menu addAction:[UIAlertAction actionWithTitle:KPMiiPreviewAnimation()?@"Stop Preview Animation":@"Animate Preview" style:UIAlertActionStyleDefault handler:^(UIAlertAction*action){[self toggleAnimation];}]];[menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];menu.popoverPresentationController.sourceView=self.canvas;menu.popoverPresentationController.sourceRect=CGRectMake(self.canvas.bounds.size.width-52,7,40,28);[self presentViewController:menu animated:YES completion:nil];
+    UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Start Over?" message:@"Your changes to this Mii will be lost." preferredStyle:UIAlertControllerStyleAlert];[alert addAction:[UIAlertAction actionWithTitle:@"Keep Editing" style:UIAlertActionStyleCancel handler:^(UIAlertAction*action){KPPlay(KPSound::Close);}]];[alert addAction:[UIAlertAction actionWithTitle:@"Start Over" style:UIAlertActionStyleDestructive handler:^(UIAlertAction*action){restart();}]];KPPlay(KPSound::Dialog);[self presentViewController:alert animated:YES completion:nil];
 #endif
 }
+- (void)showMore{
+#if TARGET_OS_OSX
+    NSMenu *menu=[NSMenu new];menu.autoenablesItems=NO;NSMutableArray *titles=[NSMutableArray arrayWithObjects:@"Export…",@"Reset Changes…",nil];if(self.blank)[titles addObject:@"Start Over…"];
+    for(NSString *title in titles){NSMenuItem *item=[[NSMenuItem alloc]initWithTitle:title action:[title hasPrefix:@"Export"]?@selector(exportMii):[title hasPrefix:@"Reset"]?@selector(reset):@selector(startOver) keyEquivalent:@""];item.target=self;item.enabled=![title hasPrefix:@"Reset"]||[self edited];[menu addItem:item];}
+    [menu addItem:NSMenuItem.separatorItem];NSMenuItem *animate=[[NSMenuItem alloc]initWithTitle:@"Animate Preview" action:@selector(toggleAnimation) keyEquivalent:@""];animate.target=self;animate.state=KPMiiPreviewAnimation()?NSControlStateValueOn:NSControlStateValueOff;[menu addItem:animate];[menu popUpMenuPositioningItem:nil atLocation:CGPointMake(self.canvas.bounds.size.width-100,38) inView:self.canvas];
+#else
+    UIAlertController *menu=[UIAlertController alertControllerWithTitle:nil message:nil preferredStyle:UIAlertControllerStyleActionSheet];[menu addAction:[UIAlertAction actionWithTitle:@"Export…" style:UIAlertActionStyleDefault handler:^(UIAlertAction*action){[self exportMii];}]];UIAlertAction *reset=[UIAlertAction actionWithTitle:@"Reset Changes…" style:UIAlertActionStyleDestructive handler:^(UIAlertAction*action){[self reset];}];reset.enabled=[self edited];[menu addAction:reset];if(self.blank)[menu addAction:[UIAlertAction actionWithTitle:@"Start Over…" style:UIAlertActionStyleDestructive handler:^(UIAlertAction*action){[self startOver];}]];[menu addAction:[UIAlertAction actionWithTitle:KPMiiPreviewAnimation()?@"Stop Preview Animation":@"Animate Preview" style:UIAlertActionStyleDefault handler:^(UIAlertAction*action){[self toggleAnimation];}]];[menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];menu.popoverPresentationController.sourceView=self.canvas;menu.popoverPresentationController.sourceRect=CGRectMake(self.canvas.bounds.size.width-52,7,40,28);[self presentViewController:menu animated:YES completion:nil];
+#endif
+}
+- (NSString*)saveQuestion{NSString *name=KPMiiName(self.draft,2);return name.length?[NSString stringWithFormat:@"Save Changes to “%@”?",name]:@"Save Changes to This Mii?";}
 #if TARGET_OS_OSX
 - (BOOL)windowShouldClose:(NSWindow*)window{
     if(self.allowClose)return YES;
     if(![self dirty]){KPPlay(KPSound::Close);return YES;}
-    NSAlert *alert=[NSAlert new];alert.messageText=@"Save this Mii before quitting?";[alert addButtonWithTitle:@"Save & Quit"];[alert addButtonWithTitle:@"Keep Editing"];[alert addButtonWithTitle:@"Discard Changes"];KPPlay(KPSound::Dialog);NSInteger answer=[alert runModal];if(answer==NSAlertFirstButtonReturn){[self save];return self.allowClose;}KPPlay(answer==NSAlertThirdButtonReturn?KPSound::PagePrevious:KPSound::Close);return answer==NSAlertThirdButtonReturn;
+    NSAlert *alert=[NSAlert new];alert.messageText=[self saveQuestion];[alert addButtonWithTitle:@"Save"];[alert addButtonWithTitle:@"Keep Editing"];[alert addButtonWithTitle:@"Discard Changes"];KPPlay(KPSound::Dialog);NSInteger answer=[alert runModal];if(answer==NSAlertFirstButtonReturn){[self save];return self.allowClose;}KPPlay(answer==NSAlertThirdButtonReturn?KPSound::PagePrevious:KPSound::Close);return answer==NSAlertThirdButtonReturn;
 }
 - (void)windowWillClose:(NSNotification*)note{[[KPMiiSounds shared] suspendSoon];}
 - (void)quit{[self.window performClose:nil];}
 // A duplicate is a new Mii that skips the Male/Female screen and opens on Profile for renaming.
 - (instancetype)initWithData:(NSData*)data slot:(NSUInteger)slot duplicate:(BOOL)duplicate{
     NSWindow *window=[[NSWindow alloc]initWithContentRect:NSMakeRect(0,0,960,720) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
-    if((self=[super initWithWindow:window])){self.original=data;self.draft=data.mutableCopy;self.slot=slot;self.choosingGender=slot==NSNotFound&&!duplicate;self.category=duplicate?0:2;self.feature=7;window.title=duplicate?@"Duplicate Mii":slot==NSNotFound?@"Create Mii":@"Edit Mii";window.contentMinSize=NSMakeSize(800,600);window.delegate=self;self.canvas=[[KPMiiCanvas alloc]initWithFrame:NSMakeRect(0,0,960,720)];self.canvas.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;window.contentView=self.canvas;[self setup];[window center];}return self;
+    if((self=[super initWithWindow:window])){self.original=data;self.draft=data.mutableCopy;self.slot=slot;self.creating=slot==NSNotFound&&!duplicate;self.duplicating=duplicate;self.category=duplicate?0:2;self.feature=7;window.title=duplicate?@"Duplicate Mii":slot==NSNotFound?@"Create Mii":@"Edit Mii";window.contentMinSize=NSMakeSize(800,600);window.delegate=self;self.canvas=[[KPMiiCanvas alloc]initWithFrame:NSMakeRect(0,0,960,720)];self.canvas.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;window.contentView=self.canvas;[self setup];[window center];}return self;
 }
 #else
 - (void)quit{
     [self.view endEditing:YES];if(self.allowClose||![self dirty]){if(!self.allowClose)KPPlay(KPSound::Close);[self dismissViewControllerAnimated:YES completion:nil];return;}
-    UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Save this Mii before quitting?" message:nil preferredStyle:UIAlertControllerStyleAlert];[alert addAction:[UIAlertAction actionWithTitle:@"Save & Quit" style:UIAlertActionStyleDefault handler:^(UIAlertAction*action){[self save];}]];[alert addAction:[UIAlertAction actionWithTitle:@"Keep Editing" style:UIAlertActionStyleCancel handler:^(UIAlertAction*action){KPPlay(KPSound::Close);}]];[alert addAction:[UIAlertAction actionWithTitle:@"Discard Changes" style:UIAlertActionStyleDestructive handler:^(UIAlertAction*action){KPPlay(KPSound::PagePrevious);[self dismissViewControllerAnimated:YES completion:nil];}]];KPPlay(KPSound::Dialog);[self presentViewController:alert animated:YES completion:nil];
+    UIAlertController *alert=[UIAlertController alertControllerWithTitle:[self saveQuestion] message:nil preferredStyle:UIAlertControllerStyleAlert];[alert addAction:[UIAlertAction actionWithTitle:@"Save" style:UIAlertActionStyleDefault handler:^(UIAlertAction*action){[self save];}]];[alert addAction:[UIAlertAction actionWithTitle:@"Keep Editing" style:UIAlertActionStyleCancel handler:^(UIAlertAction*action){KPPlay(KPSound::Close);}]];[alert addAction:[UIAlertAction actionWithTitle:@"Discard Changes" style:UIAlertActionStyleDestructive handler:^(UIAlertAction*action){KPPlay(KPSound::PagePrevious);[self dismissViewControllerAnimated:YES completion:nil];}]];KPPlay(KPSound::Dialog);[self presentViewController:alert animated:YES completion:nil];
 }
 - (void)viewDidLoad{[super viewDidLoad];self.view.backgroundColor=[UIColor colorWithDynamicProvider:^UIColor*(UITraitCollection *traits){return KPColor(traits.userInterfaceStyle==UIUserInterfaceStyleDark?KPDarkPalette.background:KPLightPalette.background);}];self.canvas=[KPMiiCanvas new];self.canvas.translatesAutoresizingMaskIntoConstraints=NO;[self.view addSubview:self.canvas];[NSLayoutConstraint activateConstraints:@[[self.canvas.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor],[self.canvas.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor],[self.canvas.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor],[self.canvas.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor]]];[self setup];self.modalInPresentation=YES;[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(keyboard:) name:UIKeyboardWillChangeFrameNotification object:nil];[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(contentSizeChanged:) name:UIContentSizeCategoryDidChangeNotification object:nil];}
 - (void)keyboard:(NSNotification*)note{CGRect keyboard=[self.view convertRect:[note.userInfo[UIKeyboardFrameEndUserInfoKey] CGRectValue] fromView:nil];CGFloat overlap=std::max(CGFloat(0),CGRectGetMaxY(self.canvas.frame)-keyboard.origin.y);for(UIView *view in self.canvas.subviews)if([view isKindOfClass:UIScrollView.class]){UIScrollView *scroll=(UIScrollView*)view;scroll.contentInset=UIEdgeInsetsMake(0,0,overlap,0);for(UITextField *field in self.nameFields)if(field.isFirstResponder)[scroll scrollRectToVisible:CGRectInset(field.frame,0,-10) animated:NO];}}
@@ -1066,7 +1347,8 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
 - (void)contentSizeChanged:(NSNotification*)note{for(KPMiiWiiButton *button in self.canvas.buttons)button.look=NSUIntegerMax;[self.canvas redraw];}
 - (void)dealloc{[NSNotificationCenter.defaultCenter removeObserver:self];}
 #endif
-- (void)setup{[[KPMiiSounds shared] prepare:KPMiiSoundArchivePath()];KPPlay(KPSound::Open);_ticket=std::make_shared<std::atomic<uint64_t>>(0);self.canvas.editor=self;self.thumbnails=[NSMutableDictionary dictionary];self.preview=[[KPMiiMetalPreview alloc]initWithFrame:CGRectZero];self.preview.fullBody=self.category<=1;self.preview.animated=KPMiiPreviewAnimation();[self.canvas addSubview:self.preview];[self rebuild];[self refreshPreview];}
+- (void)soundsChanged:(NSNotification*)note{[self.canvas redraw];}
+- (void)setup{[[KPMiiSounds shared] prepare:KPMiiSoundArchivePath()];KPPlay(KPSound::Open);[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(soundsChanged:) name:KPMiiSoundsChangedNotification object:nil];_ticket=std::make_shared<std::atomic<uint64_t>>(0);self.canvas.editor=self;self.thumbnails=[NSMutableDictionary dictionary];if(self.creating){self.blank=self.draft.copy;[self shuffle];}self.preview=[[KPMiiMetalPreview alloc]initWithFrame:CGRectZero];self.preview.fullBody=self.category<=1;self.preview.animated=KPMiiPreviewAnimation();[self.canvas addSubview:self.preview];[self rebuild];[self refreshPreview];}
 @end
 #if TARGET_OS_OSX
 static KPMiiEditor *KPMiiActiveEditor;
@@ -1081,30 +1363,36 @@ static void KPMiiShowEditor(id parent){
 // data is the draft to open: nil reads the slot (or starts a new Mii); a duplicate passes its copy.
 static void KPMiiPresentEditor(id parent,NSUInteger slot,NSData *data,BOOL duplicate){
     [[KPMiiSounds shared] prepare:KPMiiSoundArchivePath()];
-    NSError *error=nil;if(KartPadHasPendingMiiChanges()){KPPlay(KPSound::Reject);
+    NSError *error=nil;if(!KartPadCanQueueMiiChanges()){KPPlay(KPSound::Reject);
 #if TARGET_OS_OSX
-        NSAlert *alert=[NSAlert new];alert.messageText=@"Restart KartPad first";alert.informativeText=@"Saved Mii changes are waiting to be applied. Quit and reopen KartPad, then try again.";[alert runModal];
+        NSAlert *alert=[NSAlert new];alert.messageText=KPMiiRestartFirstTitle();alert.informativeText=KPMiiRestartFirstMessage();[alert runModal];
 #else
-        UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Restart KartPad" message:@"Fully close and reopen KartPad to apply pending changes first." preferredStyle:UIAlertControllerStyleAlert];[alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];[(UIViewController*)parent presentViewController:alert animated:YES completion:nil];
+        UIAlertController *alert=[UIAlertController alertControllerWithTitle:KPMiiRestartFirstTitle() message:KPMiiRestartFirstMessage() preferredStyle:UIAlertControllerStyleAlert];[alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];[(UIViewController*)parent presentViewController:alert animated:YES completion:nil];
 #endif
         return;
     }
 #if TARGET_OS_OSX
-    if(KPMiiActiveEditor.window.visible){KPMiiShowEditor(parent);return;}
+    // One editor at a time. Asking for the Mii it already shows brings it forward; another Mii
+    // closes it first, with the usual question about unsaved changes (Keep Editing stays put).
+    if(KPMiiEditor *open=KPMiiActiveEditor;open.window.visible){
+        BOOL same=!data&&!open.duplicating&&open.slot==slot;KPMiiShowEditor(parent);
+        if(same)return;
+        [open.window performClose:nil];if(open.window.visible)return;
+    }
 #endif
     if(!data)data=slot==NSNotFound?KartPadNewMii(&error):KartPadReadMii(slot,&error);
     if(!data){KPPlay(KPSound::Reject);
 #if TARGET_OS_OSX
-        NSAlert *alert=[NSAlert new];alert.messageText=error.localizedDescription?:@"Could not read this Mii.";[alert runModal];
+        NSAlert *alert=[NSAlert new];alert.messageText=@"Mii Couldn’t Be Opened";alert.informativeText=error.localizedDescription?:@"This Mii couldn’t be read.";[alert runModal];
 #else
-        UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Could not open Mii" message:error.localizedDescription preferredStyle:UIAlertControllerStyleAlert];[alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];[(UIViewController*)parent presentViewController:alert animated:YES completion:nil];
+        UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Mii Couldn’t Be Opened" message:error.localizedDescription?:@"This Mii couldn’t be read." preferredStyle:UIAlertControllerStyleAlert];[alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];[(UIViewController*)parent presentViewController:alert animated:YES completion:nil];
 #endif
         return;
     }
 #if TARGET_OS_OSX
     KPMiiActiveEditor=[[KPMiiEditor alloc]initWithData:data slot:slot duplicate:duplicate];KPMiiShowEditor(parent);
 #else
-    KPMiiEditor *editor=[KPMiiEditor new];editor.original=data;editor.draft=data.mutableCopy;editor.slot=slot;editor.category=duplicate?0:2;editor.feature=7;editor.choosingGender=slot==NSNotFound&&!duplicate;editor.modalPresentationStyle=UIModalPresentationFullScreen;
+    KPMiiEditor *editor=[KPMiiEditor new];editor.original=data;editor.draft=data.mutableCopy;editor.slot=slot;editor.category=duplicate?0:2;editor.feature=7;editor.creating=slot==NSNotFound&&!duplicate;editor.duplicating=duplicate;editor.modalPresentationStyle=UIModalPresentationFullScreen;
     // Follow the launcher's light/dark choice, which it sets as an override on its own controller.
     editor.overrideUserInterfaceStyle=[(UIViewController*)parent traitCollection].userInterfaceStyle;[(UIViewController*)parent presentViewController:editor animated:YES completion:nil];
 #endif

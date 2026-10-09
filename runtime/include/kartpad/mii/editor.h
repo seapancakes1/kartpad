@@ -1,5 +1,6 @@
 #pragma once
 #include "appearance.h"
+#include <random>
 #include <vector>
 namespace kartpad::mii {
 inline constexpr unsigned BirthdayDays(unsigned month) {
@@ -58,4 +59,34 @@ struct PreviewRevision {
     uint64_t Next(){return ++current;}
     bool Accept(uint64_t revision)const{return current==revision;}
 };
+// Create Mii's look-alikes, like the Mii Channel's "Choose a Look-Alike": random faces built on a
+// draft (its identity, names and birthday stay). RFL's own random tables are not documented, so
+// parts are drawn from the Mii Channel lists: eyes, eyebrows and mouths from their first pages,
+// where the everyday expressions are. Hair follows the split the defaults suggest (male
+// starts on page 1, female on page 4) with some crossover. Positions, sizes and spacing keep their
+// defaults so every face stays tidy. One seed always gives the same face.
+inline Appearance LookAlike(const Appearance& base, unsigned gender, uint32_t seed) {
+    std::mt19937 rng(seed);
+    auto pick=[&](unsigned lo,unsigned hi){return std::uniform_int_distribution<unsigned>(lo,hi)(rng);};
+    auto chance=[&](unsigned percent){return pick(0,99)<percent;};
+    auto from=[&](unsigned field,unsigned first,unsigned last){return FeatureIds(field)[pick(first,last)];};
+    Appearance a=base;
+    a.Set(0,gender);
+    a.Set(3,pick(0,11));
+    a.Set(5,pick(40,88));a.Set(6,pick(40,88));
+    a.Set(7,pick(0,7));a.Set(8,pick(0,5));a.Set(9,chance(10)?pick(1,11):0);
+    bool usual=!chance(15);
+    a.Set(11,(gender==0)==usual?from(11,0,35):from(11,36,71));
+    unsigned hair=chance(70)?pick(0,3):pick(4,7);
+    a.Set(12,hair);a.Set(13,chance(50));
+    a.Set(14,from(14,0,17));a.Set(17,pick(0,5));
+    a.Set(20,from(20,0,11));a.Set(22,hair);
+    a.Set(26,from(26,0,11));
+    a.Set(29,from(29,0,11));a.Set(30,pick(0,2));
+    a.Set(33,chance(15)?pick(1,8):0);a.Set(34,pick(0,5));
+    bool beard=gender==0&&chance(30);
+    a.Set(37,beard&&chance(60)?pick(1,3):0);a.Set(38,beard&&chance(50)?pick(1,3):0);a.Set(39,hair);
+    a.Set(42,chance(8));
+    return a;
+}
 } // namespace kartpad::mii

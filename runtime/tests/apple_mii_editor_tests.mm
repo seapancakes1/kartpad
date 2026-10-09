@@ -56,8 +56,15 @@ int main() {
         assert(!KartPadExportMii(Data(malformed.bytes), &error));
         assert(KartPadStageMiiEditor(0, expected, Data(edit.bytes), &error));
         assert([Data(db) isEqualToData:[NSData dataWithContentsOfFile:dbpath]]);
+        // Changes queue: a stale one is refused, and the next builds on the queued edit.
         assert(!KartPadStageMiiEditor(0, expected, Data(edit.bytes), &error));
-        assert(!KartPadNewMii(&error));
+        NSData *queued = KartPadReadMii(0, &error);
+        assert([queued isEqualToData:Data(edit.bytes)]);
+        edit.Set(11, 70);
+        assert(KartPadStageMiiEditor(0, queued, Data(edit.bytes), &error));
+        assert(KartPadPendingMiiChangeCount() == 2);
+        assert([Data(db) isEqualToData:[NSData dataWithContentsOfFile:dbpath]]);
+        assert(KartPadNewMii(&error).length == 74);
         // New race progress after staging must be retained in both save profiles.
         auto latest = save;
         latest[0x100] = 0x92;
@@ -85,10 +92,10 @@ int main() {
                     assert(after[byte] == latest[byte]);
             }
         }
-        assert(
-            [[NSFileManager.defaultManager
-                contentsOfDirectoryAtPath:[root stringByAppendingPathComponent:@"MiiEditorBackups"]
-                                    error:nil] count] == 4);
+        for (NSString *folder in @[ @"MiiBackups", @"SaveBackups" ])
+            assert([[NSFileManager.defaultManager
+                       contentsOfDirectoryAtPath:[root stringByAppendingPathComponent:folder]
+                                           error:nil] count] == ([folder isEqual:@"MiiBackups"] ? 1 : 3));
         assert(!KartPadStageMiiEditor(0, expected, Data(edit.bytes), &error));
         assert(!KartPadHasPendingMiiChanges());
         NSData *newMii = KartPadNewMii(&error);
@@ -111,9 +118,13 @@ int main() {
             if (byte < 0x18 || byte >= 0x20)
                 assert(source[byte] == duplicate[byte]);
         assert(KartPadStageMiiEditor(NSNotFound, nil, copy, &error));
-        assert(!KartPadDuplicateMii(0, &error));
+        // A second copy queued behind the first still gets an identity of its own.
+        NSData *second = KartPadDuplicateMii(0, &error);
+        assert(second && ![second isEqualToData:copy]);
+        assert(KartPadStageMiiEditor(NSNotFound, nil, second, &error));
+        assert(KartPadMiiRecords(&error).count == 4);
         assert(KartPadApplyPendingMiiDatabase(&error));
-        assert(KartPadMiiRecords(&error).count == 3);
+        assert(KartPadMiiRecords(&error).count == 4);
         assert(KartPadLicenseRecords(&error).count == 3);
         // Stale database between staging and restart must not modify any linked saves.
         expected = KartPadReadMii(0, &error);
@@ -127,6 +138,42 @@ int main() {
         assert(!KartPadApplyPendingMiiDatabase(&error));
         assert(![NSFileManager.defaultManager
             fileExistsAtPath:[root stringByAppendingPathComponent:@"MiiEditorTransaction.plist"]]);
+        assert(KartPadHasPendingMiiChanges());
+        assert([NSFileManager.defaultManager
+            removeItemAtPath:[root stringByAppendingPathComponent:@"PendingMiiChanges.plist"]
+                       error:nil]);
+        // One queue across the database and every save: deleting the licenses frees their Mii,
+        // which a later change in the same queue removes. Deleted licenses stay listed until then.
+        NSArray *licenses = KartPadLicenseRecords(&error);
+        assert(licenses.count == 3);
+        assert(!KartPadStageMiiRemoval(0, &error));
+        for (NSDictionary *license in licenses)
+            assert(KartPadStageLicenseDeletion(license[@"profileIdentifier"],
+                                               [license[@"slot"] unsignedIntegerValue],
+                                               license[@"createId"], &error));
+        licenses = KartPadLicenseRecords(&error);
+        assert(licenses.count == 3);
+        for (NSDictionary *license in licenses)
+            assert([license[@"pendingOperation"] isEqual:@"delete"]);
+        assert(KartPadStageMiiRemoval(0, &error));
+        assert(KartPadMiiRecords(&error).count == 3 && KartPadPendingMiiChangeCount() == 4);
+        NSData *liveDb = [NSData dataWithContentsOfFile:dbpath];
+        assert(KartPadApplyPendingMiiDatabase(&error));
+        assert(![liveDb isEqualToData:[NSData dataWithContentsOfFile:dbpath]]);
+        assert(KartPadMiiRecords(&error).count == 3);
+        assert(KartPadLicenseRecords(&error).count == 0);
+        assert(!KartPadHasPendingMiiChanges());
+        // Discarding drops every waiting change and leaves the live files alone.
+        assert(!KartPadCanDiscardPendingMiiChanges());
+        liveDb = [NSData dataWithContentsOfFile:dbpath];
+        assert(KartPadStageMiiEditor(NSNotFound, nil, KartPadNewMii(&error), &error));
+        assert(KartPadStageMiiRemoval([KartPadMiiRecords(&error)[0][@"slot"] unsignedIntegerValue], &error));
+        assert(KartPadCanDiscardPendingMiiChanges() && KartPadPendingMiiChangeCount() == 2);
+        assert(KartPadDiscardPendingMiiChanges(&error));
+        assert(!KartPadHasPendingMiiChanges() && !KartPadCanDiscardPendingMiiChanges());
+        assert(KartPadMiiRecords(&error).count == 3);
+        assert(KartPadApplyPendingMiiDatabase(&error));
+        assert([liveDb isEqualToData:[NSData dataWithContentsOfFile:dbpath]]);
         std::filesystem::remove_all(temp);
         puts("Combined Mii/name staging, latest progress, backups, interrupted recovery, new "
              "creation, duplication and stale rejection passed.");

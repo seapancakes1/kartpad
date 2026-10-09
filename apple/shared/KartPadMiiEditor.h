@@ -9,8 +9,8 @@ void KartPadPresentMiiEditor(id parent, NSUInteger slot);
 @protocol KartPadMiiBrowser <NSObject>
 // Done. Mac closes the Miis window here; iPhone/iPad dismiss the screen when this is nil.
 @property(nonatomic, copy, nullable) void (^done)(void);
-// Mac: Quit KartPad in the pending-change banner. Without it the banner only explains.
-@property(nonatomic, copy, nullable) void (^quit)(void);
+// Mac: Restart KartPad in the pending-change banner. Without it the banner only explains.
+@property(nonatomic, copy, nullable) void (^restart)(void);
 // Re-reads the Miis, licenses and pending state; redraws only when something changed.
 - (void)reload;
 // Mac: the Miis window is opening or closing (sounds).

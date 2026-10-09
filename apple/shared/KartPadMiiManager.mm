@@ -99,31 +99,8 @@ NSError *ManagerError(NSInteger code, const std::string& message) {
                          userInfo:@{NSLocalizedDescriptionKey: description}];
 }
 
-NSData *ReadWorkingDatabase(NSError **error) {
-  NSString *path = [NSFileManager.defaultManager fileExistsAtPath:PendingPath()]
-      ? PendingPath() : DatabasePath();
-  NSData *data = [NSData dataWithContentsOfFile:path
-                                       options:NSDataReadingMappedIfSafe
-                                         error:error];
-  if (data == nil && error != nullptr && *error == nil) {
-    *error = ManagerError(1,
-        "No Mii database exists yet. Start Mario Kart Wii once, then try again.");
-  }
-  return data;
-}
-
 std::span<const uint8_t> Bytes(NSData *data) {
   return {static_cast<const uint8_t *>(data.bytes), data.length};
-}
-
-BOOL WritePending(std::vector<uint8_t>& database, NSError **error) {
-  NSData *data = [NSData dataWithBytes:database.data() length:database.size()];
-  if (![NSFileManager.defaultManager createDirectoryAtPath:SupportRoot()
-                                withIntermediateDirectories:YES
-                                                 attributes:nil error:error]) {
-    return NO;
-  }
-  return [data writeToFile:PendingPath() options:NSDataWritingAtomic error:error];
 }
 
 BOOL ValidateData(NSData *data, NSError **error) {
@@ -203,9 +180,372 @@ static NSString *EditorPath() {
 static NSString *EditorJournalPath() {
   return [SupportRoot() stringByAppendingPathComponent:@"MiiEditorTransaction.plist"];
 }
+
+// Mii and license changes wait in a queue until the next launch, because the running game holds
+// the database and saves. Each change is checked against the result of the changes queued before
+// it, and the launch replays them in order over the latest files, so race progress saved in the
+// meantime is kept. Older versions staged a single change in their own files; those still apply,
+// and nothing is queued until they have.
+static NSString *QueuePath() {
+  return [SupportRoot() stringByAppendingPathComponent:@"PendingMiiChanges.plist"];
+}
+static BOOL OtherChangesPending() {
+  NSFileManager *files = NSFileManager.defaultManager;
+  return [files fileExistsAtPath:EditorPath()] || [files fileExistsAtPath:EditorJournalPath()] ||
+         KartPadHasPendingSaveRestore() || [files fileExistsAtPath:PendingGhostPath()] ||
+         [files fileExistsAtPath:PendingPath()] || [files fileExistsAtPath:PendingIdentityPath()] ||
+         [files fileExistsAtPath:PendingLicensePath()];
+}
+
+namespace {
+
+using CreateId = std::array<uint8_t, kartpad::mii::kCreateIdByteSize>;
+
+// The database and saves as the queued changes leave them. Each file is read on first use; a file
+// that does not exist reads as nil.
+struct Workspace {
+  NSMutableDictionary<NSString *, id> *original = [NSMutableDictionary dictionary];
+  NSMutableDictionary<NSString *, id> *current = [NSMutableDictionary dictionary];
+  BOOL Load(NSString *path, NSError **error) {
+    if (current[path] != nil) return YES;
+    id data = NSNull.null;
+    if ([NSFileManager.defaultManager fileExistsAtPath:path]) {
+      data = [NSData dataWithContentsOfFile:path options:0 error:error];
+      if (data == nil) return NO;
+    }
+    original[path] = data;
+    current[path] = data;
+    return YES;
+  }
+  NSData *Data(NSString *path) {
+    id data = current[path];
+    return data == NSNull.null ? nil : data;
+  }
+  void Write(NSString *path, const std::vector<uint8_t>& bytes) {
+    current[path] = [NSData dataWithBytes:bytes.data() length:bytes.size()];
+  }
+};
+
+std::vector<uint8_t> Vector(NSData *data) {
+  const auto bytes = Bytes(data);
+  return {bytes.begin(), bytes.end()};
+}
+
+NSData *WorkspaceDatabase(Workspace& files, NSError **error) {
+  if (!files.Load(DatabasePath(), error)) return nil;
+  NSData *data = files.Data(DatabasePath());
+  if (data == nil) {
+    if (error != nullptr) *error = ManagerError(1,
+        "No Mii database exists yet. Start Mario Kart Wii once, then try again.");
+    return nil;
+  }
+  return ValidateData(data, error) ? data : nil;
+}
+
+// A save that exists and is valid, or nil. *missing says the save does not exist.
+NSData *WorkspaceSave(Workspace& files, NSString *path, BOOL *missing, NSError **error) {
+  *missing = NO;
+  if (!files.Load(path, error)) return nil;
+  NSData *data = files.Data(path);
+  if (data == nil) *missing = YES;
+  return data != nil && ValidateSaveData(data, error) ? data : nil;
+}
+
+NSError *InvalidChange() { return ManagerError(51, "A pending Mii change is invalid."); }
+
+template <class T> T *Value(id value) { return [value isKindOfClass:[T class]] ? value : nil; }
+
+NSData *NameValue(id value, NSError **error) {
+  NSData *name = Value<NSData>(value);
+  const auto validation = kartpad::mii::ValidateUtf16BigEndianName(Bytes(name));
+  if (!validation) {
+    if (error != nullptr) *error = ManagerError(21, validation.message);
+    return nil;
+  }
+  return name;
+}
+
+// The Mii in the slot, which must still have the expected identity.
+BOOL CheckMii(NSData *database, NSUInteger slot, const CreateId& expected, NSError **error) {
+  for (const auto& record : kartpad::mii::ListMiis(Bytes(database))) {
+    if (record.slot == slot && kartpad::mii::MiiCreateId(Bytes(database), slot) == expected) return YES;
+  }
+  if (error != nullptr) *error = ManagerError(20,
+      "The selected Mii changed. Reopen Miis and choose it again.");
+  return NO;
+}
+
+NSData *SelectedMiiName(NSData *database, NSUInteger slot, NSData *expectedId, NSError **error) {
+  CreateId identity{};
+  if (!ReadCreateId(expectedId, identity, error) || !CheckMii(database, slot, identity, error))
+    return nil;
+  const std::string text = kartpad::mii::ReadMiiName(Bytes(database),
+      kartpad::mii::kMiiBlockOffset + slot * kartpad::mii::kMiiBlockSize + 0x02);
+  NSData *name = [[NSString stringWithUTF8String:text.c_str()]
+      dataUsingEncoding:NSUTF16BigEndianStringEncoding];
+  return NameValue(name, error);
+}
+
+// Renames every license that races as the Mii, in each save that exists.
+BOOL RenameLinkedLicenses(Workspace& files, const CreateId& identity, NSData *name,
+                          NSError **error) {
+  for (NSDictionary<NSString *, NSString *> *location in SaveLocations()) {
+    BOOL missing = NO;
+    NSData *data = WorkspaceSave(files, location[@"path"], &missing, error);
+    if (missing) continue;
+    if (data == nil) return NO;
+    auto save = Vector(data);
+    std::size_t changed = 0;
+    const auto result = kartpad::mii::RenameMatchingLicenses(save, identity, Bytes(name), changed);
+    if (!result) {
+      if (error != nullptr) *error = ManagerError(9, result.message);
+      return NO;
+    }
+    if (changed > 0) files.Write(location[@"path"], save);
+  }
+  return YES;
+}
+
+std::size_t LinkedLicenseCount(Workspace& files, const CreateId& identity) {
+  std::size_t count = 0;
+  for (NSDictionary<NSString *, NSString *> *location in SaveLocations()) {
+    BOOL missing = NO;
+    NSData *data = WorkspaceSave(files, location[@"path"], &missing, nullptr);
+    for (const auto& record : kartpad::mii::ListLicenses(Bytes(data)))
+      if (record.createId == identity) count++;
+  }
+  return count;
+}
+
+// A saved editor draft (with the Mii it replaces) or a new Mii. A changed name renames its licenses.
+BOOL ApplyMiiChange(Workspace& files, NSDictionary *change, NSError **error) {
+  NSData *mii = Value<NSData>(change[@"mii"]), *expected = Value<NSData>(change[@"expected"]);
+  NSNumber *slot = Value<NSNumber>(change[@"slot"]);
+  if (mii == nil || (expected != nil && slot == nil)) {
+    if (error != nullptr) *error = InvalidChange();
+    return NO;
+  }
+  try {
+    const auto validation = kartpad::mii::Appearance::Decode(Bytes(mii)).Validate();
+    if (!validation) {
+      if (error != nullptr) *error = ManagerError(50, validation.message);
+      return NO;
+    }
+  } catch (const std::exception& e) {
+    if (error != nullptr) *error = ManagerError(50, e.what());
+    return NO;
+  }
+  NSData *original = WorkspaceDatabase(files, error);
+  if (original == nil) return NO;
+  auto database = Vector(original);
+  const auto result = expected != nil
+      ? kartpad::mii::ReplaceAppearance(database, slot.unsignedIntegerValue, Bytes(expected), Bytes(mii))
+      : kartpad::mii::ImportMii(database, Bytes(mii));
+  if (!result) {
+    if (error != nullptr) *error = ManagerError(expected != nil ? 50 : 3, result.message);
+    return NO;
+  }
+  files.Write(DatabasePath(), database);
+  if (expected == nil || [[expected subdataWithRange:NSMakeRange(2, 20)]
+                             isEqualToData:[mii subdataWithRange:NSMakeRange(2, 20)]])
+    return YES;
+  // Decode the terminated name rather than including padding in license names.
+  const auto text = kartpad::mii::ReadMiiName(Bytes(mii), 2);
+  NSData *name = PlayerNameData([NSString stringWithUTF8String:text.c_str()], error);
+  return name != nil && RenameLinkedLicenses(files,
+      kartpad::mii::MiiCreateId(Bytes(original), slot.unsignedIntegerValue), name, error);
+}
+
+BOOL ApplyMiiRemoval(Workspace& files, NSDictionary *change, NSError **error) {
+  NSNumber *slot = Value<NSNumber>(change[@"slot"]);
+  CreateId identity{};
+  if (slot == nil || !ReadCreateId(Value<NSData>(change[@"createId"]), identity, error)) {
+    if (error != nullptr && *error == nil) *error = InvalidChange();
+    return NO;
+  }
+  NSData *original = WorkspaceDatabase(files, error);
+  if (original == nil || !CheckMii(original, slot.unsignedIntegerValue, identity, error)) return NO;
+  if (LinkedLicenseCount(files, identity) > 0) {
+    if (error != nullptr) *error = ManagerError(20,
+        "This Mii is linked to an existing license. Change the license first.");
+    return NO;
+  }
+  auto database = Vector(original);
+  const auto result = kartpad::mii::RemoveMii(database, slot.unsignedIntegerValue);
+  if (!result) {
+    if (error != nullptr) *error = ManagerError(4, result.message);
+    return NO;
+  }
+  files.Write(DatabasePath(), database);
+  return YES;
+}
+
+// A new Mii name, which its licenses take too.
+BOOL ApplyMiiName(Workspace& files, NSDictionary *change, NSError **error) {
+  NSNumber *slot = Value<NSNumber>(change[@"slot"]);
+  CreateId identity{};
+  if (slot == nil || !ReadCreateId(Value<NSData>(change[@"createId"]), identity, error)) {
+    if (error != nullptr && *error == nil) *error = InvalidChange();
+    return NO;
+  }
+  NSData *name = NameValue(change[@"name"], error);
+  NSData *original = name ? WorkspaceDatabase(files, error) : nil;
+  if (original == nil || !CheckMii(original, slot.unsignedIntegerValue, identity, error)) return NO;
+  auto database = Vector(original);
+  const auto renamed = kartpad::mii::RenameMii(database, slot.unsignedIntegerValue, Bytes(name));
+  if (!renamed) {
+    if (error != nullptr) *error = ManagerError(8, renamed.message);
+    return NO;
+  }
+  files.Write(DatabasePath(), database);
+  return RenameLinkedLicenses(files, identity, name, error);
+}
+
+// Renames, relinks or deletes one license. A renamed license's Mii takes the name too.
+BOOL ApplyLicenseChange(Workspace& files, NSDictionary *change, NSError **error) {
+  NSString *operation = Value<NSString>(change[@"operation"]);
+  NSDictionary<NSString *, NSString *> *location =
+      SaveLocation(Value<NSString>(change[@"profileIdentifier"]));
+  NSNumber *slot = Value<NSNumber>(change[@"slot"]);
+  CreateId identity{};
+  if (location == nil || slot == nil || slot.unsignedIntegerValue >= kartpad::mii::kRksysLicenseCount) {
+    if (error != nullptr) *error = ManagerError(14, "The selected license location is invalid.");
+    return NO;
+  }
+  if (!ReadCreateId(Value<NSData>(change[@"createId"]), identity, error)) return NO;
+  BOOL missing = NO;
+  NSData *data = WorkspaceSave(files, location[@"path"], &missing, error);
+  if (missing && error != nullptr) *error = ManagerError(16,
+      "The selected license changed. Reopen Miis and try again.");
+  if (data == nil) return NO;
+  auto save = Vector(data);
+  kartpad::mii::DatabaseResult result{false, "The requested license change is invalid."};
+  if ([operation isEqualToString:@"rename"]) {
+    NSData *name = NameValue(change[@"name"], error);
+    if (name == nil) return NO;
+    result = kartpad::mii::RenameLicense(save, slot.unsignedIntegerValue, identity, Bytes(name));
+    if (result && !files.Load(DatabasePath(), error)) return NO;
+    if (result && files.Data(DatabasePath()) != nil) {
+      NSData *original = WorkspaceDatabase(files, error);
+      if (original == nil) return NO;
+      auto database = Vector(original);
+      for (const auto& record : kartpad::mii::ListMiis(database)) {
+        if (kartpad::mii::MiiCreateId(database, record.slot) != identity) continue;
+        const auto renamed = kartpad::mii::RenameMii(database, record.slot, Bytes(name));
+        if (!renamed) {
+          if (error != nullptr) *error = ManagerError(17, renamed.message);
+          return NO;
+        }
+        files.Write(DatabasePath(), database);
+        break;
+      }
+    }
+  } else if ([operation isEqualToString:@"mii"]) {
+    NSNumber *miiSlot = Value<NSNumber>(change[@"miiSlot"]);
+    NSData *miiId = Value<NSData>(change[@"miiCreateId"]);
+    NSData *database = WorkspaceDatabase(files, error);
+    NSData *name = database && miiSlot ? SelectedMiiName(database, miiSlot.unsignedIntegerValue, miiId, error) : nil;
+    if (name == nil) {
+      if (error != nullptr && *error == nil) *error = InvalidChange();
+      return NO;
+    }
+    CreateId selected{};
+    std::copy_n(static_cast<const uint8_t *>(miiId.bytes), selected.size(), selected.begin());
+    result = kartpad::mii::SetLicenseMii(save, slot.unsignedIntegerValue, identity, selected, Bytes(name));
+  } else if ([operation isEqualToString:@"delete"]) {
+    result = kartpad::mii::DeleteLicense(save, slot.unsignedIntegerValue, identity);
+  }
+  if (!result) {
+    if (error != nullptr) *error = ManagerError(19, result.message);
+    return NO;
+  }
+  files.Write(location[@"path"], save);
+  return YES;
+}
+
+BOOL ApplyChange(Workspace& files, id value, NSError **error) {
+  NSDictionary *change = Value<NSDictionary>(value);
+  NSString *kind = Value<NSString>(change[@"kind"]);
+  if ([kind isEqualToString:@"mii"]) return ApplyMiiChange(files, change, error);
+  if ([kind isEqualToString:@"remove"]) return ApplyMiiRemoval(files, change, error);
+  if ([kind isEqualToString:@"name"]) return ApplyMiiName(files, change, error);
+  if ([kind isEqualToString:@"license"]) return ApplyLicenseChange(files, change, error);
+  if (error != nullptr) *error = InvalidChange();
+  return NO;
+}
+
+// The queued changes, empty when none are waiting; nil only when the queue can't be read.
+NSArray *ReadQueue(NSError **error) {
+  NSFileManager *files = NSFileManager.defaultManager;
+  if (![files fileExistsAtPath:QueuePath()]) return @[];
+  NSDictionary *attributes = [files attributesOfItemAtPath:QueuePath() error:error];
+  if (attributes == nil) return nil;
+  NSData *data = attributes.fileSize <= 4 * 1024 * 1024
+      ? [NSData dataWithContentsOfFile:QueuePath() options:0 error:error] : nil;
+  NSArray *queue = data ? Value<NSArray>([NSPropertyListSerialization
+      propertyListWithData:data options:NSPropertyListImmutable format:nil error:error]) : nil;
+  if (queue == nil && error != nullptr && *error == nil) {
+    *error = ManagerError(51, "The pending Mii changes can’t be read.");
+  }
+  return queue;
+}
+
+BOOL Replay(Workspace& files, NSArray *queue, NSError **error) {
+  for (id change in queue)
+    if (!ApplyChange(files, change, error)) return NO;
+  return YES;
+}
+
+// An older version's pending database applies before anything queued, so reading starts from it.
+BOOL LoadOlderPendingDatabase(Workspace& files, NSError **error) {
+  if (![NSFileManager.defaultManager fileExistsAtPath:PendingPath()]) return YES;
+  NSData *pending = [NSData dataWithContentsOfFile:PendingPath() options:0 error:error];
+  if (pending == nil) return NO;
+  files.original[DatabasePath()] = pending;
+  files.current[DatabasePath()] = pending;
+  return YES;
+}
+
+// The files as they will be after the next launch, for reading.
+BOOL LoadUpcoming(Workspace& files, NSError **error) {
+  NSArray *queue = LoadOlderPendingDatabase(files, error) ? ReadQueue(error) : nil;
+  return queue != nil && Replay(files, queue, error);
+}
+
+// The queue to add a change to, replayed into files. Nothing is queued while an older kind of
+// pending change waits.
+NSArray *StagingQueue(Workspace& files, NSError **error) {
+  if (OtherChangesPending()) {
+    if (error != nullptr) *error = ManagerError(13,
+        "Restart KartPad to apply the pending data change first.");
+    return nil;
+  }
+  NSArray *queue = ReadQueue(error);
+  return queue != nil && Replay(files, queue, error) ? queue : nil;
+}
+
+BOOL QueueChange(NSArray *queue, Workspace& files, NSDictionary *change, NSError **error) {
+  if (!ApplyChange(files, change, error)) return NO;
+  NSData *data = [NSPropertyListSerialization dataWithPropertyList:[queue arrayByAddingObject:change]
+                                                            format:NSPropertyListBinaryFormat_v1_0
+                                                           options:0 error:error];
+  return data != nil &&
+         [NSFileManager.defaultManager createDirectoryAtPath:SupportRoot()
+                                 withIntermediateDirectories:YES attributes:nil error:error] &&
+         [data writeToFile:QueuePath() options:NSDataWritingAtomic error:error];
+}
+
+NSData *IdentityData(NSData *database, NSUInteger slot) {
+  const auto identity = kartpad::mii::MiiCreateId(Bytes(database), slot);
+  return [NSData dataWithBytes:identity.data() length:identity.size()];
+}
+
+} // namespace
+
 NSData *KartPadReadMii(NSUInteger slot, NSError **error) {
-  NSData *data = ReadWorkingDatabase(error);
-  if (!data || !ValidateData(data, error))
+  Workspace files;
+  NSData *data = LoadUpcoming(files, error) ? WorkspaceDatabase(files, error) : nil;
+  if (!data)
     return nil;
   if (slot >= kartpad::mii::kMaximumMiiSlots) {
     if (error)
@@ -223,13 +563,9 @@ NSData *KartPadReadMii(NSUInteger slot, NSError **error) {
   return [NSData dataWithBytes:block.data() length:block.size()];
 }
 NSData *KartPadNewMii(NSError **error) {
-  if (KartPadHasPendingMiiChanges()) {
-    if (error)
-      *error = ManagerError(50, "Restart KartPad to apply pending changes first.");
-    return nil;
-  }
-  NSData *data = ReadWorkingDatabase(error);
-  if (!data || !ValidateData(data, error))
+  Workspace files;
+  NSData *data = LoadUpcoming(files, error) ? WorkspaceDatabase(files, error) : nil;
+  if (!data)
     return nil;
   try {
     auto a = kartpad::mii::NewAppearance(
@@ -266,84 +602,13 @@ NSData *KartPadExportMii(NSData *edited, NSError **error) {
 }
 
 BOOL KartPadStageMiiEditor(NSUInteger slot, NSData *expected, NSData *edited, NSError **error) {
-  if (KartPadHasPendingMiiChanges()) {
-    if (error)
-      *error = ManagerError(50, "Restart KartPad to apply pending changes first.");
+  Workspace files;
+  NSArray *queue = StagingQueue(files, error);
+  if (!queue)
     return NO;
-  }
-  NSData *original = ReadWorkingDatabase(error);
-  if (!original || !ValidateData(original, error))
-    return NO;
-  try {
-    auto a = kartpad::mii::Appearance::Decode(Bytes(edited));
-    auto v = a.Validate();
-    if (!v) {
-      if (error)
-        *error = ManagerError(50, v.message);
-      return NO;
-    }
-  } catch (const std::exception &e) {
-    if (error)
-      *error = ManagerError(50, e.what());
-    return NO;
-  }
-  std::vector<uint8_t> database(Bytes(original).begin(), Bytes(original).end());
-  auto result =
-      expected ? kartpad::mii::ReplaceAppearance(database, slot, Bytes(expected), Bytes(edited))
-               : kartpad::mii::ImportMii(database, Bytes(edited));
-  if (!result) {
-    if (error)
-      *error = ManagerError(50, result.message);
-    return NO;
-  }
-  NSMutableArray *changes = [NSMutableArray arrayWithObject:@{
-    @"path" : DatabasePath(),
-    @"before" : original,
-    @"after" : [NSData dataWithBytes:database.data() length:database.size()],
-    @"backup" : @"RFL_DB"
-  }];
-  if (expected && ![[expected subdataWithRange:NSMakeRange(2, 20)]
-                      isEqualToData:[edited subdataWithRange:NSMakeRange(2, 20)]]) {
-    auto id = kartpad::mii::MiiCreateId(Bytes(original), slot);
-    for (NSDictionary *location in SaveLocations()) {
-      NSString *path = location[@"path"];
-      if (![NSFileManager.defaultManager fileExistsAtPath:path])
-        continue;
-      NSData *before = [NSData dataWithContentsOfFile:path options:0 error:error];
-      if (!before || !ValidateSaveData(before, error))
-        return NO;
-      std::vector<uint8_t> save(Bytes(before).begin(), Bytes(before).end());
-      size_t changed = 0;
-      // Decode the terminated name rather than including padding in license names.
-      auto text = kartpad::mii::ReadMiiName(Bytes(edited), 2);
-      NSData *name = PlayerNameData([NSString stringWithUTF8String:text.c_str()], error);
-      if (!name)
-        return NO;
-      auto v = kartpad::mii::RenameMatchingLicenses(save, id, Bytes(name), changed);
-      if (!v) {
-        if (error)
-          *error = ManagerError(50, v.message);
-        return NO;
-      }
-      if (changed)
-        [changes addObject:@{
-          @"path" : path,
-          @"before" : before,
-          @"after" : [NSData dataWithBytes:save.data() length:save.size()],
-          @"backup" : location[@"backup"]
-        }];
-    }
-  }
-  if (![NSFileManager.defaultManager createDirectoryAtPath:SupportRoot()
-                               withIntermediateDirectories:YES
-                                                attributes:nil
-                                                     error:error])
-    return NO;
-  NSData *intent = [NSPropertyListSerialization dataWithPropertyList:changes
-                                                              format:NSPropertyListBinaryFormat_v1_0
-                                                             options:0
-                                                               error:error];
-  return intent && [intent writeToFile:EditorPath() options:NSDataWritingAtomic error:error];
+  NSDictionary *change = expected ? @{@"kind" : @"mii", @"slot" : @(slot), @"expected" : expected, @"mii" : edited}
+                                  : @{@"kind" : @"mii", @"mii" : edited};
+  return QueueChange(queue, files, change, error);
 }
 // Rebase a staged name patch onto progress saved after the editor was opened.
 // Identity and the old linked name must still match; every other progress byte is retained.
@@ -365,6 +630,49 @@ static NSData *RebaseEditorSave(NSData *before, NSData *after, NSData *current) 
   kartpad::mii::UpdateRksysCrc(output);
   return [NSData dataWithBytes:output.data() length:output.size()];
 }
+// Writes each change's new contents over its file, backing the old file up first. The changes are
+// journaled before any file is written, so an interrupted commit finishes on the next launch (see
+// ApplyEditor). The intents that asked for the changes are removed once every file is written.
+static BOOL CommitChanges(NSArray<NSDictionary *> *records, NSArray<NSString *> *intents,
+                          BOOL recovering, NSError **error) {
+  NSFileManager *files = NSFileManager.defaultManager;
+  if (!recovering) {
+    NSString *stamp = [NSString stringWithFormat:@"%.0f-%@", NSDate.date.timeIntervalSince1970,
+                                                 NSUUID.UUID.UUIDString];
+    for (NSDictionary *c in records) {
+      BOOL db = [c[@"path"] isEqual:DatabasePath()];
+      if (!BackupFile(c[@"path"], db ? @"MiiBackups" : @"SaveBackups", db ? @"RFL_DB" : c[@"backup"],
+                      stamp, error))
+        return NO;
+    }
+    NSData *journal = [NSPropertyListSerialization dataWithPropertyList:records
+                                                                 format:NSPropertyListBinaryFormat_v1_0
+                                                                options:0
+                                                                  error:error];
+    if (!journal || ![journal writeToFile:EditorJournalPath() options:NSDataWritingAtomic error:error])
+      return NO;
+  }
+  NSUInteger written = 0;
+  for (NSDictionary *c in records) {
+#if defined(KARTPAD_MII_MANAGER_TESTING)
+    const char *fail = std::getenv("KARTPAD_MII_TEST_INTERRUPT_AFTER");
+    if (fail && written == std::strtoul(fail, nullptr, 10)) {
+      if (error)
+        *error = ManagerError(51, "Simulated interruption.");
+      return NO;
+    }
+#endif
+    if (![c[@"after"] writeToFile:c[@"path"] options:NSDataWritingAtomic error:error])
+      return NO;
+    written++;
+  }
+  for (NSString *intent in intents)
+    if ([files fileExistsAtPath:intent] && ![files removeItemAtPath:intent error:error])
+      return NO;
+  return ![files fileExistsAtPath:EditorJournalPath()] ||
+         [files removeItemAtPath:EditorJournalPath() error:error];
+}
+// Applies an older version's editor transaction, or finishes an interrupted commit from its journal.
 static BOOL ApplyEditor(NSError **error) {
   NSFileManager *files = NSFileManager.defaultManager;
   BOOL recovering = [files fileExistsAtPath:EditorJournalPath()];
@@ -378,7 +686,7 @@ static BOOL ApplyEditor(NSError **error) {
                                                          options:NSPropertyListImmutable
                                                           format:nil
                                                            error:error];
-  if (![records isKindOfClass:NSArray.class] || [records count] == 0) {
+  if (![records isKindOfClass:NSArray.class] || (!recovering && [records count] == 0)) {
     if (error)
       *error = ManagerError(51, "Invalid Mii transaction.");
     return NO;
@@ -427,56 +735,44 @@ static BOOL ApplyEditor(NSError **error) {
         change[@"backup"] = location[@"backup"];
     [rebased addObject:change];
   }
-  if (![seen containsObject:DatabasePath()]) {
+  // A queued commit may change only saves; an editor transaction always changes the database.
+  if (!recovering && ![seen containsObject:DatabasePath()]) {
     if (error)
       *error = ManagerError(51, "Mii transaction has no database update.");
     return NO;
   }
-  records = rebased;
-  intent = [NSPropertyListSerialization dataWithPropertyList:records
-                                                      format:NSPropertyListBinaryFormat_v1_0
-                                                     options:0
-                                                       error:error];
-  if (!intent)
+  // A journal comes from either kind of intent, and the commit had finished replaying it.
+  return CommitChanges(rebased, recovering ? @[ EditorPath(), QueuePath() ] : @[ EditorPath() ],
+                       recovering, error);
+}
+// Replays the queue over the latest files and commits the files it changed.
+static BOOL ApplyQueue(NSError **error) {
+  if (![NSFileManager.defaultManager fileExistsAtPath:QueuePath()])
+    return YES;
+  NSArray *queue = ReadQueue(error);
+  Workspace files;
+  if (!queue || !Replay(files, queue, error))
     return NO;
-  if (!recovering) {
-    NSString *stamp = NSUUID.UUID.UUIDString;
-    for (NSDictionary *c in records)
-      if (!BackupFile(c[@"path"], @"MiiEditorBackups",
-                      [c[@"path"] isEqual:DatabasePath()] ? @"RFL_DB" : c[@"backup"], stamp, error))
-        return NO;
-    if (![intent writeToFile:EditorJournalPath() options:NSDataWritingAtomic error:error])
-      return NO;
+  NSMutableArray *records = [NSMutableArray array];
+  NSMutableArray *targets = [NSMutableArray arrayWithObject:@{@"path" : DatabasePath(), @"backup" : @"RFL_DB"}];
+  [targets addObjectsFromArray:SaveLocations()];
+  for (NSDictionary *target in targets) {
+    NSData *before = Value<NSData>(files.original[target[@"path"]]), *after = files.Data(target[@"path"]);
+    if (before && after && ![before isEqualToData:after])
+      [records addObject:@{@"path" : target[@"path"], @"before" : before, @"after" : after,
+                           @"backup" : target[@"backup"]}];
   }
-  NSUInteger written = 0;
-  for (NSDictionary *c in records) {
-#if defined(KARTPAD_MII_MANAGER_TESTING)
-    const char *fail = std::getenv("KARTPAD_MII_TEST_INTERRUPT_AFTER");
-    if (fail && written == std::strtoul(fail, nullptr, 10)) {
-      if (error)
-        *error = ManagerError(51, "Simulated interruption.");
-      return NO;
-    }
-#endif
-    if (![c[@"after"] writeToFile:c[@"path"] options:NSDataWritingAtomic error:error])
-      return NO;
-    written++;
-  }
-  if ([files fileExistsAtPath:EditorPath()] && ![files removeItemAtPath:EditorPath() error:error])
-    return NO;
-  return [files removeItemAtPath:EditorJournalPath() error:error];
+  return CommitChanges(records, @[ QueuePath() ], NO, error);
 }
 NSArray<NSDictionary<NSString *, id> *> *KartPadMiiRecords(NSError **error) {
-  NSData *data = ReadWorkingDatabase(error);
-  if (data == nil || !ValidateData(data, error)) return @[];
+  Workspace files;
+  NSData *data = LoadUpcoming(files, error) ? WorkspaceDatabase(files, error) : nil;
+  if (data == nil) return @[];
 
   NSMutableArray<NSDictionary<NSString *, id> *> *result = [NSMutableArray array];
   for (const auto& record : kartpad::mii::ListMiis(Bytes(data))) {
     NSString *name = [NSString stringWithUTF8String:record.name.c_str()];
     NSString *creator = [NSString stringWithUTF8String:record.creatorName.c_str()];
-    const auto createIdBytes = kartpad::mii::MiiCreateId(Bytes(data), record.slot);
-    NSData *createIdData = [NSData dataWithBytes:createIdBytes.data()
-                                          length:createIdBytes.size()];
     const auto block = Bytes(data).subspan(
         kartpad::mii::kMiiBlockOffset + record.slot * kartpad::mii::kMiiBlockSize,
         kartpad::mii::kMiiBlockSize);
@@ -486,40 +782,86 @@ NSArray<NSDictionary<NSString *, id> *> *KartPadMiiRecords(NSError **error) {
       @"creator": creator.length > 0 ? creator : @"Unknown",
       @"favoriteColor": @(record.favoriteColor),
       @"createId": @(record.createId),
-      @"createIdBytes": createIdData,
+      @"createIdBytes": IdentityData(data, record.slot),
       @"mii": [NSData dataWithBytes:block.data() length:block.size()],
     }];
   }
   return result;
 }
 
+// Licenses as they will be after the next launch. Each one a queued change touches carries that
+// change as pendingOperation, and a license queued for deletion is still listed so it can say so.
 NSArray<NSDictionary<NSString *, id> *> *KartPadLicenseRecords(NSError **error) {
   NSMutableArray<NSDictionary<NSString *, id> *> *result = [NSMutableArray array];
-  NSFileManager *files = NSFileManager.defaultManager;
   NSDictionary *identity = [NSDictionary dictionaryWithContentsOfFile:PendingIdentityPath()];
   NSDictionary *license = [NSDictionary dictionaryWithContentsOfFile:PendingLicensePath()];
-  NSData *databaseData = [NSData dataWithContentsOfFile:DatabasePath()];
+  NSArray *queue = ReadQueue(error);
+  if (queue == nil) return @[];
+  Workspace files;
+  if (!LoadOlderPendingDatabase(files, error)) return @[];
+  NSMutableDictionary<NSString *, NSString *> *operations = [NSMutableDictionary dictionary];
+  NSMutableDictionary<NSString *, NSDictionary *> *deleted = [NSMutableDictionary dictionary];
+  auto key = [](NSString *profile, NSUInteger slot) {
+    return [NSString stringWithFormat:@"%@/%lu", profile, (unsigned long)slot];
+  };
+  for (id entry in queue) {
+    NSDictionary *change = Value<NSDictionary>(entry);
+    NSString *kind = Value<NSString>(change[@"kind"]);
+    NSData *createId = Value<NSData>(change[@"createId"]);
+    for (NSDictionary<NSString *, NSString *> *location in SaveLocations()) {
+      BOOL missing = NO;
+      NSData *save = WorkspaceSave(files, location[@"path"], &missing, nullptr);
+      for (const auto& record : kartpad::mii::ListLicenses(Bytes(save))) {
+        NSData *recordId = [NSData dataWithBytes:record.createId.data() length:record.createId.size()];
+        NSString *profile = location[@"identifier"];
+        if ([kind isEqualToString:@"name"] && [recordId isEqual:createId]) {
+          operations[key(profile, record.slot)] = @"rename";
+        } else if ([kind isEqualToString:@"license"] && [change[@"profileIdentifier"] isEqual:profile] &&
+                   [change[@"slot"] isEqual:@(record.slot)]) {
+          NSString *operation = Value<NSString>(change[@"operation"]);
+          if (operation) operations[key(profile, record.slot)] = operation;
+          if ([operation isEqualToString:@"delete"])
+            deleted[key(profile, record.slot)] = @{
+              @"name": [NSString stringWithUTF8String:record.name.c_str()],
+              @"createId": recordId,
+            };
+        }
+      }
+    }
+    if (!ApplyChange(files, entry, error)) return @[];
+  }
+  NSData *databaseData = WorkspaceDatabase(files, nullptr);
   const auto databaseBytes = Bytes(databaseData);
   const auto miis = kartpad::mii::ListMiis(databaseBytes);
   for (NSDictionary<NSString *, NSString *> *location in SaveLocations()) {
-    NSString *path = location[@"path"];
-    if (![files fileExistsAtPath:path]) continue;
-    NSData *saveData = [NSData dataWithContentsOfFile:path
-                                              options:NSDataReadingMappedIfSafe
-                                                error:error];
-    if (saveData == nil || !ValidateSaveData(saveData, error)) return @[];
-    for (const auto& record : kartpad::mii::ListLicenses(Bytes(saveData))) {
-      NSString *name = [NSString stringWithUTF8String:record.name.c_str()];
-      NSData *createId = [NSData dataWithBytes:record.createId.data()
-                                        length:record.createId.size()];
-      NSString *pendingOperation = @"";
+    BOOL missing = NO;
+    NSData *saveData = WorkspaceSave(files, location[@"path"], &missing, error);
+    if (missing) continue;
+    if (saveData == nil) return @[];
+    const auto records = kartpad::mii::ListLicenses(Bytes(saveData));
+    for (NSUInteger slot = 0; slot < kartpad::mii::kRksysLicenseCount; slot++) {
+      NSString *slotKey = key(location[@"identifier"], slot);
+      const auto record = std::find_if(records.begin(), records.end(),
+                                       [&](const auto& r) { return r.slot == slot; });
+      NSString *name = nil;
+      NSData *createId = nil;
+      if (record != records.end()) {
+        name = [NSString stringWithUTF8String:record->name.c_str()];
+        createId = [NSData dataWithBytes:record->createId.data() length:record->createId.size()];
+      } else if (deleted[slotKey]) {
+        name = deleted[slotKey][@"name"];
+        createId = deleted[slotKey][@"createId"];
+      } else {
+        continue;
+      }
+      NSString *pendingOperation = operations[slotKey] ?: @"";
       NSData *pendingName = nil;
       if ([identity[@"createId"] isEqual:createId]) {
         pendingOperation = @"rename";
         pendingName = identity[@"name"];
       }
       if ([license[@"profileIdentifier"] isEqual:location[@"identifier"]] &&
-          [license[@"slot"] isEqual:@(record.slot)] &&
+          [license[@"slot"] isEqual:@(slot)] &&
           [license[@"createId"] isEqual:createId]) {
         pendingOperation = license[@"operation"] ?: @"";
         pendingName = license[@"name"];
@@ -530,15 +872,17 @@ NSArray<NSDictionary<NSString *, id> *> *KartPadLicenseRecords(NSError **error) 
         name = [[NSString alloc] initWithData:pendingName
                                     encoding:NSUTF16BigEndianStringEncoding];
       }
+      CreateId linked{};
+      std::copy_n(static_cast<const uint8_t *>(createId.bytes), linked.size(), linked.begin());
       [result addObject:@{
         @"profileIdentifier": location[@"identifier"],
         @"profileTitle": location[@"title"],
-        @"slot": @(record.slot),
+        @"slot": @(slot),
         @"name": name.length > 0 ? name : @"Unnamed",
         @"createId": createId,
         @"pendingOperation": pendingOperation,
         @"missingLinkedMii": @(!std::any_of(miis.begin(), miis.end(), [&](const auto& mii) {
-          return kartpad::mii::MiiCreateId(databaseBytes, mii.slot) == record.createId;
+          return kartpad::mii::MiiCreateId(databaseBytes, mii.slot) == linked;
         })),
       }];
     }
@@ -547,153 +891,52 @@ NSArray<NSDictionary<NSString *, id> *> *KartPadLicenseRecords(NSError **error) 
 }
 
 BOOL KartPadStageMiiImport(NSData *miiData, NSString **name, NSError **error) {
-  if(KartPadHasPendingMiiChanges()){if(error)*error=ManagerError(50,"Restart KartPad to apply pending changes first.");return NO;}
-
-  try {auto valid=kartpad::mii::Appearance::Decode(Bytes(miiData)).Validate();if(!valid){if(error)*error=ManagerError(50,valid.message);return NO;}}
-  catch(const std::exception& e){if(error)*error=ManagerError(50,e.what());return NO;}
-
-  NSData *databaseData = ReadWorkingDatabase(error);
-  if (databaseData == nil || !ValidateData(databaseData, error)) return NO;
-
-  std::vector<uint8_t> database(
-      static_cast<const uint8_t *>(databaseData.bytes),
-      static_cast<const uint8_t *>(databaseData.bytes) + databaseData.length);
-  const auto mii = Bytes(miiData);
-  const auto result = kartpad::mii::ImportMii(database, mii);
-  if (!result) {
-    if (error != nullptr) *error = ManagerError(3, result.message);
-    return NO;
-  }
+  Workspace files;
+  NSArray *queue = StagingQueue(files, error);
+  if (queue == nil || !QueueChange(queue, files, @{@"kind": @"mii", @"mii": miiData}, error)) return NO;
   if (name != nullptr) {
-    const std::string decoded = kartpad::mii::ReadMiiName(mii, 0x02);
+    const std::string decoded = kartpad::mii::ReadMiiName(Bytes(miiData), 0x02);
     *name = [NSString stringWithUTF8String:decoded.c_str()];
   }
-  return WritePending(database, error);
+  return YES;
 }
 
 BOOL KartPadStageMiiRemoval(NSUInteger slot, NSError **error) {
-  if(KartPadHasPendingMiiChanges()){if(error)*error=ManagerError(50,"Restart KartPad to apply pending changes first.");return NO;}
-
-  NSData *databaseData = ReadWorkingDatabase(error);
-  if (databaseData == nil || !ValidateData(databaseData, error)) return NO;
-  const auto createId = kartpad::mii::MiiCreateId(Bytes(databaseData), slot);
-  NSData *identity = [NSData dataWithBytes:createId.data() length:createId.size()];
-  NSError *licenseError = nil;
-  for (NSDictionary *license in KartPadLicenseRecords(&licenseError)) {
-    if ([license[@"createId"] isEqual:identity]) {
-      if (error != nullptr) *error = ManagerError(20,
-          "This Mii is linked to an existing license. Change the license first.");
-      return NO;
-    }
-  }
-  if (licenseError != nil) {
-    if (error != nullptr) *error = licenseError;
-    return NO;
-  }
-
-  std::vector<uint8_t> database(
-      static_cast<const uint8_t *>(databaseData.bytes),
-      static_cast<const uint8_t *>(databaseData.bytes) + databaseData.length);
-  const auto result = kartpad::mii::RemoveMii(database, slot);
-  if (!result) {
-    if (error != nullptr) *error = ManagerError(4, result.message);
-    return NO;
-  }
-  return WritePending(database, error);
+  Workspace files;
+  NSArray *queue = StagingQueue(files, error);
+  NSData *database = queue ? WorkspaceDatabase(files, error) : nil;
+  if (database == nil) return NO;
+  return QueueChange(queue, files, @{
+    @"kind": @"remove", @"slot": @(slot), @"createId": IdentityData(database, slot),
+  }, error);
 }
 
 BOOL KartPadStagePlayerName(NSUInteger slot, NSString *name,
                            NSUInteger *updatedLicenses, NSError **error) {
   if (updatedLicenses != nullptr) *updatedLicenses = 0;
-  if (KartPadHasPendingMiiChanges()) {
-    if (error != nullptr) *error = ManagerError(13,
-        "Fully close and reopen KartPad to apply the pending identity change first.");
-    return NO;
-  }
   NSData *nameData = PlayerNameData(name, error);
   if (nameData == nil) return NO;
-
-  NSData *databaseData = ReadWorkingDatabase(error);
-  if (databaseData == nil || !ValidateData(databaseData, error)) return NO;
-  std::vector<uint8_t> database(
-      static_cast<const uint8_t *>(databaseData.bytes),
-      static_cast<const uint8_t *>(databaseData.bytes) + databaseData.length);
+  Workspace files;
+  NSArray *queue = StagingQueue(files, error);
+  NSData *database = queue ? WorkspaceDatabase(files, error) : nil;
+  if (database == nil) return NO;
   if (slot >= kartpad::mii::kMaximumMiiSlots) {
-    if (error != nullptr) {
-      *error = ManagerError(8, "The selected Mii slot is invalid.");
-    }
+    if (error != nullptr) *error = ManagerError(8, "The selected Mii slot is invalid.");
     return NO;
   }
-  const auto createId = kartpad::mii::MiiCreateId(database, slot);
-  const auto renamed = kartpad::mii::RenameMii(
-      database, slot, Bytes(nameData));
-  if (!renamed) {
-    if (error != nullptr) *error = ManagerError(8, renamed.message);
-    return NO;
-  }
-
-  std::size_t changed = 0;
-  for (NSDictionary<NSString *, NSString *> *location in SaveLocations()) {
-    NSString *path = location[@"path"];
-    if (![NSFileManager.defaultManager fileExistsAtPath:path]) continue;
-    NSData *saveData = [NSData dataWithContentsOfFile:path
-                                             options:NSDataReadingMappedIfSafe
-                                               error:error];
-    if (saveData == nil || !ValidateSaveData(saveData, error)) return NO;
-    std::vector<uint8_t> save(
-        static_cast<const uint8_t *>(saveData.bytes),
-        static_cast<const uint8_t *>(saveData.bytes) + saveData.length);
-    std::size_t saveChanged = 0;
-    const auto saveResult = kartpad::mii::RenameMatchingLicenses(
-        save, createId, Bytes(nameData), saveChanged);
-    if (!saveResult) {
-      if (error != nullptr) *error = ManagerError(9, saveResult.message);
-      return NO;
-    }
-    changed += saveChanged;
-  }
-
-  NSData *createIdData = [NSData dataWithBytes:createId.data()
-                                         length:createId.size()];
-  NSDictionary *identity = @{
-    @"createId": createIdData,
-    @"name": nameData,
-  };
-  NSData *identityData = [NSPropertyListSerialization
-      dataWithPropertyList:identity format:NSPropertyListBinaryFormat_v1_0
-                   options:0 error:error];
-  if (identityData == nil ||
-      ![identityData writeToFile:PendingIdentityPath()
-                         options:NSDataWritingAtomic error:error]) return NO;
-  if (!WritePending(database, error)) {
-    [NSFileManager.defaultManager removeItemAtPath:PendingIdentityPath()
-                                             error:nil];
-    return NO;
-  }
-  if (updatedLicenses != nullptr) *updatedLicenses = changed;
+  const std::size_t linked = LinkedLicenseCount(files, kartpad::mii::MiiCreateId(Bytes(database), slot));
+  if (!QueueChange(queue, files, @{
+        @"kind": @"name", @"slot": @(slot), @"createId": IdentityData(database, slot), @"name": nameData,
+      }, error)) return NO;
+  if (updatedLicenses != nullptr) *updatedLicenses = linked;
   return YES;
 }
 
+// An older version's pending license change names its Mii by the live database.
 static NSData *SelectedMiiName(NSUInteger slot, NSData *expectedId, NSError **error) {
-  std::array<uint8_t, kartpad::mii::kCreateIdByteSize> identity{};
-  if (!ReadCreateId(expectedId, identity, error)) return nil;
   NSData *data = [NSData dataWithContentsOfFile:DatabasePath() options:0 error:error];
   if (data == nil || !ValidateData(data, error)) return nil;
-  for (const auto& record : kartpad::mii::ListMiis(Bytes(data))) {
-    if (record.slot == slot && kartpad::mii::MiiCreateId(Bytes(data), slot) == identity) {
-      NSData *name = [[NSString stringWithUTF8String:record.name.c_str()]
-          dataUsingEncoding:NSUTF16BigEndianStringEncoding];
-      const auto validation = kartpad::mii::ValidateUtf16BigEndianName(Bytes(name));
-      if (!validation) {
-        if (error != nullptr) *error = ManagerError(21, validation.message);
-        return nil;
-      }
-      return name;
-    }
-  }
-  if (error != nullptr) *error = ManagerError(20,
-      "The selected Mii changed. Reopen Player Identity and choose it again.");
-  return nil;
+  return SelectedMiiName(data, slot, expectedId, error);
 }
 
 static BOOL KartPadStageLicenseChange(NSString *profileIdentifier,
@@ -702,110 +945,29 @@ static BOOL KartPadStageLicenseChange(NSString *profileIdentifier,
                                      NSError **error,
                                      NSUInteger selectedSlot = NSNotFound,
                                      NSData *selectedId = nil) {
-  NSFileManager *files = NSFileManager.defaultManager;
-  if (KartPadHasPendingSaveRestore() || [files fileExistsAtPath:PendingGhostPath()] || [files fileExistsAtPath:PendingPath()] ||
-      [files fileExistsAtPath:PendingIdentityPath()] ||
-      [files fileExistsAtPath:PendingLicensePath()]) {
-    if (error != nullptr) {
-      *error = ManagerError(13,
-          "Restart KartPad to apply the pending identity change first.");
-    }
-    return NO;
-  }
-  NSDictionary<NSString *, NSString *> *location =
-      SaveLocation(profileIdentifier);
-  if (location == nil || slot >= kartpad::mii::kRksysLicenseCount) {
-    if (error != nullptr) {
-      *error = ManagerError(14, "The selected license location is invalid.");
-    }
-    return NO;
-  }
-  std::array<uint8_t, kartpad::mii::kCreateIdByteSize> createId{};
-  if (!ReadCreateId(createIdData, createId, error)) return NO;
-
-  NSData *nameData = nil;
-  if ([operation isEqualToString:@"rename"]) {
-    nameData = PlayerNameData(name, error);
-    if (nameData == nil) return NO;
-  } else if ([operation isEqualToString:@"mii"]) {
-    nameData = SelectedMiiName(selectedSlot, selectedId, error);
-    if (nameData == nil) return NO;
-  } else if (![operation isEqualToString:@"delete"]) {
-    if (error != nullptr) {
-      *error = ManagerError(15, "The requested license change is invalid.");
-    }
-    return NO;
-  }
-
-  NSData *saveData = [NSData dataWithContentsOfFile:location[@"path"]
-                                            options:NSDataReadingMappedIfSafe
-                                              error:error];
-  if (saveData == nil || !ValidateSaveData(saveData, error)) return NO;
-  BOOL found = NO;
-  for (const auto& record : kartpad::mii::ListLicenses(Bytes(saveData))) {
-    if (record.slot == slot && record.createId == createId) {
-      found = YES;
-      break;
-    }
-  }
-  if (!found) {
-    if (error != nullptr) {
-      *error = ManagerError(16,
-          "The selected license changed. Reopen Player Identity and try again.");
-    }
-    return NO;
-  }
-
-  NSMutableDictionary *intent = [@{
+  NSMutableDictionary *change = [@{
+    @"kind": @"license",
     @"operation": operation,
     @"profileIdentifier": profileIdentifier,
     @"slot": @(slot),
     @"createId": createIdData,
   } mutableCopy];
-  if (nameData != nil) intent[@"name"] = nameData;
-  if ([operation isEqualToString:@"mii"]) {
-    intent[@"miiSlot"] = @(selectedSlot);
-    intent[@"miiCreateId"] = selectedId;
-  }
-  NSData *intentData = [NSPropertyListSerialization
-      dataWithPropertyList:intent format:NSPropertyListBinaryFormat_v1_0
-                   options:0 error:error];
-  if (intentData == nil ||
-      ![files createDirectoryAtPath:SupportRoot()
-         withIntermediateDirectories:YES attributes:nil error:error] ||
-      ![intentData writeToFile:PendingLicensePath()
-                        options:NSDataWritingAtomic error:error]) return NO;
-
-  if ([operation isEqualToString:@"rename"] && [files fileExistsAtPath:DatabasePath()]) {
-    NSData *databaseData = [NSData dataWithContentsOfFile:DatabasePath()
-                                                   options:NSDataReadingMappedIfSafe
-                                                     error:error];
-    if (databaseData == nil || !ValidateData(databaseData, error)) {
-      [files removeItemAtPath:PendingLicensePath() error:nil];
+  if ([operation isEqualToString:@"rename"]) {
+    NSData *nameData = PlayerNameData(name, error);
+    if (nameData == nil) return NO;
+    change[@"name"] = nameData;
+  } else if ([operation isEqualToString:@"mii"]) {
+    if (selectedId == nil) {
+      if (error != nullptr) *error = ManagerError(20,
+          "The selected Mii changed. Reopen Miis and choose it again.");
       return NO;
     }
-    std::vector<uint8_t> database(
-        static_cast<const uint8_t *>(databaseData.bytes),
-        static_cast<const uint8_t *>(databaseData.bytes) + databaseData.length);
-    BOOL renamedMii = NO;
-    for (const auto& record : kartpad::mii::ListMiis(database)) {
-      if (kartpad::mii::MiiCreateId(database, record.slot) != createId) continue;
-      const auto renamed = kartpad::mii::RenameMii(
-          database, record.slot, Bytes(nameData));
-      if (!renamed) {
-        [files removeItemAtPath:PendingLicensePath() error:nil];
-        if (error != nullptr) *error = ManagerError(17, renamed.message);
-        return NO;
-      }
-      renamedMii = YES;
-      break;
-    }
-    if (renamedMii && !WritePending(database, error)) {
-      [files removeItemAtPath:PendingLicensePath() error:nil];
-      return NO;
-    }
+    change[@"miiSlot"] = @(selectedSlot);
+    change[@"miiCreateId"] = selectedId;
   }
-  return YES;
+  Workspace files;
+  NSArray *queue = StagingQueue(files, error);
+  return queue != nil && QueueChange(queue, files, change, error);
 }
 
 BOOL KartPadStageLicenseRename(NSString *profileIdentifier, NSUInteger slot,
@@ -831,7 +993,13 @@ BOOL KartPadStageLicenseDeletion(NSString *profileIdentifier, NSUInteger slot,
 static BOOL KartPadApplyPendingGhost(NSError **error);
 static BOOL KartPadApplyPendingSaveRestore(NSError **error);
 
+// Changes staged by older versions, then the queue.
+static BOOL ApplyLegacyChanges(NSError **error);
 BOOL KartPadApplyPendingMiiDatabase(NSError **error) {
+  return ApplyLegacyChanges(error) && ApplyQueue(error);
+}
+
+static BOOL ApplyLegacyChanges(NSError **error) {
   if (!ApplyEditor(error)) return NO;
   if (!KartPadApplyPendingSaveRestore(error)) return NO;
   if (!KartPadApplyPendingGhost(error)) return NO;
@@ -1014,9 +1182,33 @@ BOOL KartPadApplyPendingMiiDatabase(NSError **error) {
 }
 
 BOOL KartPadHasPendingMiiChanges(void) {
-  return [NSFileManager.defaultManager fileExistsAtPath:EditorPath()] || [NSFileManager.defaultManager fileExistsAtPath:EditorJournalPath()] || KartPadHasPendingSaveRestore() || [NSFileManager.defaultManager fileExistsAtPath:PendingGhostPath()] || [NSFileManager.defaultManager fileExistsAtPath:PendingPath()] ||
-      [NSFileManager.defaultManager fileExistsAtPath:PendingIdentityPath()] ||
-      [NSFileManager.defaultManager fileExistsAtPath:PendingLicensePath()];
+  return OtherChangesPending() || [NSFileManager.defaultManager fileExistsAtPath:QueuePath()];
+}
+
+BOOL KartPadCanQueueMiiChanges(void) { return !OtherChangesPending(); }
+
+// Waiting Mii and license changes, including an older version's. An interrupted commit's journal is
+// not one: it has already started writing files and must finish.
+static NSArray<NSString *> *DiscardablePaths() {
+  return @[ QueuePath(), EditorPath(), PendingPath(), PendingIdentityPath(), PendingLicensePath() ];
+}
+
+BOOL KartPadCanDiscardPendingMiiChanges(void) {
+  for (NSString *path in DiscardablePaths())
+    if ([NSFileManager.defaultManager fileExistsAtPath:path]) return YES;
+  return NO;
+}
+
+BOOL KartPadDiscardPendingMiiChanges(NSError **error) {
+  NSFileManager *files = NSFileManager.defaultManager;
+  for (NSString *path in DiscardablePaths())
+    if ([files fileExistsAtPath:path] && ![files removeItemAtPath:path error:error]) return NO;
+  return YES;
+}
+
+NSUInteger KartPadPendingMiiChangeCount(void) {
+  NSArray *queue = ReadQueue(nullptr);
+  return queue.count + (OtherChangesPending() || queue == nil ? 1 : 0);
 }
 
 #include "kartpad/ghost/rkg.h"

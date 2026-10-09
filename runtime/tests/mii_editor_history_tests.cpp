@@ -15,5 +15,11 @@ int main(){using namespace kartpad::mii;
     auto before=draft;draft.Set(17,4);h.Record(before,draft);draft=h.Undo(draft);assert(draft.bytes==changed.bytes);assert(h.CanRedo());before=draft;draft.Set(17,2);h.Record(before,draft);assert(!h.CanRedo());
     auto noop= draft;h.Record(noop,noop);draft=h.Undo(draft);assert(draft.bytes==changed.bytes);
     PreviewRevision r;auto stale=r.Next();auto current=r.Next();assert(!r.Accept(stale)&&r.Accept(current));r.Next();assert(!r.Accept(current));
-    std::cout<<"Feature mappings, grouped adjustment undo/redo, branching and stale preview revisions passed.\n";
+    // Look-alikes keep the draft's identity and names, are valid, repeat per seed and vary across seeds.
+    std::set<std::vector<uint8_t>> faces;
+    for(unsigned gender:{0u,1u})for(uint32_t seed=0;seed<200;seed++){auto face=LookAlike(initial,gender,seed);assert(face.Validate().ok&&face.Get(0)==gender);
+        assert(face.Get(1)==initial.Get(1)&&face.Get(2)==initial.Get(2)&&std::equal(face.bytes.begin()+2,face.bytes.begin()+22,initial.bytes.begin()+2)&&std::equal(face.bytes.begin()+24,face.bytes.begin()+32,initial.bytes.begin()+24)&&std::equal(face.bytes.begin()+54,face.bytes.end(),initial.bytes.begin()+54));
+        assert(LookAlike(initial,gender,seed).bytes==face.bytes);if(gender)assert(face.Get(37)==0&&face.Get(38)==0);faces.insert({face.bytes.begin(),face.bytes.end()});}
+    assert(faces.size()>380);
+    std::cout<<"Feature mappings, grouped adjustment undo/redo, branching, stale preview revisions and look-alikes passed.\n";
 }

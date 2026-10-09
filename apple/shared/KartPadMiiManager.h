@@ -29,8 +29,18 @@ BOOL KartPadStageLicenseMii(NSString *profileIdentifier, NSUInteger slot,
                            NSError **error);
 BOOL KartPadStageLicenseDeletion(NSString *profileIdentifier, NSUInteger slot,
                                 NSData *createId, NSError **error);
+// Staged changes wait for the next launch, which applies them in order before the game starts.
+// Several Mii and license changes can wait at once; a pending ghost import or save restore waits
+// alone.
 BOOL KartPadApplyPendingMiiDatabase(NSError **error);
 BOOL KartPadHasPendingMiiChanges(void);
+// NO while a pending ghost import, save restore or older version's change blocks new changes.
+BOOL KartPadCanQueueMiiChanges(void);
+NSUInteger KartPadPendingMiiChangeCount(void);
+// Drops every waiting Mii and license change; live files are untouched. A pending ghost import or
+// save restore has its own cancel.
+BOOL KartPadCanDiscardPendingMiiChanges(void);
+BOOL KartPadDiscardPendingMiiChanges(NSError **error);
 
 
 // Original-course RKG exchange; imports use downloaded slots and preserve personal bests.

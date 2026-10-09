@@ -12,6 +12,8 @@ __asm__(".linker_option \"-framework\", \"AVFoundation\"");
 #include "kartpad/mii/editor_sounds.h"
 using KPSound=kartpad::mii::EditorSound;
 static NSString *const KPMiiSoundsKey=@"KartPadMiiEditorSounds";
+// Posted when the switch changes, so the Miis screen and an open editor (separate windows on Mac) both redraw it.
+static NSNotificationName const KPMiiSoundsChangedNotification=@"KPMiiSoundsChanged";
 @interface KPMiiSounds : NSObject
 + (instancetype)shared;
 @property(nonatomic) BOOL enabled;
@@ -43,7 +45,7 @@ static AVAudioPCMBuffer *KPMiiSoundBuffer(const kartpad::audio::Pcm &pcm,AVAudio
 }
 + (instancetype)shared{static KPMiiSounds *sounds;static dispatch_once_t once;dispatch_once(&once,^{sounds=[KPMiiSounds new];});return sounds;}
 - (BOOL)enabled{id value=[NSUserDefaults.standardUserDefaults objectForKey:KPMiiSoundsKey];return value?[value boolValue]:YES;}
-- (void)setEnabled:(BOOL)enabled{[NSUserDefaults.standardUserDefaults setBool:enabled forKey:KPMiiSoundsKey];if(!enabled){[_node stop];_currentUntil=0;_hasPending=NO;}}
+- (void)setEnabled:(BOOL)enabled{[NSUserDefaults.standardUserDefaults setBool:enabled forKey:KPMiiSoundsKey];if(!enabled){[_node stop];_currentUntil=0;_hasPending=NO;}[NSNotificationCenter.defaultCenter postNotificationName:KPMiiSoundsChangedNotification object:self];}
 // Output device and route changes stop the engine; start it again on the next sound or here.
 - (BOOL)resume{
     if(!_engine)return NO;
@@ -112,4 +114,25 @@ static AVAudioPCMBuffer *KPMiiSoundBuffer(const kartpad::audio::Pcm &pcm,AVAudio
     _currentSound=sound;_currentUntil=now+buffer.frameLength/buffer.format.sampleRate;
 }
 @end
-static void KPPlay(KPSound sound){[[KPMiiSounds shared] play:sound];}
+#if !TARGET_OS_OSX
+// iPhone and iPad pair the sounds with light haptics, whether or not Sound is on: a selection tick
+// for choosing, stepping and paging, success for a save and a warning at a limit or error. Opening,
+// closing, dialogs, typing and choosing what is already chosen stay quiet, as does hover.
+static void KPHaptic(KPSound sound){
+    static UISelectionFeedbackGenerator *selection;static UINotificationFeedbackGenerator *notice;
+    if(!selection){selection=[UISelectionFeedbackGenerator new];notice=[UINotificationFeedbackGenerator new];}
+    switch(sound){
+    case KPSound::Tick:case KPSound::Press:case KPSound::Tab:case KPSound::Confirm:case KPSound::Left:case KPSound::Right:case KPSound::PageNext:case KPSound::PagePrevious:case KPSound::NewMii:
+        [selection selectionChanged];[selection prepare];break;
+    case KPSound::Saved:[notice notificationOccurred:UINotificationFeedbackTypeSuccess];break;
+    case KPSound::Reject:[notice notificationOccurred:UINotificationFeedbackTypeWarning];break;
+    default:break;
+    }
+}
+#endif
+static void KPPlay(KPSound sound){
+#if !TARGET_OS_OSX
+    KPHaptic(sound);
+#endif
+    [[KPMiiSounds shared] play:sound];
+}

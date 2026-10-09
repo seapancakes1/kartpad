@@ -1,28 +1,12 @@
 // The Miis screen (KartPadMiiEditor.h): every Mii as a portrait tile beside the selected Mii's
 // details, actions and licenses. It is included after KartPadMiiEditor.inc.mm and shares its
-// Mii Channel palette, button faces, sounds and resource loader, so the screen and the editor match.
-// Every change is staged for the next launch. As in the editor, a pending change blocks the next one
-// until KartPad restarts, and a banner says so.
+// Mii Channel palette, button faces, sounds, resource loader and portrait cache, so the screen and
+// the editor match.
+// Every change is queued for the next launch, and a banner counts what is waiting. Changes queue up
+// on top of each other; only a pending ghost import or save restore blocks new ones.
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 __asm__(".linker_option \"-framework\", \"UniformTypeIdentifiers\"");
 
-static void KPRefresh(id view){
-#if TARGET_OS_OSX
-    [(NSView*)view setNeedsDisplay:YES];
-#else
-    [(UIView*)view setNeedsDisplay];
-#endif
-}
-static void KPDrawImage(KPMiiImage *image,CGRect rect){
-    CGSize size=image.size;if(size.width<=0||size.height<=0)return;
-    CGFloat scale=std::min(rect.size.width/size.width,rect.size.height/size.height);
-    CGRect fit=CGRectMake(CGRectGetMidX(rect)-size.width*scale/2,CGRectGetMidY(rect)-size.height*scale/2,size.width*scale,size.height*scale);
-#if TARGET_OS_OSX
-    [image drawInRect:fit fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:@{NSImageHintInterpolation:@(NSImageInterpolationHigh)}];
-#else
-    [image drawInRect:fit];
-#endif
-}
 static unsigned KPFavoriteIndex(NSDictionary *record){unsigned i=[record[@"favoriteColor"] unsignedIntValue];return i<kartpad::mii::Shirt.size()?i:0;}
 static unsigned KPFavoriteHex(NSDictionary *record){auto c=kartpad::mii::Shirt[KPFavoriteIndex(record)];return (c[0]<<16)|(c[1]<<8)|c[2];}
 static NSString *KPFavoriteName(NSDictionary *record){return @[@"Red",@"Orange",@"Yellow",@"Light green",@"Green",@"Blue",@"Light blue",@"Pink",@"Purple",@"Brown",@"White",@"Black"][KPFavoriteIndex(record)];}
@@ -32,38 +16,8 @@ static NSString *KPLicensePending(NSDictionary *license){
     NSString *operation=license[@"pendingOperation"];
     return [operation isEqual:@"delete"]?@"Deletion pending":[operation isEqual:@"rename"]?@"Rename pending":[operation isEqual:@"mii"]?@"Mii change pending":[license[@"missingLinkedMii"] boolValue]?@"Its Mii is missing":nil;
 }
-static NSString *KPMiiFileName(NSString *name){
-    NSString *clean=[[name componentsSeparatedByCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"/:\\"]] componentsJoinedByString:@"-"];
-    return [(clean.length?clean:@"Mii") stringByAppendingPathExtension:@"mii"];
-}
 static UTType *KPMiiFileType(){return [UTType typeWithFilenameExtension:@"mii" conformingToType:UTTypeData]?:UTTypeData;}
-static NSString *const KPMiiRestartAdvice=
-#if TARGET_OS_OSX
-    @"Quit and reopen KartPad to apply it.";
-#else
-    @"Fully close KartPad from the app switcher and reopen it to apply it.";
-#endif
 
-// Head portraits render on the editor's resource worker and are cached by the Mii's 74 bytes, so an
-// unchanged Mii renders once per session. Without the imported RFL archive, tiles fall back to a
-// silhouette in the Mii's favorite color.
-static NSCache<NSData*,KPMiiImage*> *KPMiiPortraits(){static NSCache *cache;static dispatch_once_t once;dispatch_once(&once,^{cache=[NSCache new];});return cache;}
-static NSMutableSet<NSData*> *KPMiiPortraitsRendering(){static NSMutableSet *set;static dispatch_once_t once;dispatch_once(&once,^{set=[NSMutableSet set];});return set;}
-static NSString *KPMiiPortraitProblem;
-static void KPMiiRequestPortrait(NSData *mii,void(^ready)(void)){
-    if(mii.length!=kartpad::mii::kMiiBlockSize||[KPMiiPortraits() objectForKey:mii]||[KPMiiPortraitsRendering() containsObject:mii])return;
-    [KPMiiPortraitsRendering() addObject:mii];
-    dispatch_async(KPMiiWorkQueue(),^{
-        KPMiiImage *image=nil;NSString *problem=nil;
-        try{auto resources=KPMiiLoadResources();image=KPMiiImageFromPixels(kartpad::mii::Portrait::Render(*resources,kartpad::mii::Appearance::Decode(Bytes(mii))),YES);}
-        catch(const std::exception &e){problem=@(e.what());}
-        dispatch_async(dispatch_get_main_queue(),^{
-            [KPMiiPortraitsRendering() removeObject:mii];
-            if(image){[KPMiiPortraits() setObject:image forKey:mii];KPMiiPortraitProblem=nil;}else KPMiiPortraitProblem=problem;
-            ready();
-        });
-    });
-}
 // The well stays light in dark mode, like the editor's artwork tiles, so dark hair stays visible.
 static void KPDrawPortrait(CGContextRef c,CGRect well,NSDictionary *record){
     KPFill(c,well,KPLightPalette.well,well.size.width*.08);
@@ -119,6 +73,21 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
     }
     return actions;
 }
+
+// Keeps a rename dialog's count and action in step with the name being typed (after composing).
+@interface KPMiiNameWatcher : NSObject
+#if TARGET_OS_OSX
+<NSTextFieldDelegate>
+#endif
+@property(nonatomic,copy) void(^changed)(NSString *name);
+@end
+@implementation KPMiiNameWatcher
+#if TARGET_OS_OSX
+- (void)controlTextDidChange:(NSNotification*)note{NSTextField *field=note.object;if([(NSTextView*)field.currentEditor hasMarkedText])return;if(self.changed)self.changed(field.stringValue);}
+#else
+- (void)edited:(UITextField*)field{if(field.markedTextRange)return;if(self.changed)self.changed(field.text?:@"");}
+#endif
+@end
 
 // Static artwork (portraits, color chips) drawn by a block.
 #if TARGET_OS_OSX
@@ -271,21 +240,23 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
 @end
 
 #if TARGET_OS_OSX
-@interface KPMiiBrowser : NSViewController <KartPadMiiBrowser>
+@interface KPMiiBrowser : NSViewController <KartPadMiiBrowser,KPMiiEditorListener>
 #else
-@interface KPMiiBrowser : UIViewController <KartPadMiiBrowser,UIDocumentPickerDelegate,UIDropInteractionDelegate>
+@interface KPMiiBrowser : UIViewController <KartPadMiiBrowser,KPMiiEditorListener,UIDocumentPickerDelegate,UIDropInteractionDelegate>
 #endif
 @property(nonatomic,copy) void(^done)(void);
-@property(nonatomic,copy) void(^quit)(void);
+@property(nonatomic,copy) void(^restart)(void);
 @property(nonatomic,strong) KPMiiBrowserView *canvas;
 @property(nonatomic,copy) NSArray<NSDictionary<NSString*,id>*> *records,*licenses;
 @property(nonatomic,copy) NSString *readError,*licenseError,*lastChange;
-@property(nonatomic) BOOL pending,loaded;
+@property(nonatomic) BOOL pending,queueBlocked,discardable,loaded;
+@property(nonatomic) NSUInteger pendingCount;
 @property(nonatomic) NSUInteger selectedSlot,columns;
 @property(nonatomic,strong) NSMutableArray<KPMiiBrowserButton*> *tiles;
 @property(nonatomic,strong) id gridScroll,detailScroll;
 @property(nonatomic,strong) KPMiiPaintView *detailPortrait;
 @property(nonatomic) BOOL problemShown;
+@property(nonatomic,weak) KPMiiBrowserButton *soundButton;
 - (void)rebuild;
 - (BOOL)handleKey:(NSString*)key;
 - (BOOL)editable;
@@ -354,7 +325,8 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
 #if TARGET_OS_OSX
 - (void)loadView{
     self.canvas=[[KPMiiBrowserView alloc]initWithFrame:NSMakeRect(0,0,820,560)];self.canvas.browser=self;
-    [self.canvas registerForDraggedTypes:@[NSPasteboardTypeFileURL]];self.view=self.canvas;
+    [self.canvas registerForDraggedTypes:@[NSPasteboardTypeFileURL]];self.view=self.canvas;KPMiiSaveListener=self;
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(soundsChanged:) name:KPMiiSoundsChangedNotification object:nil];
 }
 - (id)presenter{return self.view.window;}
 #else
@@ -365,7 +337,8 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
     [self.view addSubview:self.canvas];
     UILayoutGuide *safe=self.view.safeAreaLayoutGuide;
     [NSLayoutConstraint activateConstraints:@[[self.canvas.topAnchor constraintEqualToAnchor:safe.topAnchor],[self.canvas.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor],[self.canvas.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor],[self.canvas.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor]]];
-    [self.canvas addInteraction:[[UIDropInteraction alloc]initWithDelegate:self]];
+    [self.canvas addInteraction:[[UIDropInteraction alloc]initWithDelegate:self]];KPMiiSaveListener=self;
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(soundsChanged:) name:KPMiiSoundsChangedNotification object:nil];
 }
 - (void)viewWillAppear:(BOOL)animated{
     [super viewWillAppear:animated];
@@ -387,9 +360,18 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
     [self handleKey:keys[command.input]?:command.input];
 }
 #endif
+// The editor's switch changes the same setting.
+- (void)soundsChanged:(NSNotification*)note{
+    KPMiiBrowserButton *sound=self.soundButton;if(!sound)return;KPRefresh(sound);
+#if TARGET_OS_OSX
+    [sound setAccessibilityValue:@([KPMiiSounds shared].enabled)];
+#else
+    sound.accessibilityValue=[KPMiiSounds shared].enabled?@"On":@"Off";
+#endif
+}
 - (void)willShow{[[KPMiiSounds shared] prepare:KPMiiSoundArchivePath()];KPPlay(KPSound::Open);}
 - (void)willClose{KPPlay(KPSound::Close);[[KPMiiSounds shared] suspendSoon];}
-- (BOOL)editable{return !self.pending&&!self.readError;}
+- (BOOL)editable{return !self.queueBlocked&&!self.readError;}
 - (NSDictionary*)recordForSlot:(NSUInteger)slot{for(NSDictionary *record in self.records)if([record[@"slot"] unsignedIntegerValue]==slot)return record;return nil;}
 - (NSDictionary*)selectedRecord{return [self recordForSlot:self.selectedSlot];}
 - (NSArray<NSDictionary*>*)licensesForRecord:(NSDictionary*)record{
@@ -405,12 +387,13 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
 
 - (void)reload{
     NSError *error=nil;NSArray *records=KartPadMiiRecords(&error);
-    NSString *readError=error?(error.localizedDescription?:@"The Mii database could not be read."):nil;
+    NSString *readError=error?(error.localizedDescription?:@"The Mii database couldn’t be read."):nil;
     error=nil;NSArray *licenses=readError?@[]:KartPadLicenseRecords(&error);
-    NSString *licenseError=error?(error.localizedDescription?:@"The game saves could not be read."):nil;
-    BOOL pending=KartPadHasPendingMiiChanges();if(!pending)self.lastChange=nil;
-    BOOL changed=!self.loaded||![records isEqual:self.records]||![licenses isEqual:self.licenses]||pending!=self.pending||!((readError==self.readError)||[readError isEqual:self.readError])||!((licenseError==self.licenseError)||[licenseError isEqual:self.licenseError]);
-    self.records=records;self.licenses=licenses;self.readError=readError;self.licenseError=licenseError;self.pending=pending;
+    NSString *licenseError=error?(error.localizedDescription?:@"The game saves couldn’t be read."):nil;
+    BOOL pending=KartPadHasPendingMiiChanges(),queueBlocked=!KartPadCanQueueMiiChanges();if(!pending)self.lastChange=nil;
+    NSUInteger pendingCount=pending?KartPadPendingMiiChangeCount():0;BOOL discardable=KartPadCanDiscardPendingMiiChanges();
+    BOOL changed=!self.loaded||![records isEqual:self.records]||![licenses isEqual:self.licenses]||pending!=self.pending||queueBlocked!=self.queueBlocked||discardable!=self.discardable||pendingCount!=self.pendingCount||!((readError==self.readError)||[readError isEqual:self.readError])||!((licenseError==self.licenseError)||[licenseError isEqual:self.licenseError]);
+    self.records=records;self.licenses=licenses;self.readError=readError;self.licenseError=licenseError;self.pending=pending;self.queueBlocked=queueBlocked;self.discardable=discardable;self.pendingCount=pendingCount;
     if(![self selectedRecord])self.selectedSlot=records.count?[records.firstObject[@"slot"] unsignedIntegerValue]:NSNotFound;
     __weak KPMiiBrowser *weak=self;
     for(NSDictionary *record in records){NSData *mii=record[@"mii"];KPMiiRequestPortrait(mii,^{[weak portraitReady:mii];});}
@@ -422,7 +405,17 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
     // A failed render (no imported resources) is explained in the details once it is known.
     if(KPMiiPortraitProblem&&!self.problemShown&&[self selectedRecord])[self buildDetail];
 }
-- (void)changeScheduled:(NSString*)description{KPPlay(KPSound::Saved);self.lastChange=description;[self reload];}
+- (void)changeScheduled:(NSString*)description{KPPlay(KPSound::Saved);[self changeScheduled:description select:NSNotFound];}
+// The banner names the change, and the Mii it concerns is selected: slot, or else the Mii that
+// wasn't there before (an import, a new Mii or a duplicate).
+- (void)changeScheduled:(NSString*)description select:(NSUInteger)slot{
+    NSMutableSet *before=[NSMutableSet set];for(NSDictionary *record in self.records)[before addObject:record[@"slot"]];
+    self.lastChange=description;[self reload];
+    if(slot==NSNotFound)for(NSDictionary *record in self.records)if(![before containsObject:record[@"slot"]]){slot=[record[@"slot"] unsignedIntegerValue];break;}
+    if(slot!=NSNotFound&&[self recordForSlot:slot])[self showSlot:slot];
+}
+// The editor saved (it has played the sound) and is closing.
+- (void)miiEditorSaved:(NSString*)description mii:(NSData*)mii slot:(NSUInteger)slot{[self changeScheduled:description select:slot];}
 
 #pragma mark Layout
 
@@ -510,20 +503,15 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
     __weak KPMiiBrowser *weak=self;
 
     // Header: the title (drawn) and the shared Sound switch.
-    KPMiiBrowserButton *sound=[[KPMiiBrowserButton alloc]initWithFrame:CGRectMake(w-m-96,8,96,40)];__weak KPMiiBrowserButton *weakSound=sound;
+    KPMiiBrowserButton *sound=[[KPMiiBrowserButton alloc]initWithFrame:CGRectMake(w-m-96,8,96,40)];
     sound.paint=^(CGContextRef c,CGRect b,BOOL pressed,BOOL hovered){
         BOOL on=[KPMiiSounds shared].enabled;CGFloat side=26;CGRect box=CGRectMake(2,(b.size.height-side-3)/2+1,side,side+3);
         KPButtonFace(c,box,KPStyle::Plain,on,YES,pressed,hovered);
         if(on)KPControlIcon(c,CGRectMake(box.origin.x+3,box.origin.y+3+(pressed?2:0),side-6,side-6),KPGlyph::Check,0,KPP->accentBottom);
         KPCenteredText(@"Sound",CGRectMake(side+10,0,b.size.width-side-10,b.size.height),15,KPP->text,YES,NSTextAlignmentLeft);
     };
-    sound.tapped=^{KPMiiSounds *sounds=[KPMiiSounds shared];sounds.enabled=!sounds.enabled;if(sounds.enabled)KPPlay(KPSound::Confirm);KPRefresh(weakSound);
-#if TARGET_OS_OSX
-        [weakSound setAccessibilityValue:@(sounds.enabled)];
-#else
-        weakSound.accessibilityValue=sounds.enabled?@"On":@"Off";
-#endif
-    };
+    sound.tapped=^{KPMiiSounds *sounds=[KPMiiSounds shared];sounds.enabled=!sounds.enabled;if(sounds.enabled)KPPlay(KPSound::Confirm);};
+    self.soundButton=sound;
 #if TARGET_OS_OSX
     sound.bordered=NO;sound.title=@"";[sound setAccessibilityLabel:@"Sound effects"];[sound setAccessibilityRole:NSAccessibilityCheckBoxRole];[sound setAccessibilityValue:@([KPMiiSounds shared].enabled)];
 #else
@@ -532,19 +520,28 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
     [canvas addSubview:sound];
     CGFloat top=tight?52:58;
 
-    // Banner: a change waiting for the next launch, or why the Miis can't be read.
+    // Banner: the changes waiting for the next launch, or why the Miis can't be read. Discard is
+    // also offered with a read error, since a waiting change that no longer fits causes one.
     canvas.banner=CGRectZero;
     if(self.pending||self.readError){
-        BOOL quit=self.pending&&self.quit;CGFloat bh=compact?66:48;
+        BOOL restart=self.pending&&self.restart,discard=self.discardable;CGFloat bh=compact?66:48;
         canvas.banner=CGRectMake(m,top,w-2*m,bh);
-        NSString *text=self.readError?[NSString stringWithFormat:@"The Miis can’t be shown. %@",self.readError]:[NSString stringWithFormat:@"%@ %@ Until then, Miis and licenses can’t be changed again.",self.lastChange?:@"A change is waiting for the next launch.",KPMiiRestartAdvice];
-        CGFloat textW=w-2*m-28-(quit?140:0);
+        NSUInteger count=MAX(self.pendingCount,(NSUInteger)1);NSMutableArray *parts=[NSMutableArray array];
+        if(self.lastChange)[parts addObject:self.lastChange];
+        if(count>1)[parts addObject:[NSString stringWithFormat:@"%lu changes are waiting for the next launch.",(unsigned long)count]];
+        else if(!self.lastChange)[parts addObject:@"A change is waiting for the next launch."];
+        [parts addObject:KPMiiRestartAdvice(count)];
+        if(self.queueBlocked)[parts addObject:@"Until then, Miis and licenses can’t be changed."];
+        NSString *text=self.readError?[NSString stringWithFormat:@"The Miis can’t be shown. %@",self.readError]:[parts componentsJoinedByString:@" "];
+        CGFloat restartW=restart?148:0,discardW=discard?96:0;
+        CGFloat textW=w-2*m-28-(restart?restartW+12:0)-(discard?discardW+12:0);
         id label=[self label:text frame:CGRectMake(m+14,top+(bh-(compact?52:34))/2,textW,compact?52:34) size:13 bold:NO secondary:NO];
 #if TARGET_OS_OSX
         [label setAccessibilityRole:NSAccessibilityStaticTextRole];
 #endif
         [canvas addSubview:label];
-        if(quit)[canvas addSubview:[self button:@"Quit KartPad" frame:CGRectMake(w-m-14-128,top+(bh-38)/2,128,38) style:KPStyle::Plain enabled:YES action:^(KPMiiBrowserButton *b){KPPlay(KPSound::Press);if(weak.quit)weak.quit();}]];
+        if(restart)[canvas addSubview:[self button:@"Restart KartPad" frame:CGRectMake(w-m-14-restartW,top+(bh-38)/2,restartW,38) style:KPStyle::Plain enabled:YES action:^(KPMiiBrowserButton *b){KPPlay(KPSound::Press);if(weak.restart)weak.restart();}]];
+        if(discard)[canvas addSubview:[self button:@"Discard" frame:CGRectMake(w-m-14-restartW-(restart?12:0)-discardW,top+(bh-38)/2,discardW,38) style:KPStyle::Plain enabled:YES action:^(KPMiiBrowserButton *b){[weak discardPending];}]];
         top+=bh+10;
     }
 
@@ -558,7 +555,7 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
 #if TARGET_OS_OSX
     canvas.hint=canvas.hintRect.size.width>=300?@"Double-click a Mii to edit it. Drop .mii files here to import them.":nil;
 #else
-    canvas.hint=canvas.hintRect.size.width>=300?@"Changes apply after fully closing and reopening KartPad.":nil;
+    canvas.hint=canvas.hintRect.size.width>=300?@"Fully close KartPad from the app switcher and reopen it to apply changes.":nil;
 #endif
     CGFloat bottom=footerY-12;
 
@@ -688,8 +685,11 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
     if(KPMiiPortraitProblem&&![KPMiiPortraits() objectForKey:record[@"mii"]]){iy=[self note:[NSString stringWithFormat:@"Portraits unavailable: %@",KPMiiPortraitProblem] in:document x:ix y:iy width:iw size:11 bold:NO secondary:YES]+6;self.problemShown=YES;}
     y=std::max(side,iy)+16;
 
-    // Actions: Edit first, then the rest two by two.
+    // Actions: Edit first, then the rest two by two. A Mii no license races as (a new one, say)
+    // offers Use for a License… straight after Edit, since that is its next step.
+    NSArray *others=self.licenseError?@[]:[self licensesToLink:record];BOOL promote=!linked.count&&others.count;
     [document addSubview:[self button:@"Edit Mii" frame:CGRectMake(0,y,dw,48) style:KPStyle::Primary enabled:editable action:^(KPMiiBrowserButton *b){[weak editSlot:slot];}]];y+=58;
+    if(promote){[document addSubview:[self button:@"Use for a License…" frame:CGRectMake(0,y,dw,44) style:KPStyle::Plain enabled:editable action:^(KPMiiBrowserButton *b){[weak chooseLicenseFor:record from:b];}]];y+=52;}
     CGFloat half=(dw-8)/2;
     [document addSubview:[self button:@"Rename…" frame:CGRectMake(0,y,half,44) style:KPStyle::Plain enabled:editable action:^(KPMiiBrowserButton *b){[weak rename:record];}]];
     [document addSubview:[self button:@"Duplicate" frame:CGRectMake(half+8,y,half,44) style:KPStyle::Plain enabled:editable&&self.records.count<kartpad::mii::kMaximumMiiSlots action:^(KPMiiBrowserButton *b){[weak duplicate:record];}]];y+=52;
@@ -702,8 +702,7 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
     else{
         for(NSDictionary *license in linked){[document addSubview:[self licenseRow:license frame:CGRectMake(0,y,dw,56)]];y+=64;}
         if(!linked.count)y=[self note:@"No license races as this Mii yet." in:document x:2 y:y width:dw-4 size:13 bold:NO secondary:YES]+10;
-        NSArray *others=[self licensesToLink:record];
-        [document addSubview:[self button:@"Use for a License…" frame:CGRectMake(0,y,dw,44) style:KPStyle::Plain enabled:editable&&others.count>0 action:^(KPMiiBrowserButton *b){[weak chooseLicenseFor:record from:b];}]];y+=52;
+        if(!promote){[document addSubview:[self button:@"Use for a License…" frame:CGRectMake(0,y,dw,44) style:KPStyle::Plain enabled:editable&&others.count>0 action:^(KPMiiBrowserButton *b){[weak chooseLicenseFor:record from:b];}]];y+=52;}
     }
     y=[self note:@"To start a new license, choose New on the game’s license screen and pick this Mii." in:document x:2 y:y width:dw-4 size:12 bold:NO secondary:YES]+8;
     [self finish:scroll height:y];
@@ -722,7 +721,7 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
         CGContextRestoreGState(c);
     };
     NSArray *(^entries)(void)=^NSArray*{
-        BOOL can=[weak editable]&&!weak.licenseError&&[license[@"pendingOperation"] length]==0;
+        BOOL can=[weak editable]&&!weak.licenseError&&![license[@"pendingOperation"] isEqual:@"delete"];
         NSMutableArray *list=[NSMutableArray array];
         if(missing)[list addObject:KPEntry(@"Choose Mii…",can,NO,^{[weak chooseMiiForLicense:license from:weakRow];})];
         else [list addObject:KPEntry(@"Rename License…",can,NO,^{[weak renameLicense:license];})];
@@ -742,14 +741,14 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
 }
 - (NSArray*)licensesToLink:(NSDictionary*)record{
     NSMutableArray *others=[NSMutableArray array];
-    for(NSDictionary *license in self.licenses)if(![license[@"createId"] isEqual:record[@"createIdBytes"]]&&[license[@"pendingOperation"] length]==0)[others addObject:license];
+    for(NSDictionary *license in self.licenses)if(![license[@"createId"] isEqual:record[@"createIdBytes"]]&&![license[@"pendingOperation"] isEqual:@"delete"])[others addObject:license];
     return others;
 }
 
 #pragma mark Selection and keys
 
-- (void)selectSlot:(NSUInteger)slot{
-    KPPlay(slot==self.selectedSlot?KPSound::Same:KPSound::Tab);
+- (void)selectSlot:(NSUInteger)slot{KPPlay(slot==self.selectedSlot?KPSound::Same:KPSound::Tab);[self showSlot:slot];}
+- (void)showSlot:(NSUInteger)slot{
     if(slot==self.selectedSlot)return;
     self.selectedSlot=slot;
     for(KPMiiBrowserButton *tile in self.tiles){[self markTile:tile];KPRefresh(tile);}
@@ -827,27 +826,47 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
     [self presentViewController:alert animated:YES completion:nil];
 #endif
 }
+// Names follow the editor's rules: a live count under the field (or what is wrong), and the action
+// only while the trimmed name can be stored.
 - (void)ask:(NSString*)title message:(NSString*)message text:(NSString*)text action:(NSString*)action then:(void(^)(NSString *text))then{
-    KPPlay(KPSound::Dialog);
+    KPPlay(KPSound::Dialog);KPMiiNameWatcher *watcher=[KPMiiNameWatcher new];
+    NSString *(^problem)(NSString*)=^NSString*(NSString *name){return KPMiiNameProblem([name stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet],YES);};
 #if TARGET_OS_OSX
     NSAlert *alert=[NSAlert new];alert.messageText=title;alert.informativeText=message?:@"";
-    NSTextField *field=[NSTextField textFieldWithString:text?:@""];field.frame=NSMakeRect(0,0,300,26);field.placeholderString=@"Name";alert.accessoryView=field;
-    [alert addButtonWithTitle:action];[alert addButtonWithTitle:@"Cancel"];
-    [alert beginSheetModalForWindow:self.view.window completionHandler:^(NSModalResponse response){if(response==NSAlertFirstButtonReturn)then(field.stringValue);else KPPlay(KPSound::Close);}];
+    NSView *box=[[NSView alloc]initWithFrame:NSMakeRect(0,0,300,46)];
+    NSTextField *field=[NSTextField textFieldWithString:text?:@""];field.frame=NSMakeRect(0,20,300,26);field.placeholderString=@"Name";field.toolTip=KPMiiNameRule;field.delegate=watcher;[box addSubview:field];
+    NSTextField *status=[NSTextField labelWithString:@""];status.frame=NSMakeRect(1,0,298,16);status.font=[NSFont systemFontOfSize:11];[box addSubview:status];alert.accessoryView=box;
+    [alert addButtonWithTitle:action];[alert addButtonWithTitle:@"Cancel"];NSButton *confirm=alert.buttons.firstObject;
+    watcher.changed=^(NSString *name){NSString *wrong=problem(name);status.stringValue=wrong?:KPMiiNameCount(name);status.textColor=wrong?NSColor.systemRedColor:NSColor.secondaryLabelColor;confirm.enabled=wrong==nil;};watcher.changed(field.stringValue);
+    [alert beginSheetModalForWindow:self.view.window completionHandler:^(NSModalResponse response){(void)watcher;if(response==NSAlertFirstButtonReturn)then(field.stringValue);else KPPlay(KPSound::Close);}];
     [alert.window makeFirstResponder:field];
 #else
     UIAlertController *alert=[UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleAlert];
-    [alert addTextFieldWithConfigurationHandler:^(UITextField *field){field.text=text;field.placeholder=@"Name";field.clearButtonMode=UITextFieldViewModeWhileEditing;field.autocapitalizationType=UITextAutocapitalizationTypeWords;field.autocorrectionType=UITextAutocorrectionTypeNo;field.returnKeyType=UIReturnKeyDone;}];
     __weak UIAlertController *weakAlert=alert;
-    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *a){KPPlay(KPSound::Close);}]];
-    [alert addAction:[UIAlertAction actionWithTitle:action style:UIAlertActionStyleDefault handler:^(UIAlertAction *a){then(weakAlert.textFields.firstObject.text?:@"");}]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *a){(void)watcher;KPPlay(KPSound::Close);}]];
+    UIAlertAction *confirm=[UIAlertAction actionWithTitle:action style:UIAlertActionStyleDefault handler:^(UIAlertAction *a){(void)watcher;then(weakAlert.textFields.firstObject.text?:@"");}];[alert addAction:confirm];alert.preferredAction=confirm;
+    __weak UIAlertAction *weakConfirm=confirm;
+    watcher.changed=^(NSString *name){NSString *wrong=problem(name);weakAlert.message=[NSString stringWithFormat:@"%@\n\n%@",message?:@"",wrong?:KPMiiNameCount(name)];weakConfirm.enabled=wrong==nil;};
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *field){field.text=text;field.placeholder=@"Name";field.accessibilityHint=KPMiiNameRule;field.clearButtonMode=UITextFieldViewModeWhileEditing;field.autocapitalizationType=UITextAutocapitalizationTypeWords;field.autocorrectionType=UITextAutocorrectionTypeNo;field.returnKeyType=UIReturnKeyDone;[field addTarget:watcher action:@selector(edited:) forControlEvents:UIControlEventEditingChanged];}];
+    watcher.changed(text?:@"");
     [self presentViewController:alert animated:YES completion:nil];
 #endif
 }
 - (BOOL)blocked{
     if([self editable])return NO;
-    [self tell:self.readError?@"Miis Unavailable":@"Restart KartPad First" message:self.readError?:[NSString stringWithFormat:@"A change is already waiting for the next launch. %@",KPMiiRestartAdvice]];
+    [self tell:self.readError?@"Miis Unavailable":KPMiiRestartFirstTitle() message:self.readError?:KPMiiRestartFirstMessage()];
     return YES;
+}
+
+// Drops every waiting Mii and license change after a confirmation. Nothing live has changed yet.
+- (void)discardPending{
+    NSUInteger count=MAX(self.pendingCount,(NSUInteger)1);__weak KPMiiBrowser *weak=self;
+    NSString *title=count>1?[NSString stringWithFormat:@"Discard %lu Waiting Changes?",(unsigned long)count]:@"Discard the Waiting Change?";
+    [self confirm:title message:@"Miis and licenses stay as they are now. This can’t be undone." action:@"Discard" destructive:YES then:^{
+        NSError *error=nil;
+        if(!KartPadDiscardPendingMiiChanges(&error)){[weak tell:@"Changes Couldn’t Be Discarded" message:error.localizedDescription];return;}
+        KPPlay(KPSound::Close);weak.lastChange=nil;[weak reload];
+    }];
 }
 
 #pragma mark Mii actions
@@ -860,9 +879,9 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
 }
 - (void)rename:(NSDictionary*)record{
     if([self blocked])return;NSUInteger slot=[record[@"slot"] unsignedIntegerValue];__weak KPMiiBrowser *weak=self;
-    [self ask:[NSString stringWithFormat:@"Rename “%@”",record[@"name"]] message:@"Up to 10 characters. Every license that races as this Mii gets the new name too, keeping its friend code and progress." text:record[@"name"] action:@"Rename" then:^(NSString *name){
+    [self ask:[NSString stringWithFormat:@"Rename “%@”",record[@"name"]] message:@"Every license that races as this Mii gets the new name too, keeping its friend code and progress." text:record[@"name"] action:@"Rename" then:^(NSString *name){
         NSError *error=nil;NSUInteger updated=0;
-        if(!KartPadStagePlayerName(slot,name,&updated,&error)){[weak tell:@"Mii Could Not Be Renamed" message:error.localizedDescription];return;}
+        if(!KartPadStagePlayerName(slot,name,&updated,&error)){[weak tell:@"Mii Couldn’t Be Renamed" message:error.localizedDescription];return;}
         NSString *trimmed=[name stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
         NSString *licenses=updated==0?@"":updated==1?@" Its license will use the new name.":[NSString stringWithFormat:@" Its %lu licenses will use the new name.",(unsigned long)updated];
         [weak changeScheduled:[NSString stringWithFormat:@"“%@” will be renamed “%@”.%@",record[@"name"],trimmed,licenses]];
@@ -870,7 +889,7 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
 }
 - (void)duplicate:(NSDictionary*)record{
     if([self blocked])return;NSError *error=nil;NSData *copy=KartPadDuplicateMii([record[@"slot"] unsignedIntegerValue],&error);
-    if(!copy){[self tell:@"Mii Could Not Be Duplicated" message:error.localizedDescription];return;}
+    if(!copy){[self tell:@"Mii Couldn’t Be Duplicated" message:error.localizedDescription];return;}
     KPMiiPresentEditor([self presenter],NSNotFound,copy,YES);
 }
 - (void)remove:(NSDictionary*)record{
@@ -879,13 +898,16 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
     if(linked){[self tell:[NSString stringWithFormat:@"“%@” Is In Use",record[@"name"]] message:[NSString stringWithFormat:@"%@ races as this Mii. Delete %@, or move %@ to another Mii with Use for a License…, then remove this Mii.",linked==1?@"A license":[NSString stringWithFormat:@"%lu licenses",(unsigned long)linked],linked==1?@"that license":@"those licenses",linked==1?@"it":@"them"]];return;}
     [self confirm:[NSString stringWithFormat:@"Remove “%@”?",record[@"name"]] message:@"The Mii is removed the next time KartPad opens. The current Mii database is backed up first." action:@"Remove" destructive:YES then:^{
         NSError *error=nil;
-        if(!KartPadStageMiiRemoval([record[@"slot"] unsignedIntegerValue],&error)){[weak tell:@"Mii Could Not Be Removed" message:error.localizedDescription];return;}
-        [weak changeScheduled:[NSString stringWithFormat:@"“%@” will be removed.",record[@"name"]]];
+        if(!KartPadStageMiiRemoval([record[@"slot"] unsignedIntegerValue],&error)){[weak tell:@"Mii Couldn’t Be Removed" message:error.localizedDescription];return;}
+        // The next Mii takes the selection (the previous one for the last), not the first.
+        NSUInteger index=[weak.records indexOfObject:record],next=NSNotFound;
+        if(index!=NSNotFound&&weak.records.count>1)next=[weak.records[index+1<weak.records.count?index+1:index-1][@"slot"] unsignedIntegerValue];
+        KPPlay(KPSound::Saved);[weak changeScheduled:[NSString stringWithFormat:@"“%@” will be removed.",record[@"name"]] select:next];
     }];
 }
 - (void)exportRecord:(NSDictionary*)record from:(KPMiiBrowserButton*)button{
     NSError *error=nil;NSData *data=KartPadExportMii(record[@"mii"],&error);
-    if(!data){[self tell:@"Mii Could Not Be Exported" message:error.localizedDescription];return;}
+    if(!data){[self tell:@"Mii Couldn’t Be Exported" message:error.localizedDescription];return;}
     KPPlay(KPSound::Press);
 #if TARGET_OS_OSX
     NSSavePanel *panel=[NSSavePanel savePanel];panel.nameFieldStringValue=KPMiiFileName(record[@"name"]);panel.allowedContentTypes=@[KPMiiFileType()];panel.message=@"Saves a standard 74-byte .mii file.";
@@ -894,13 +916,13 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
         if(response!=NSModalResponseOK||!panel.URL){KPPlay(KPSound::Close);return;}
         NSError *writeError=nil;
         if([data writeToURL:panel.URL options:NSDataWritingAtomic error:&writeError])KPPlay(KPSound::Saved);
-        else dispatch_async(dispatch_get_main_queue(),^{[weak tell:@"Mii Could Not Be Exported" message:writeError.localizedDescription];});
+        else dispatch_async(dispatch_get_main_queue(),^{[weak tell:@"Mii Couldn’t Be Exported" message:writeError.localizedDescription];});
     }];
 #else
     NSString *directory=[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
     [NSFileManager.defaultManager createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:&error];
     NSURL *url=[NSURL fileURLWithPath:[directory stringByAppendingPathComponent:KPMiiFileName(record[@"name"])]];
-    if(![data writeToURL:url options:NSDataWritingAtomic error:&error]){[self tell:@"Mii Could Not Be Exported" message:error.localizedDescription];return;}
+    if(![data writeToURL:url options:NSDataWritingAtomic error:&error]){[self tell:@"Mii Couldn’t Be Exported" message:error.localizedDescription];return;}
     UIActivityViewController *share=[[UIActivityViewController alloc]initWithActivityItems:@[url] applicationActivities:nil];
     share.popoverPresentationController.sourceView=button?:self.canvas;share.popoverPresentationController.sourceRect=button?button.bounds:CGRectMake(CGRectGetMidX(self.canvas.bounds),CGRectGetMidY(self.canvas.bounds),1,1);
     share.completionWithItemsHandler=^(UIActivityType type,BOOL completed,NSArray *items,NSError *e){if(completed)KPPlay(KPSound::Saved);[NSFileManager.defaultManager removeItemAtPath:directory error:nil];};
@@ -911,35 +933,46 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
     if([self blocked])return;
     KPPlay(KPSound::Press);
 #if TARGET_OS_OSX
-    NSOpenPanel *open=NSOpenPanel.openPanel;open.message=@"Choose a standard 74-byte .mii file.";open.prompt=@"Import";open.canChooseFiles=YES;open.canChooseDirectories=NO;open.allowsMultipleSelection=NO;open.allowedContentTypes=@[KPMiiFileType()];
+    NSOpenPanel *open=NSOpenPanel.openPanel;open.message=@"Choose a standard 74-byte .mii file.";open.prompt=@"Import";open.canChooseFiles=YES;open.canChooseDirectories=NO;open.allowsMultipleSelection=YES;open.allowedContentTypes=@[KPMiiFileType()];
     __weak KPMiiBrowser *weak=self;
     [open beginSheetModalForWindow:self.view.window completionHandler:^(NSModalResponse response){
-        if(response!=NSModalResponseOK||!open.URL){KPPlay(KPSound::Close);return;}
-        NSURL *url=open.URL;NSNumber *size=nil;[url getResourceValue:&size forKey:NSURLFileSizeKey error:nil];
-        NSData *data=size.unsignedLongLongValue<=4096?[NSData dataWithContentsOfURL:url]:nil;
+        if(response!=NSModalResponseOK||!open.URLs.count){KPPlay(KPSound::Close);return;}
+        NSMutableArray *files=[NSMutableArray array],*names=[NSMutableArray array];
+        for(NSURL *url in open.URLs){
+            NSNumber *size=nil;[url getResourceValue:&size forKey:NSURLFileSizeKey error:nil];
+            NSData *data=size.unsignedLongLongValue<=4096?[NSData dataWithContentsOfURL:url]:nil;
+            [files addObject:data?:[NSData data]];[names addObject:url.lastPathComponent.stringByDeletingPathExtension];
+        }
         // Let the open sheet finish closing before a problem sheet can attach.
-        dispatch_async(dispatch_get_main_queue(),^{[weak importFiles:@[data?:[NSData data]] names:@[url.lastPathComponent.stringByDeletingPathExtension]];});
+        dispatch_async(dispatch_get_main_queue(),^{[weak importFiles:files names:names];});
     }];
 #else
     UIDocumentPickerViewController *picker=[[UIDocumentPickerViewController alloc]initForOpeningContentTypes:@[KPMiiFileType(),UTTypeData] asCopy:YES];
-    picker.delegate=self;picker.allowsMultipleSelection=NO;[self presentViewController:picker animated:YES completion:nil];
+    picker.delegate=self;picker.allowsMultipleSelection=YES;[self presentViewController:picker animated:YES completion:nil];
 #endif
 }
-// One import per launch: the first file is staged, and any others wait for a restart.
+// Every file is queued; the ones that can't be are listed afterwards.
 - (void)importFiles:(NSArray<NSData*>*)files names:(NSArray<NSString*>*)names{
     if(!files.count||[self blocked])return;
-    NSError *error=nil;NSString *name=nil;
-    if(!KartPadStageMiiImport(files.firstObject,&name,&error)){[self tell:@"Mii Could Not Be Imported" message:error.localizedDescription?:@"The selected file is not a standard 74-byte .mii file."];return;}
-    NSString *added=name.length?name:names.firstObject;
-    [self changeScheduled:[NSString stringWithFormat:@"“%@” will be added.",added]];
-    if(files.count>1)[self tell:@"One Mii at a Time" message:[NSString stringWithFormat:@"Only “%@” was imported. %@ Then import the others.",added,KPMiiRestartAdvice]];
+    NSMutableArray<NSString*> *added=[NSMutableArray array],*failed=[NSMutableArray array];NSString *problem=nil;
+    for(NSUInteger i=0;i<files.count;i++){
+        NSError *error=nil;NSString *name=nil;
+        if(KartPadStageMiiImport(files[i],&name,&error))[added addObject:name.length?name:names[i]];
+        else{[failed addObject:[NSString stringWithFormat:@"“%@”",names[i]]];problem=problem?:error.localizedDescription?:@"The file is not a standard 74-byte .mii file.";}
+    }
+    if(added.count)[self changeScheduled:added.count==1?[NSString stringWithFormat:@"“%@” will be added.",added.firstObject]:[NSString stringWithFormat:@"%lu Miis will be added.",(unsigned long)added.count]];
+    if(failed.count==1&&!added.count)[self tell:@"Mii Couldn’t Be Imported" message:problem];
+    else if(failed.count)[self tell:failed.count==1?@"A Mii Couldn’t Be Imported":@"Some Miis Couldn’t Be Imported" message:[NSString stringWithFormat:@"%@ couldn’t be imported. %@",[failed componentsJoinedByString:@", "],problem]];
 }
 #if !TARGET_OS_OSX
 - (void)documentPicker:(UIDocumentPickerViewController*)controller didPickDocumentsAtURLs:(NSArray<NSURL*>*)urls{
-    NSURL *url=urls.firstObject;if(!url)return;
-    NSNumber *size=nil;[url getResourceValue:&size forKey:NSURLFileSizeKey error:nil];
-    NSData *data=size.unsignedLongLongValue<=4096?[NSData dataWithContentsOfURL:url]:nil;[NSFileManager.defaultManager removeItemAtURL:url error:nil];
-    [self importFiles:@[data?:[NSData data]] names:@[url.lastPathComponent.stringByDeletingPathExtension]];
+    NSMutableArray *files=[NSMutableArray array],*names=[NSMutableArray array];
+    for(NSURL *url in urls){
+        NSNumber *size=nil;[url getResourceValue:&size forKey:NSURLFileSizeKey error:nil];
+        NSData *data=size.unsignedLongLongValue<=4096?[NSData dataWithContentsOfURL:url]:nil;[NSFileManager.defaultManager removeItemAtURL:url error:nil];
+        [files addObject:data?:[NSData data]];[names addObject:url.lastPathComponent.stringByDeletingPathExtension];
+    }
+    [self importFiles:files names:names];
 }
 - (void)documentPickerWasCancelled:(UIDocumentPickerViewController*)controller{KPPlay(KPSound::Close);}
 - (BOOL)dropInteraction:(UIDropInteraction*)interaction canHandleSession:(id<UIDropSession>)session{return session.localDragSession==nil&&[session hasItemsConformingToTypeIdentifiers:@[KPMiiFileType().identifier]];}
@@ -968,9 +1001,9 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
 
 - (void)renameLicense:(NSDictionary*)license{
     if([self blocked])return;__weak KPMiiBrowser *weak=self;
-    [self ask:@"Rename License" message:[NSString stringWithFormat:@"%@. Up to 10 characters. The license keeps its friend code, online account, records and progress.",KPLicenseTitle(license)] text:license[@"name"] action:@"Rename" then:^(NSString *name){
+    [self ask:@"Rename License" message:[NSString stringWithFormat:@"%@. The license keeps its friend code, online account, records and progress.",KPLicenseTitle(license)] text:license[@"name"] action:@"Rename" then:^(NSString *name){
         NSError *error=nil;
-        if(!KartPadStageLicenseRename(license[@"profileIdentifier"],[license[@"slot"] unsignedIntegerValue],license[@"createId"],name,&error)){[weak tell:@"License Could Not Be Renamed" message:error.localizedDescription];return;}
+        if(!KartPadStageLicenseRename(license[@"profileIdentifier"],[license[@"slot"] unsignedIntegerValue],license[@"createId"],name,&error)){[weak tell:@"License Couldn’t Be Renamed" message:error.localizedDescription];return;}
         [weak changeScheduled:[NSString stringWithFormat:@"%@ will be renamed “%@”.",KPLicenseTitle(license),[name stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]]];
     }];
 }
@@ -978,7 +1011,7 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
     if([self blocked])return;__weak KPMiiBrowser *weak=self;
     [self confirm:[NSString stringWithFormat:@"Delete “%@” from %@?",license[@"name"]?:@"Unnamed",KPLicenseTitle(license)] message:@"This permanently removes the license’s friend code, online account data, records and progress. Its Mii stays. The save is backed up first." action:@"Delete License" destructive:YES then:^{
         NSError *error=nil;
-        if(!KartPadStageLicenseDeletion(license[@"profileIdentifier"],[license[@"slot"] unsignedIntegerValue],license[@"createId"],&error)){[weak tell:@"License Could Not Be Deleted" message:error.localizedDescription];return;}
+        if(!KartPadStageLicenseDeletion(license[@"profileIdentifier"],[license[@"slot"] unsignedIntegerValue],license[@"createId"],&error)){[weak tell:@"License Couldn’t Be Deleted" message:error.localizedDescription];return;}
         [weak changeScheduled:[NSString stringWithFormat:@"%@ (“%@”) will be deleted.",KPLicenseTitle(license),license[@"name"]?:@"Unnamed"]];
     }];
 }
@@ -986,7 +1019,7 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
     __weak KPMiiBrowser *weak=self;
     [self confirm:[NSString stringWithFormat:@"Race as “%@”?",record[@"name"]] message:[NSString stringWithFormat:@"%@ (“%@”) will use this Mii’s name and appearance. Its progress and friend code are kept, and the save is backed up first.",KPLicenseTitle(license),license[@"name"]?:@"Unnamed"] action:@"Use This Mii" destructive:NO then:^{
         NSError *error=nil;
-        if(!KartPadStageLicenseMii(license[@"profileIdentifier"],[license[@"slot"] unsignedIntegerValue],license[@"createId"],[record[@"slot"] unsignedIntegerValue],record[@"createIdBytes"],&error)){[weak tell:@"Mii Could Not Be Linked" message:error.localizedDescription];return;}
+        if(!KartPadStageLicenseMii(license[@"profileIdentifier"],[license[@"slot"] unsignedIntegerValue],license[@"createId"],[record[@"slot"] unsignedIntegerValue],record[@"createIdBytes"],&error)){[weak tell:@"Mii Couldn’t Be Linked" message:error.localizedDescription];return;}
         [weak changeScheduled:[NSString stringWithFormat:@"%@ will race as “%@”.",KPLicenseTitle(license),record[@"name"]]];
     }];
 }

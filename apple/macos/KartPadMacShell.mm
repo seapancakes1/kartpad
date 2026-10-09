@@ -540,14 +540,48 @@ static bool KPFullscreenAcrossNotch() {
   [alert runModal];
 }
 
-- (void)quitKartPad:(id)sender {
-  // The Mii editor asks whether to save a changed draft; Keep Editing cancels.
+// The Mii editor asks whether to save a changed draft; Keep Editing cancels and leaves a window open.
+- (BOOL)closeWindows:(id)sender {
   for (NSWindow *window in NSApp.windows) {
     if (![window isKindOfClass:NSPanel.class] && window.isVisible && window.windowController != nil) {
       [window performClose:sender];
-      if (window.isVisible) return;
+      if (window.isVisible) return NO;
     }
   }
+  return YES;
+}
+
+- (void)quitKartPad:(id)sender {
+  if ([self closeWindows:sender]) [self finishQuitting:sender];
+}
+
+// Quits as usual, and a small helper reopens the app once this process has exited, so pending Mii
+// changes apply on the way back in.
+- (void)restartKartPad:(id)sender {
+  NSString *app = NSBundle.mainBundle.bundlePath;
+  if (![app.pathExtension isEqualToString:@"app"]) {
+    [self showSimpleAlert:@"KartPad Can’t Restart Itself Here"
+                  message:@"Quit and reopen KartPad to apply the changes."];
+    return;
+  }
+  if (![self closeWindows:sender]) return;
+  NSTask *task = [NSTask new];
+  task.executableURL = [NSURL fileURLWithPath:@"/bin/sh"];
+  task.arguments = @[@"-c",
+      @"while /bin/kill -0 \"$1\" 2>/dev/null; do /bin/sleep 0.2; done; exec /usr/bin/open \"$2\"",
+      @"restart", [NSString stringWithFormat:@"%d", NSProcessInfo.processInfo.processIdentifier], app];
+  task.standardOutput = NSFileHandle.fileHandleWithNullDevice;
+  task.standardError = NSFileHandle.fileHandleWithNullDevice;
+  NSError *error = nil;
+  if (![task launchAndReturnError:&error]) {
+    [self showSimpleAlert:@"KartPad Couldn’t Restart"
+                  message:@"Quit and reopen KartPad to apply the changes."];
+    return;
+  }
+  [self finishQuitting:sender];
+}
+
+- (void)finishQuitting:(id)sender {
   if (NSWindow *window = KPGameWindow()) {
     // Let Aurora observe the native close event. Its window-close path
     // flushes placement state and exits without running C++ teardown from a
@@ -673,9 +707,10 @@ static bool KPFullscreenAcrossNotch() {
   NSError *error = nil;
   NSArray<NSDictionary<NSString *, id> *> *records = KartPadMiiRecords(&error);
   const BOOL pending = KartPadHasPendingMiiChanges();
-  const BOOL editable = !pending && error == nil;
+  const BOOL editable = KartPadCanQueueMiiChanges() && error == nil;
   if (pending) {
-    [menu addItem:[self playerMenuItem:@"Mii Changes Apply When KartPad Reopens" action:nil enabled:NO]];
+    [menu addItem:[self playerMenuItem:@"Restart KartPad to Apply Mii Changes"
+                                action:@selector(restartKartPad:) enabled:YES]];
     [menu addItem:NSMenuItem.separatorItem];
   }
   NSMenuItem *miis = [self playerMenuItem:@"Miis…" action:@selector(showMiis:) enabled:YES];
@@ -1262,14 +1297,28 @@ bool KartPadMacShellPrepareGameData(void) {
     const std::filesystem::path configPath = RuntimeConfigFile::ResolveConfigPath();
     const bool hadConfig = std::filesystem::exists(configPath);
     NSError *miiError = nil;
-    if (!KartPadApplyPendingMiiDatabase(&miiError)) {
+    // Discarding the waiting changes lets the game start; the rest of the apply is then retried.
+    while (!KartPadApplyPendingMiiDatabase(&miiError)) {
       NSLog(@"[KartPad] pending Mii changes were not applied: %@",
             miiError.localizedDescription);
+      const BOOL discardable = KartPadCanDiscardPendingMiiChanges();
       NSAlert *failure = [NSAlert new];
-      failure.messageText = @"Pending Mii changes could not be applied";
+      failure.messageText = @"Pending Mii Changes Couldn’t Be Applied";
       failure.informativeText = miiError.localizedDescription ?: @"Restart KartPad to retry. Backups and pending changes have been retained.";
-      [failure runModal];
-      return false;
+      if (discardable) {
+        failure.informativeText = [failure.informativeText stringByAppendingString:
+            @"\n\nDiscard Mii Changes drops the waiting Mii and license changes and starts the game. Miis and licenses stay as they are now."];
+      }
+      [failure addButtonWithTitle:@"Quit"];
+      if (discardable) [failure addButtonWithTitle:@"Discard Mii Changes"].hasDestructiveAction = YES;
+      NSError *discardError = nil;
+      if ([failure runModal] != NSAlertSecondButtonReturn ||
+          !KartPadDiscardPendingMiiChanges(&discardError)) {
+        if (discardError) NSLog(@"[KartPad] pending Mii changes were not discarded: %@",
+                                discardError.localizedDescription);
+        return false;
+      }
+      miiError = nil;
     }
     KartPadApplyExperimentalWiimotePreference();
     RuntimeConfigFile::EnsureConfigFile();

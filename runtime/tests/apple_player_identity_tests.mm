@@ -45,8 +45,13 @@ int main() {
     assert(records.count == 2 && [records[0][@"name"] isEqual:@"Racer"]);
     assert([records[0][@"pendingOperation"] isEqual:@"rename"]);
     assert([before isEqual:[NSData dataWithContentsOfFile:original]]);
-    assert(!KartPadStagePlayerName(0, @"Other", nullptr, &error));
-    error = nil;
+    // A second change queues on top of the first.
+    assert(KartPadStagePlayerName(0, @"Other", nullptr, &error));
+    records = KartPadLicenseRecords(&error);
+    assert([records[0][@"name"] isEqual:@"Other"] && [records[1][@"name"] isEqual:@"Other"]);
+    assert([KartPadMiiRecords(&error)[0][@"name"] isEqual:@"Other"]);
+    assert(KartPadPendingMiiChangeCount() == 2);
+    assert([before isEqual:[NSData dataWithContentsOfFile:original]]);
     assert(KartPadApplyPendingMiiDatabase(&error));
     assert(!KartPadHasPendingMiiChanges());
     NSData *after = [NSData dataWithContentsOfFile:original];

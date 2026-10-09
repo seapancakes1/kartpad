@@ -22,7 +22,7 @@ enum class EditorSound {
     Dialog,       // A confirmation appears.
     Saved,        // Save or export succeeded.
     Reject,       // Not allowed: limits, invalid names, errors.
-    NewMii,       // Start from scratch.
+    NewMii,       // Start from scratch, or pick a look-alike.
     Count
 };
 // Indexed by EditorSound.
