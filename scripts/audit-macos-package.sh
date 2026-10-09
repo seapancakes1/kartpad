@@ -113,9 +113,10 @@ for shell_contract in \
   "KartPadRuntimeProfile" \
   "Quit and reopen KartPad to switch games. Your saves and settings are preserved." \
   "Player Identity" \
-  "Mii Appearance" \
-  "showPlayerNameEditor" \
-  "showLicenseManager" \
+  "showMiis:" \
+  "Rename License" \
+  "Licenses without a Mii" \
+  "Duplicate Mii" \
   "Save for Next Launch" \
   "Experimental Wii Remote + Nunchuk" \
   "Wii Remote + Nunchuk (Experimental)" \
