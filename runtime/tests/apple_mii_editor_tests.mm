@@ -99,6 +99,22 @@ int main() {
         assert(KartPadApplyPendingMiiDatabase(&error));
         assert(KartPadMiiRecords(&error).count == 2);
         assert(KartPadLicenseRecords(&error).count == 3);
+        // Records carry each Mii's bytes; a duplicate keeps them except for a fresh identity.
+        NSArray *records = KartPadMiiRecords(&error);
+        assert([records[0][@"mii"] isEqualToData:KartPadReadMii(0, &error)]);
+        auto source = Vector(KartPadReadMii(0, &error));
+        NSData *copy = KartPadDuplicateMii(0, &error);
+        assert(copy.length == 74);
+        auto duplicate = Vector(copy);
+        assert(!std::equal(source.begin() + 0x18, source.begin() + 0x1C, duplicate.begin() + 0x18));
+        for (size_t byte = 0; byte < source.size(); byte++)
+            if (byte < 0x18 || byte >= 0x20)
+                assert(source[byte] == duplicate[byte]);
+        assert(KartPadStageMiiEditor(NSNotFound, nil, copy, &error));
+        assert(!KartPadDuplicateMii(0, &error));
+        assert(KartPadApplyPendingMiiDatabase(&error));
+        assert(KartPadMiiRecords(&error).count == 3);
+        assert(KartPadLicenseRecords(&error).count == 3);
         // Stale database between staging and restart must not modify any linked saves.
         expected = KartPadReadMii(0, &error);
         edit = Appearance::Decode(Vector(expected));
@@ -113,6 +129,6 @@ int main() {
             fileExistsAtPath:[root stringByAppendingPathComponent:@"MiiEditorTransaction.plist"]]);
         std::filesystem::remove_all(temp);
         puts("Combined Mii/name staging, latest progress, backups, interrupted recovery, new "
-             "creation and stale rejection passed.");
+             "creation, duplication and stale rejection passed.");
     }
 }

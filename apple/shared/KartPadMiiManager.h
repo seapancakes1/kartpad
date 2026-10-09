@@ -12,6 +12,8 @@ BOOL KartPadStageMiiImport(NSData *miiData, NSString *_Nullable *_Nullable name,
                           NSError **error);
 NSData *_Nullable KartPadReadMii(NSUInteger slot, NSError **error);
 NSData *_Nullable KartPadNewMii(NSError **error);
+// A copy of an existing Mii with a new identity, ready to save as a new Mii.
+NSData *_Nullable KartPadDuplicateMii(NSUInteger slot, NSError **error);
 NSData *_Nullable KartPadExportMii(NSData *edited, NSError **error);
 BOOL KartPadStageMiiEditor(NSUInteger slot, NSData *_Nullable expected, NSData *edited, NSError **error);
 BOOL KartPadStageMiiRemoval(NSUInteger slot, NSError **error);
