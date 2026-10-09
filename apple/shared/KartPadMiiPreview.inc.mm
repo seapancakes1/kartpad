@@ -1,5 +1,9 @@
 #import <MetalKit/MetalKit.h>
 #include <simd/simd.h>
+// The game products are linked by the wiicompiled runtime's CMake, which does not
+// list these frameworks; ask the linker for them from the file that needs them.
+__asm__(".linker_option \"-framework\", \"MetalKit\"");
+__asm__(".linker_option \"-framework\", \"CoreGraphics\"");
 #include "kartpad/mii/scene.h"
 struct KPMiiGPUVertex { simd_float4 position, normal; simd_float2 uv; simd_float4 color; };
 struct KPMiiUniform { simd_float4x4 mvp, model; simd_float4 color; float textured, unlit, bodyMaterial, padding; };
