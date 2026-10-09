@@ -112,7 +112,6 @@ for shell_contract in \
   "RMCP01-r0-retro-rewind" \
   "KartPadRuntimeProfile" \
   "Quit and reopen KartPad to switch games. Your saves and settings are preserved." \
-  "Player Identity" \
   "showMiis:" \
   "Rename License" \
   "Licenses without a Mii" \
@@ -155,6 +154,22 @@ for shell_contract in \
     exit 70
   fi
 done
+
+# Local Mac builds may carry the automatic-update helper; it must be complete
+# and match this checkout so a rebuilt app never ships a stale updater.
+local_updater="${contents}/Resources/LocalUpdater"
+if [[ -n "${KARTPAD_LOCAL_UPDATER_SETTINGS:-}" && ! -d "${local_updater}" ]]; then
+  echo "package lacks the requested local updater" >&2
+  exit 70
+fi
+if [[ -e "${local_updater}" ]]; then
+  if [[ "${product}" != dual ]] ||
+     ! cmp -s "${local_updater}/updater.py" "${repo_root}/scripts/macos-local-updater.py" ||
+     ! python3 "${repo_root}/scripts/check-local-updater-settings.py" "${local_updater}/settings.json"; then
+    echo "package local updater is incomplete or out of date" >&2
+    exit 70
+  fi
+fi
 
 codesign --verify --deep --strict --verbose=2 "${app}"
 codesign -d --entitlements - "${app}" 2>/dev/null | \

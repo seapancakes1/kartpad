@@ -91,6 +91,9 @@ static void MarkSessionClean() {
     }
     AppendSessionLine([NSString stringWithFormat:@"ended=%@", SessionTimestamp()]);
     AppendSessionLine(@"endedCleanly=yes");
+#if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)
+    KPConfirmLocalUpdate();
+#endif
     [NSFileManager.defaultManager removeItemAtURL:ActiveSessionMarkerURL()
                                             error:nil];
   }
@@ -639,6 +642,10 @@ static bool KPFullscreenAcrossNotch() {
   KPShowLocalUpdateStatus();
 }
 
+- (void)revertAutomaticUpdate:(id)sender {
+  KPRevertLocalUpdate(sender);
+}
+
 - (void)useOriginalGame:(id)sender {
   (void)sender;
   [self selectRuntimeProfile:kKartPadBaseProfile title:@"Original Mario Kart Wii"];
@@ -1097,6 +1104,12 @@ static void InstallMenu() {
         action:@selector(showAutomaticUpdates:) keyEquivalent:@""];
     updates.target = Controller();
     [appMenu insertItem:updates atIndex:MAX(0, (NSInteger)appMenu.numberOfItems - 1)];
+    if (NSString *revertTitle = KPLocalUpdateRevertTitle()) {
+      NSMenuItem *revert = [[NSMenuItem alloc] initWithTitle:revertTitle
+          action:@selector(revertAutomaticUpdate:) keyEquivalent:@""];
+      revert.target = Controller();
+      [appMenu insertItem:revert atIndex:[appMenu indexOfItem:updates] + 1];
+    }
   }
 #endif
 
@@ -1250,7 +1263,7 @@ void KartPadMacShellInstall(void) {
     InstallSettingsShortcutMonitor();
     InstallMenu();
 #if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)
-    KPCheckLocalUpdates();
+    KPStartLocalUpdates();
 #endif
   });
 }
@@ -1258,7 +1271,8 @@ void KartPadMacShellInstall(void) {
 bool KartPadMacShellPrepareGameData(void) {
 #if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)
   // Activation completes before any game files are opened. The helper relaunches
-  // the replacement app after this process exits.
+  // the replacement (or, after repeated failed launches, the previous) app after
+  // this process exits.
   if (KPActivateLocalUpdate()) return false;
 #endif
   KartPadApplyPrivateServerAtLaunch();

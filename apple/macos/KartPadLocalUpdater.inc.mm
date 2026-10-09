@@ -7,6 +7,23 @@ static NSDictionary *KPLocalUpdateSettings() {
   return [settings isKindOfClass:NSDictionary.class] ? settings : nil;
 }
 
+static NSString *KPLocalUpdateStatePath(NSString *name) {
+  NSString *state = KPLocalUpdateSettings()[@"state"];
+  return [state isKindOfClass:NSString.class] ? [state stringByAppendingPathComponent:name] : nil;
+}
+
+static NSDictionary *KPLocalUpdateRead(NSString *name) {
+  NSString *path = KPLocalUpdateStatePath(name);
+  NSData *data = path ? [NSData dataWithContentsOfFile:path] : nil;
+  id result = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+  return [result isKindOfClass:NSDictionary.class] ? result : nil;
+}
+
+static BOOL KPLocalUpdateStateExists(NSString *name) {
+  NSString *path = KPLocalUpdateStatePath(name);
+  return path != nil && [NSFileManager.defaultManager fileExistsAtPath:path];
+}
+
 static NSPanel *kpUpdatePanel;
 static NSTextField *kpUpdateHeading;
 static NSTextField *kpUpdateLabel;
@@ -21,8 +38,11 @@ static NSWindow *kpUpdateParent;
 static id kpUpdateResizeObserver;
 static NSString *kpUpdatePhase;
 static BOOL kpUpdateDismissed;
-static void KPCheckLocalUpdates();
-static NSTask *KPLocalUpdateTask(NSString *action);
+// Checks the player asked for show every result; automatic ones only show news.
+static BOOL kpUpdateInteractive;
+static BOOL kpUpdateLaunchFailure;
+static void KPCheckLocalUpdates(BOOL interactive, NSArray<NSString *> *options);
+static NSTask *KPLocalUpdateTask(NSString *action, NSArray<NSString *> *options);
 
 @interface KPLocalUpdateActions : NSObject
 - (void)dismiss:(id)sender;
@@ -129,18 +149,33 @@ static void KPUpdateNotice(NSString *title, NSString *detail, BOOL working) {
   KPPositionUpdateNotice();
 }
 
-static void KPFinishUpdateNotice(NSString *title, NSString *detail) {
-  KPUpdateNotice(title, detail, NO);
-  kpUpdateIcon.image = [NSImage imageWithSystemSymbolName:@"checkmark.circle.fill" accessibilityDescription:@"Update ready"];
-  kpUpdateIcon.contentTintColor = NSColor.systemGreenColor;
-  kpUpdateFootnote.stringValue = @"Installs on next launch";
-  kpUpdateAction.title = @"Restart game";
-  kpUpdateAction.hidden = NO;
-  kpUpdateDismissTimer = [NSTimer timerWithTimeInterval:5.0 repeats:NO block:^(NSTimer *timer) {
+static void KPUpdateNoticeIcon(NSString *symbol, NSColor *tint, NSString *description) {
+  kpUpdateIcon.image = [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:description];
+  kpUpdateIcon.contentTintColor = tint;
+}
+
+static void KPHideUpdateNoticeAfter(NSTimeInterval seconds) {
+  kpUpdateDismissTimer = [NSTimer timerWithTimeInterval:seconds repeats:NO block:^(NSTimer *timer) {
     [kpUpdatePanel orderOut:nil];
     if (kpUpdateDismissTimer == timer) kpUpdateDismissTimer = nil;
   }];
   [NSRunLoop.mainRunLoop addTimer:kpUpdateDismissTimer forMode:NSRunLoopCommonModes];
+}
+
+static void KPFinishUpdateNotice(NSString *title, NSString *detail) {
+  KPUpdateNotice(title, detail, NO);
+  KPUpdateNoticeIcon(@"checkmark.circle.fill", NSColor.systemGreenColor, @"Update ready");
+  kpUpdateFootnote.stringValue = @"Installs on next launch";
+  kpUpdateAction.title = @"Restart game";
+  kpUpdateAction.hidden = NO;
+  KPHideUpdateNoticeAfter(5.0);
+}
+
+// The helper records its process ID while it works, so a status left by a
+// helper that was interrupted doesn't keep a progress notice on screen.
+static BOOL KPLocalUpdateHelperRunning(NSDictionary *status) {
+  pid_t pid = [status[@"pid"] isKindOfClass:NSNumber.class] ? [status[@"pid"] intValue] : 0;
+  return pid > 0 && (kill(pid, 0) == 0 || errno == EPERM);
 }
 
 static void KPRenderUpdateStatus(NSDictionary *status) {
@@ -173,92 +208,178 @@ static void KPRenderUpdateStatus(NSDictionary *status) {
     KPFinishUpdateNotice(@"Ready when you are", [NSString stringWithFormat:@"Retro Rewind %@ is ready. Restart KartPad whenever you’ve finished playing.", version]);
   } else if ([phase isEqualToString:@"error"] && changed) {
     NSString *kind = status[@"errorKind"];
+    NSString *message = [status[@"message"] isKindOfClass:NSString.class] ? status[@"message"] : @"";
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    // Automatic checks stay quiet offline and show each distinct failure once.
+    if (!kpUpdateInteractive && ([kind isEqualToString:@"network"] ||
+        [message isEqualToString:[defaults stringForKey:@"KartPadLocalUpdateLastError"]])) return;
+    [defaults setObject:message forKey:@"KartPadLocalUpdateLastError"];
     NSString *title = @"Update couldn’t be prepared";
     NSString *detail = @"The new app couldn’t be prepared for this Mac. Your current version is ready to play.";
+    NSString *footnote = @"Paused until you try again";
     if ([kind isEqualToString:@"network"]) {
       title = @"Couldn’t reach the update server";
       detail = @"Check your internet connection and try again. Your current game is still available.";
+      footnote = @"We’ll check again later";
     } else if ([kind isEqualToString:@"storage"]) {
       title = @"More space needed";
       detail = @"Free at least 8 GB of disk space, then try again. Your current version is unchanged.";
+      footnote = @"We’ll retry next launch";
     } else if ([kind isEqualToString:@"verification"]) {
       title = @"Update wasn’t installed";
       detail = @"The new files didn’t pass validation. Your current version is unchanged.";
     }
     KPUpdateNotice(title, detail, NO);
-    kpUpdateIcon.image = [NSImage imageWithSystemSymbolName:@"exclamationmark.circle" accessibilityDescription:@"Update failed"];
-    kpUpdateIcon.contentTintColor = NSColor.systemOrangeColor;
-    kpUpdateFootnote.stringValue = @"We’ll retry next launch";
+    KPUpdateNoticeIcon(@"exclamationmark.circle", NSColor.systemOrangeColor, @"Update failed");
+    kpUpdateFootnote.stringValue = footnote;
     kpUpdateAction.title = @"Try again"; kpUpdateAction.hidden = NO;
-  }
+  } else if ([phase isEqualToString:@"current"]) {
+    if (!kpUpdateInteractive) return;
+    KPUpdateNotice(@"You’re up to date", [NSString stringWithFormat:@"Retro Rewind %@ is the latest version.", version], NO);
+    KPUpdateNoticeIcon(@"checkmark.circle.fill", NSColor.systemGreenColor, @"Up to date");
+    KPHideUpdateNoticeAfter(4.0);
+  } else if ([phase isEqualToString:@"declined"]) {
+    KPUpdateNotice([NSString stringWithFormat:@"Retro Rewind %@ is skipped", version],
+        @"You went back from this version, so automatic updates leave it out.", NO);
+    KPUpdateNoticeIcon(@"arrow.uturn.backward.circle", NSColor.secondaryLabelColor, @"Version skipped");
+    kpUpdateFootnote.stringValue = @"Your current version stays installed";
+    kpUpdateAction.title = @"Install anyway"; kpUpdateAction.hidden = NO;
+  } else if ([phase isEqualToString:@"rolledBack"]) {
+    NSString *from = [status[@"from"] isKindOfClass:NSString.class] ? status[@"from"] : @"";
+    NSString *detail = [status[@"reason"] isEqualToString:@"unstable"]
+        ? [NSString stringWithFormat:@"Retro Rewind %@ didn’t start properly, so KartPad restored the previous version. Your saves are unchanged.", from]
+        : [NSString stringWithFormat:@"Retro Rewind %@ was removed. Automatic updates will skip it.", from];
+    KPUpdateNotice([NSString stringWithFormat:@"Back on Retro Rewind %@", version], detail, NO);
+    KPUpdateNoticeIcon(@"arrow.uturn.backward.circle.fill", NSColor.systemBlueColor, @"Previous version restored");
+    kpUpdateFootnote.stringValue = @"Automatic Updates… can install it later";
+    KPHideUpdateNoticeAfter(10.0);
+  } else return;
   KPShowUpdateNotice();
 }
 
-static NSTask *KPLocalUpdateTask(NSString *action) {
+static NSTask *KPLocalUpdateTask(NSString *action, NSArray<NSString *> *options) {
   NSDictionary *settings = KPLocalUpdateSettings();
   NSString *python = settings[@"python"];
   if (![python isKindOfClass:NSString.class] || ![python hasPrefix:@"/"]) return nil;
   NSURL *resources = [NSBundle.mainBundle.resourceURL URLByAppendingPathComponent:@"LocalUpdater"];
   NSTask *task = [NSTask new];
   task.executableURL = [NSURL fileURLWithPath:python];
-  task.arguments = @[[resources URLByAppendingPathComponent:@"updater.py"].path,
-      action, @"--settings", [resources URLByAppendingPathComponent:@"settings.json"].path,
+  NSMutableArray<NSString *> *arguments = [NSMutableArray arrayWithObjects:
+      [resources URLByAppendingPathComponent:@"updater.py"].path, action, nil];
+  [arguments addObjectsFromArray:options];
+  [arguments addObjectsFromArray:@[@"--settings", [resources URLByAppendingPathComponent:@"settings.json"].path,
       @"--app", NSBundle.mainBundle.bundlePath, @"--version", @KARTPAD_RR_VERSION,
-      @"--pid", [NSString stringWithFormat:@"%d", NSProcessInfo.processInfo.processIdentifier]];
+      @"--pid", [NSString stringWithFormat:@"%d", NSProcessInfo.processInfo.processIdentifier]]];
+  task.arguments = arguments;
   task.standardOutput = NSFileHandle.fileHandleWithNullDevice;
   task.standardError = NSFileHandle.fileHandleWithNullDevice;
   return task;
 }
 
+// Runs before game files open: installs a finished update, or counts a launch of a
+// newly installed app and returns to the previous version if it keeps failing.
 static BOOL KPActivateLocalUpdate() {
-  NSDictionary *settings = KPLocalUpdateSettings();
-  NSString *state = settings[@"state"];
-  if (![state isKindOfClass:NSString.class]) return NO;
-  NSFileManager *files = NSFileManager.defaultManager;
-  if (![files fileExistsAtPath:[state stringByAppendingPathComponent:@"pending.json"]] &&
-      ![files fileExistsAtPath:[state stringByAppendingPathComponent:@"activation.json"]]) return NO;
-  NSTask *task = KPLocalUpdateTask(@"activate");
+  BOOL installing = KPLocalUpdateStateExists(@"pending.json") || KPLocalUpdateStateExists(@"activation.json");
+  if (!installing && !KPLocalUpdateStateExists(@"trial.json")) return NO;
+  NSTask *task = KPLocalUpdateTask(@"activate", @[]);
   NSError *error = nil;
   if (task == nil || ![task launchAndReturnError:&error]) return NO;
-  kpUpdateDismissed = NO;
-  KPUpdateNotice(@"Installing update", @"KartPad will reopen with the updated app and game files.", YES);
-  kpUpdateFootnote.stringValue = @"Just a moment…";
-  KPShowUpdateNotice();
+  if (installing) {
+    kpUpdateDismissed = NO;
+    KPUpdateNotice(@"Installing update", @"KartPad will reopen with the updated app and game files.", YES);
+    kpUpdateFootnote.stringValue = @"Just a moment…";
+    KPShowUpdateNotice();
+  }
   while (task.running) [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
   [kpUpdatePanel orderOut:nil];
+  if (task.terminationStatus == 1) kpUpdateLaunchFailure = YES;
   return task.terminationStatus == 10;
 }
 
-static void KPCheckLocalUpdates() {
-  NSTask *task = KPLocalUpdateTask(@"check");
+// A new app has proved itself once it has run for a while or quit cleanly.
+static void KPConfirmLocalUpdate() {
+  NSDictionary *trial = KPLocalUpdateRead(@"trial.json");
+  if ([trial[@"version"] isEqual:@KARTPAD_RR_VERSION])
+    [NSFileManager.defaultManager removeItemAtPath:KPLocalUpdateStatePath(@"trial.json") error:nil];
+}
+
+static void KPCheckLocalUpdates(BOOL interactive, NSArray<NSString *> *options) {
+  NSTask *task = KPLocalUpdateTask(@"check", interactive ? [@[@"--force"] arrayByAddingObjectsFromArray:options] : options);
   if (task == nil) return;
+  task.qualityOfService = NSQualityOfServiceUtility;
   NSDate *started = NSDate.date;
   NSError *error = nil;
   if (![task launchAndReturnError:&error]) {
     NSLog(@"[KartPad] local update check unavailable: %@", error.localizedDescription); return;
   }
-  kpUpdateDismissed = NO; kpUpdatePhase = nil;
-  KPUpdateNotice(@"Checking for updates", @"Automatic updates are on. We’ll let you know if there’s something new.", YES);
-  KPShowUpdateNotice();
+  kpUpdateInteractive = interactive;
+  if (interactive) {
+    kpUpdateDismissed = NO;
+    KPUpdateNotice(@"Checking for updates", @"Automatic updates are on. We’ll let you know if there’s something new.", YES);
+    kpUpdatePhase = @"checking";
+    KPShowUpdateNotice();
+  }
   [kpUpdateTimer invalidate];
-  NSString *state = KPLocalUpdateSettings()[@"state"];
-  if (![state isKindOfClass:NSString.class]) return;
   kpUpdateTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *timer) {
-    NSData *data = [NSData dataWithContentsOfFile:[state stringByAppendingPathComponent:@"status.json"]];
-    id result = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
-    NSDictionary *status = [result isKindOfClass:NSDictionary.class] ? result : nil;
+    BOOL finished = !task.running;
+    NSDictionary *status = KPLocalUpdateRead(@"status.json");
     NSString *phase = status[@"phase"];
     BOOL fresh = [status[@"checkedAt"] isKindOfClass:NSNumber.class] &&
         [status[@"checkedAt"] doubleValue] >= started.timeIntervalSince1970;
-    if ([phase isEqualToString:@"building"] || [phase isEqualToString:@"ready"] || (fresh && [phase isEqualToString:@"error"])) {
+    if ([phase isEqualToString:@"building"] && KPLocalUpdateHelperRunning(status)) {
       KPRenderUpdateStatus(status);
-      if (![phase isEqualToString:@"building"]) [timer invalidate];
-    } else if (fresh && [phase isEqualToString:@"current"]) {
-      [kpUpdatePanel orderOut:nil]; [timer invalidate];
-    } else if (!task.running && [started timeIntervalSinceNow] < -5) {
-      [kpUpdatePanel orderOut:nil]; [timer invalidate];
+    } else if (fresh && phase && [@[@"ready", @"error", @"current", @"declined"] containsObject:phase]) {
+      KPRenderUpdateStatus(status); [timer invalidate];
+    } else if (finished) {
+      if ([kpUpdatePhase isEqualToString:@"checking"] || [kpUpdatePhase isEqualToString:@"building"])
+        [kpUpdatePanel orderOut:nil];
+      [timer invalidate];
     }
   }];
+}
+
+// Called once the shell is up: one-time notices from the last launch, then a quiet check.
+static void KPStartLocalUpdates() {
+  if (KPLocalUpdateSettings() == nil) return;
+  NSDictionary *status = KPLocalUpdateRead(@"status.json");
+  BOOL failed = kpUpdateLaunchFailure;
+  kpUpdateLaunchFailure = NO;
+  // Give the game window a moment to appear so the notice attaches to it.
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+    if (kpUpdatePhase != nil && ![kpUpdatePhase isEqualToString:@"checking"]) return;
+    kpUpdateDismissed = NO;
+    if (failed) {
+      kpUpdateInteractive = YES;
+      KPRenderUpdateStatus(status);
+      kpUpdateInteractive = NO;
+    } else if ([status[@"phase"] isEqualToString:@"rolledBack"]) {
+      NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+      double at = [status[@"checkedAt"] doubleValue];
+      if (at > [defaults doubleForKey:@"KartPadLocalUpdateNoticeAt"]) {
+        [defaults setDouble:at forKey:@"KartPadLocalUpdateNoticeAt"];
+        KPRenderUpdateStatus(status);
+      }
+    }
+  });
+  KPCheckLocalUpdates(NO, @[]);
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 90 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+    KPConfirmLocalUpdate();
+  });
+}
+
+// The helper waits for this process to exit, finishes the change, then reopens the app once.
+static void KPFinishLocalUpdateAndQuit(NSString *then, id sender) {
+  NSTask *task = KPLocalUpdateTask(@"finish", @[@"--then", then]);
+  NSError *error = nil;
+  if (task == nil || ![task launchAndReturnError:&error]) return;
+  NSMenuItem *quit = nil;
+  for (NSMenuItem *menu in NSApp.mainMenu.itemArray) {
+    for (NSMenuItem *item in menu.submenu.itemArray) {
+      if (item.action == NSSelectorFromString(@"quitKartPad:")) { quit = item; break; }
+    }
+  }
+  if (quit) [NSApp sendAction:quit.action to:quit.target from:sender];
+  else [NSApp terminate:sender];
 }
 
 @implementation KPLocalUpdateActions
@@ -269,7 +390,8 @@ static void KPCheckLocalUpdates() {
 }
 - (void)performAction:(id)sender {
   (void)sender;
-  if ([kpUpdatePhase isEqualToString:@"error"]) { KPCheckLocalUpdates(); return; }
+  if ([kpUpdatePhase isEqualToString:@"error"]) { KPCheckLocalUpdates(YES, @[]); return; }
+  if ([kpUpdatePhase isEqualToString:@"declined"]) { KPCheckLocalUpdates(YES, @[@"--allow-declined"]); return; }
   if (![kpUpdatePhase isEqualToString:@"ready"]) return;
   [kpUpdateDismissTimer invalidate]; kpUpdateDismissTimer = nil;
   NSAlert *alert = [NSAlert new];
@@ -278,29 +400,43 @@ static void KPCheckLocalUpdates() {
   [alert addButtonWithTitle:@"Restart"];
   [alert addButtonWithTitle:@"Keep playing"];
   if ([alert runModal] != NSAlertFirstButtonReturn) return;
-  NSTask *task = KPLocalUpdateTask(@"relaunch");
-  NSError *error = nil;
-  if (task == nil || ![task launchAndReturnError:&error]) return;
-  NSMenuItem *quit = nil;
-  for (NSMenuItem *menu in NSApp.mainMenu.itemArray) {
-    for (NSMenuItem *item in menu.submenu.itemArray) {
-      if (item.action == NSSelectorFromString(@"quitKartPad:")) { quit = item; break; }
-    }
-  }
-  if (quit) [NSApp sendAction:quit.action to:quit.target from:self];
-  else [NSApp terminate:self];
+  KPFinishLocalUpdateAndQuit(@"activate", self);
 }
 @end
 
 static void KPShowLocalUpdateStatus() {
-  NSDictionary *settings = KPLocalUpdateSettings();
-  NSString *state = settings[@"state"];
-  NSData *data = [state isKindOfClass:NSString.class] ? [NSData dataWithContentsOfFile:[state stringByAppendingPathComponent:@"status.json"]] : nil;
-  id result = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
-  NSDictionary *status = [result isKindOfClass:NSDictionary.class] ? result : nil;
+  NSDictionary *status = KPLocalUpdateRead(@"status.json");
   NSString *phase = status[@"phase"];
-  kpUpdateDismissed = NO; kpUpdatePhase = nil;
-  if ([phase isEqualToString:@"ready"] || [phase isEqualToString:@"building"] || [phase isEqualToString:@"error"]) {
+  kpUpdateDismissed = NO; kpUpdatePhase = nil; kpUpdateInteractive = YES;
+  if ([phase isEqualToString:@"ready"] || [phase isEqualToString:@"error"] ||
+      ([phase isEqualToString:@"building"] && KPLocalUpdateHelperRunning(status))) {
     KPRenderUpdateStatus(status);
-  } else KPCheckLocalUpdates();
+  } else KPCheckLocalUpdates(YES, @[]);
+}
+
+// Menu title for returning to the version the last update replaced, or nil.
+static NSString *KPLocalUpdateRevertTitle() {
+  NSDictionary *rollback = KPLocalUpdateRead(@"rollback.json");
+  if (![rollback[@"version"] isKindOfClass:NSString.class]) return nil;
+  return [NSString stringWithFormat:@"Go Back to Retro Rewind %@…", rollback[@"version"]];
+}
+
+static void KPRevertLocalUpdate(id sender) {
+  NSDictionary *rollback = KPLocalUpdateRead(@"rollback.json");
+  if (![rollback[@"version"] isKindOfClass:NSString.class]) return;
+  NSAlert *alert = [NSAlert new];
+  if (KPLocalUpdateHelperRunning(KPLocalUpdateRead(@"status.json"))) {
+    alert.messageText = @"An update is being prepared";
+    alert.informativeText = @"Try again when it has finished.";
+    [alert runModal];
+    return;
+  }
+  alert.messageText = [NSString stringWithFormat:@"Go back to Retro Rewind %@?", rollback[@"version"]];
+  alert.informativeText = [NSString stringWithFormat:
+      @"Finish your race first. KartPad will close, restore the previous app and game files, and reopen. Automatic updates will skip Retro Rewind %@.",
+      rollback[@"replaces"]];
+  [alert addButtonWithTitle:@"Go Back"];
+  [alert addButtonWithTitle:@"Cancel"];
+  if ([alert runModal] != NSAlertFirstButtonReturn) return;
+  KPFinishLocalUpdateAndQuit(@"rollback", sender);
 }
