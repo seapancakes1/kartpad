@@ -10,6 +10,7 @@
 #import "KartPadRetroRewindInstaller.h"
 #import "KartPadDiagnosticContext.h"
 #import "KartPadMiiManager.h"
+#import "KartPadMiiEditor.h"
 #import "KartPadGameFiles.h"
 #import "SunPadDiagnostics.h"
 #import "KartPadSystemDiagnostics.h"
@@ -1172,6 +1173,7 @@ static NSString *const kKartPadPreferredGameKey = @"KartPadPreferredGame";
 @property(nonatomic, assign) BOOL choosingRetroArchive;
 @property(nonatomic, assign) BOOL choosingGameDataCopy;
 @property(nonatomic, assign) BOOL receivedRetroDownload;
+@property(nonatomic, strong) NSError *pendingMiiFailure;
 @property(nonatomic, assign) BOOL retroVersionChecked;
 @property(nonatomic, assign) BOOL gamePackReady;
 @property(nonatomic, assign) NSInteger lastRetroDownloadPercent;
@@ -1778,6 +1780,17 @@ static NSString *const kKartPadPreferredGameKey = @"KartPadPreferredGame";
   self.window.windowLevel = UIWindowLevelAlert + 1.0;
   self.window.rootViewController = self.root;
   [self.window makeKeyAndVisible];
+  if (self.pendingMiiFailure) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      [self showMessage:@"Pending Mii Changes Could Not Be Applied"
+                 detail:[NSString stringWithFormat:@"%@\n\nBackups and pending changes have been retained. Fully close and reopen KartPad to retry.", self.pendingMiiFailure.localizedDescription]
+             completion:^{ self.finished = YES; self.succeeded = NO; }];
+    });
+    while (!self.finished) [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+    self.window.hidden = YES;
+    self.window = nil;
+    return NO;
+  }
   // The game runtime has no dialog of its own on iPhone/iPad, so a fatal error (for
   // example incomplete game data, #370) only closed the game. The runtime leaves its
   // message in Logs/last_fatal.txt; show it once here and remove it.
@@ -3375,7 +3388,7 @@ static NSString *const kKartPadPreferredGameKey = @"KartPadPreferredGame";
 
 - (void)showMiiCreationHelp {
   [self showIntegrationAlert:@"Mii Appearance"
-                     message:@"KartPad can set the online player name for its built-in Mii. To change the face or other appearance details, import a standard 74-byte .mii file made with a compatible tool. Player Identity can then rename it and update every linked Mario Kart Wii license."];
+                     message:@"Create or edit Miis here, or import and export standard 74-byte .mii files. Changes apply after fully closing and reopening KartPad. Existing Mii edits retain linked licenses and progress. New Miis can be selected in License Settings → Change Mii."];
 }
 
 - (void)showPlayerNameEditorForRecord:(NSDictionary<NSString *, id> *)record {
@@ -3776,6 +3789,28 @@ static NSString *const kKartPadPreferredGameKey = @"KartPadPreferredGame";
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
                                  (int64_t)(0.35 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{ [weakSelf showPlayerNameChoices]; });
+  }]];
+  [manager addAction:[UIAlertAction actionWithTitle:@"Create Mii…" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      KartPadRuntimeOverlayHost *host = weakSelf;
+      if (host) KartPadPresentMiiEditor(KartPadVisibleViewController(host->_window), NSNotFound);
+    });
+  }]];
+  [manager addAction:[UIAlertAction actionWithTitle:@"Edit Mii…" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      KartPadRuntimeOverlayHost *host = weakSelf;
+      if (!host) return;
+      NSError *error = nil;
+      NSArray *records = KartPadMiiRecords(&error);
+      if (error) { [weakSelf showIntegrationAlert:@"Miis Could Not Be Read" message:error.localizedDescription]; return; }
+      UIViewController *presenter = KartPadVisibleViewController(host->_window);
+      UIAlertController *choices = [UIAlertController alertControllerWithTitle:@"Edit Mii" message:records.count ? @"Choose a Mii." : @"No Miis found." preferredStyle:UIAlertControllerStyleAlert];
+      for (NSDictionary *record in records) [choices addAction:[UIAlertAction actionWithTitle:record[@"name"] style:UIAlertActionStyleDefault handler:^(UIAlertAction *selected) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ KartPadPresentMiiEditor(presenter, [record[@"slot"] unsignedIntegerValue]); });
+      }]];
+      [choices addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+      [presenter presentViewController:choices animated:YES completion:nil];
+    });
   }]];
   [manager addAction:[UIAlertAction actionWithTitle:@"Import Mii Appearance…"
                                               style:UIAlertActionStyleDefault
@@ -4213,11 +4248,15 @@ extern "C" bool KartPadMobileEnsureGameDataAvailable() {
   if (!NSThread.isMainThread) {
     __block BOOL available = NO;
     dispatch_sync(dispatch_get_main_queue(), ^{
-      available = [[[KartPadFirstLaunchHost alloc] init] run];
+      KartPadFirstLaunchHost *host = [KartPadFirstLaunchHost new];
+      host.pendingMiiFailure = miiError;
+      available = [host run];
     });
     return available;
   }
-  return [[[KartPadFirstLaunchHost alloc] init] run];
+  KartPadFirstLaunchHost *host = [KartPadFirstLaunchHost new];
+  host.pendingMiiFailure = miiError;
+  return [host run];
 }
 
 extern "C" const char *KartPadMobileSelectedRuntimeProfile() {

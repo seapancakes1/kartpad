@@ -191,6 +191,13 @@ if(MKW_HOST_DARWIN)
     target_link_libraries(kartpad_player_identity_tests PRIVATE
       "${IDENTITY_FOUNDATION_FRAMEWORK}")
     add_test(NAME kartpad.mii.player-identity COMMAND kartpad_player_identity_tests)
+    add_executable(kartpad_mii_editor_tests runtime/tests/apple_mii_editor_tests.mm apple/shared/KartPadMiiManager.mm)
+    target_include_directories(kartpad_mii_editor_tests PRIVATE apple/shared runtime/include)
+    target_compile_features(kartpad_mii_editor_tests PRIVATE cxx_std_20)
+    target_compile_definitions(kartpad_mii_editor_tests PRIVATE KARTPAD_MII_MANAGER_TESTING=1)
+    target_compile_options(kartpad_mii_editor_tests PRIVATE -fobjc-arc -UNDEBUG)
+    target_link_libraries(kartpad_mii_editor_tests PRIVATE "${IDENTITY_FOUNDATION_FRAMEWORK}")
+    add_test(NAME kartpad.mii.editor COMMAND kartpad_mii_editor_tests)
   endif()
 
   if(MKW_BUILD_MACOS AND TARGET kartpad_g7_translated)
@@ -304,7 +311,7 @@ if(MKW_BUILD_IOS_SIMULATOR OR MKW_BUILD_IOS_DEVICE)
     -fobjc-arc -Wall -Wextra
     "-ffile-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}=.")
   foreach(framework IN ITEMS
-      Foundation UIKit CoreGraphics QuartzCore Metal GameController CoreMotion UniformTypeIdentifiers MetricKit)
+      Foundation UIKit CoreGraphics QuartzCore Metal MetalKit GameController CoreMotion UniformTypeIdentifiers MetricKit)
     find_library(KARTPAD_IOS_${framework}_FRAMEWORK ${framework} REQUIRED)
     target_link_libraries(KartPad PRIVATE "${KARTPAD_IOS_${framework}_FRAMEWORK}")
   endforeach()
@@ -349,6 +356,20 @@ if(BUILD_TESTING)
     -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME kartpad.retro-rewind.archive-scan
     COMMAND kartpad_retro_rewind_archive_scan_tests)
+
+  add_executable(kartpad_mii_appearance_tests runtime/tests/mii_appearance_tests.cpp)
+  target_include_directories(kartpad_mii_appearance_tests PRIVATE runtime/include)
+  target_compile_features(kartpad_mii_appearance_tests PRIVATE cxx_std_20)
+  target_compile_options(kartpad_mii_appearance_tests PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/UNDEBUG>
+    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-UNDEBUG>)
+  add_test(NAME kartpad.mii.appearance COMMAND kartpad_mii_appearance_tests)
+
+  add_executable(kartpad_mii_editor_history_tests runtime/tests/mii_editor_history_tests.cpp)
+  target_include_directories(kartpad_mii_editor_history_tests PRIVATE runtime/include)
+  target_compile_features(kartpad_mii_editor_history_tests PRIVATE cxx_std_20)
+  target_compile_options(kartpad_mii_editor_history_tests PRIVATE $<$<COMPILE_LANG_AND_ID:CXX,Clang,GNU,AppleClang>:-UNDEBUG>)
+  add_test(NAME kartpad.mii.history COMMAND kartpad_mii_editor_history_tests)
 
   add_executable(kartpad_mii_database_tests runtime/tests/mii_database_tests.cpp)
   target_include_directories(kartpad_mii_database_tests PRIVATE

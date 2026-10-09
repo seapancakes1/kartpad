@@ -7,6 +7,11 @@
 
 #include "kartpad/mii/mii_database.h"
 #include "kartpad/mii/player_identity.h"
+#include "kartpad/mii/appearance.h"
+
+#if !defined(KARTPAD_MII_MANAGER_TESTING)
+#include "console_identity.h"
+#endif
 
 #include <span>
 #include <cstdlib>
@@ -191,6 +196,265 @@ BOOL BackupFile(NSString *source, NSString *folder, NSString *name,
 
 } // namespace
 
+
+static NSString *EditorPath() {
+  return [SupportRoot() stringByAppendingPathComponent:@"PendingMiiEditor.plist"];
+}
+static NSString *EditorJournalPath() {
+  return [SupportRoot() stringByAppendingPathComponent:@"MiiEditorTransaction.plist"];
+}
+NSData *KartPadReadMii(NSUInteger slot, NSError **error) {
+  NSData *data = ReadWorkingDatabase(error);
+  if (!data || !ValidateData(data, error))
+    return nil;
+  if (slot >= kartpad::mii::kMaximumMiiSlots) {
+    if (error)
+      *error = ManagerError(50, "Invalid Mii selection.");
+    return nil;
+  }
+  auto block =
+      Bytes(data).subspan(kartpad::mii::kMiiBlockOffset + slot * kartpad::mii::kMiiBlockSize,
+                          kartpad::mii::kMiiBlockSize);
+  if (kartpad::mii::IsEmptyMii(block)) {
+    if (error)
+      *error = ManagerError(50, "The selected Mii no longer exists.");
+    return nil;
+  }
+  return [NSData dataWithBytes:block.data() length:block.size()];
+}
+NSData *KartPadNewMii(NSError **error) {
+  if (KartPadHasPendingMiiChanges()) {
+    if (error)
+      *error = ManagerError(50, "Restart KartPad to apply pending changes first.");
+    return nil;
+  }
+  NSData *data = ReadWorkingDatabase(error);
+  if (!data || !ValidateData(data, error))
+    return nil;
+  try {
+    auto a = kartpad::mii::NewAppearance(
+        Bytes(data), uint32_t((NSDate.date.timeIntervalSince1970 - 1136073600) / 4));
+#if !defined(KARTPAD_MII_MANAGER_TESTING)
+    auto console = kartpad::mii::CreateDefaultMii(RuntimeConsoleIdentity::Current().mac);
+    std::copy_n(console.begin() + 28, 4, a.bytes.begin() + 28);
+#endif
+
+    return [NSData dataWithBytes:a.bytes.data() length:a.bytes.size()];
+  } catch (const std::exception &e) {
+    if (error)
+      *error = ManagerError(50, e.what());
+    return nil;
+  }
+}
+NSData *KartPadExportMii(NSData *edited, NSError **error) {
+  try {
+    auto validation = kartpad::mii::Appearance::Decode(Bytes(edited)).Validate();
+    if (!validation) { if (error) *error = ManagerError(50, validation.message); return nil; }
+    return edited.copy;
+  } catch (const std::exception& e) { if (error) *error = ManagerError(50, e.what()); return nil; }
+}
+
+BOOL KartPadStageMiiEditor(NSUInteger slot, NSData *expected, NSData *edited, NSError **error) {
+  if (KartPadHasPendingMiiChanges()) {
+    if (error)
+      *error = ManagerError(50, "Restart KartPad to apply pending changes first.");
+    return NO;
+  }
+  NSData *original = ReadWorkingDatabase(error);
+  if (!original || !ValidateData(original, error))
+    return NO;
+  try {
+    auto a = kartpad::mii::Appearance::Decode(Bytes(edited));
+    auto v = a.Validate();
+    if (!v) {
+      if (error)
+        *error = ManagerError(50, v.message);
+      return NO;
+    }
+  } catch (const std::exception &e) {
+    if (error)
+      *error = ManagerError(50, e.what());
+    return NO;
+  }
+  std::vector<uint8_t> database(Bytes(original).begin(), Bytes(original).end());
+  auto result =
+      expected ? kartpad::mii::ReplaceAppearance(database, slot, Bytes(expected), Bytes(edited))
+               : kartpad::mii::ImportMii(database, Bytes(edited));
+  if (!result) {
+    if (error)
+      *error = ManagerError(50, result.message);
+    return NO;
+  }
+  NSMutableArray *changes = [NSMutableArray arrayWithObject:@{
+    @"path" : DatabasePath(),
+    @"before" : original,
+    @"after" : [NSData dataWithBytes:database.data() length:database.size()],
+    @"backup" : @"RFL_DB"
+  }];
+  if (expected && ![[expected subdataWithRange:NSMakeRange(2, 20)]
+                      isEqualToData:[edited subdataWithRange:NSMakeRange(2, 20)]]) {
+    auto id = kartpad::mii::MiiCreateId(Bytes(original), slot);
+    for (NSDictionary *location in SaveLocations()) {
+      NSString *path = location[@"path"];
+      if (![NSFileManager.defaultManager fileExistsAtPath:path])
+        continue;
+      NSData *before = [NSData dataWithContentsOfFile:path options:0 error:error];
+      if (!before || !ValidateSaveData(before, error))
+        return NO;
+      std::vector<uint8_t> save(Bytes(before).begin(), Bytes(before).end());
+      size_t changed = 0;
+      // Decode the terminated name rather than including padding in license names.
+      auto text = kartpad::mii::ReadMiiName(Bytes(edited), 2);
+      NSData *name = PlayerNameData([NSString stringWithUTF8String:text.c_str()], error);
+      if (!name)
+        return NO;
+      auto v = kartpad::mii::RenameMatchingLicenses(save, id, Bytes(name), changed);
+      if (!v) {
+        if (error)
+          *error = ManagerError(50, v.message);
+        return NO;
+      }
+      if (changed)
+        [changes addObject:@{
+          @"path" : path,
+          @"before" : before,
+          @"after" : [NSData dataWithBytes:save.data() length:save.size()],
+          @"backup" : location[@"backup"]
+        }];
+    }
+  }
+  if (![NSFileManager.defaultManager createDirectoryAtPath:SupportRoot()
+                               withIntermediateDirectories:YES
+                                                attributes:nil
+                                                     error:error])
+    return NO;
+  NSData *intent = [NSPropertyListSerialization dataWithPropertyList:changes
+                                                              format:NSPropertyListBinaryFormat_v1_0
+                                                             options:0
+                                                               error:error];
+  return intent && [intent writeToFile:EditorPath() options:NSDataWritingAtomic error:error];
+}
+// Rebase a staged name patch onto progress saved after the editor was opened.
+// Identity and the old linked name must still match; every other progress byte is retained.
+static NSData *RebaseEditorSave(NSData *before, NSData *after, NSData *current) {
+  auto old = Bytes(before), next = Bytes(after), latest = Bytes(current);
+  std::vector<uint8_t> output(latest.begin(), latest.end());
+  for (size_t slot = 0; slot < kartpad::mii::kRksysLicenseCount; slot++) {
+    size_t base = kartpad::mii::kRksysLicenseOffset + slot * kartpad::mii::kRksysLicenseSize;
+    size_t name = base + kartpad::mii::kRksysMiiNameOffset,
+           identity = base + kartpad::mii::kRksysCreateIdOffset;
+    if (std::equal(old.begin() + name, old.begin() + name + 20, next.begin() + name))
+      continue;
+    if (!std::equal(old.begin() + identity, old.begin() + identity + 8,
+                    latest.begin() + identity) ||
+        !std::equal(old.begin() + name, old.begin() + name + 20, latest.begin() + name))
+      return nil;
+    std::copy_n(next.begin() + name, 20, output.begin() + name);
+  }
+  kartpad::mii::UpdateRksysCrc(output);
+  return [NSData dataWithBytes:output.data() length:output.size()];
+}
+static BOOL ApplyEditor(NSError **error) {
+  NSFileManager *files = NSFileManager.defaultManager;
+  BOOL recovering = [files fileExistsAtPath:EditorJournalPath()];
+  NSString *intentPath = recovering ? EditorJournalPath() : EditorPath();
+  if (![files fileExistsAtPath:intentPath])
+    return YES;
+  NSData *intent = [NSData dataWithContentsOfFile:intentPath options:0 error:error];
+  if (!intent)
+    return NO;
+  id records = [NSPropertyListSerialization propertyListWithData:intent
+                                                         options:NSPropertyListImmutable
+                                                          format:nil
+                                                           error:error];
+  if (![records isKindOfClass:NSArray.class] || [records count] == 0) {
+    if (error)
+      *error = ManagerError(51, "Invalid Mii transaction.");
+    return NO;
+  }
+  NSMutableSet *allowed = [NSMutableSet setWithObject:DatabasePath()];
+  for (NSDictionary *l in SaveLocations())
+    [allowed addObject:l[@"path"]];
+  NSMutableSet *seen = [NSMutableSet set];
+  NSMutableArray *rebased = [NSMutableArray array];
+  for (id c in records) {
+    if (![c isKindOfClass:NSDictionary.class] || ![allowed containsObject:c[@"path"]] ||
+        [seen containsObject:c[@"path"]] || ![c[@"before"] isKindOfClass:NSData.class] ||
+        ![c[@"after"] isKindOfClass:NSData.class]) {
+      if (error)
+        *error = ManagerError(51, "Invalid Mii transaction target.");
+      return NO;
+    }
+    [seen addObject:c[@"path"]];
+    BOOL db = [c[@"path"] isEqual:DatabasePath()];
+    if (db ? (!ValidateData(c[@"before"], error) || !ValidateData(c[@"after"], error))
+           : (!ValidateSaveData(c[@"before"], error) || !ValidateSaveData(c[@"after"], error)))
+      return NO;
+    NSData *current = [NSData dataWithContentsOfFile:c[@"path"] options:0 error:error];
+    NSMutableDictionary *change = [c mutableCopy];
+    if (current && !recovering && !db && ![current isEqualToData:c[@"before"]]) {
+      if (!ValidateSaveData(current, error))
+        return NO;
+      NSData *after = RebaseEditorSave(c[@"before"], c[@"after"], current);
+      if (!after) {
+        if (error)
+          *error = ManagerError(51, "A linked license changed. The Mii edit was not applied.");
+        return NO;
+      }
+      change[@"before"] = current;
+      change[@"after"] = after;
+    } else if (!current || (![current isEqualToData:c[@"before"]] &&
+                            !(recovering && [current isEqualToData:c[@"after"]]))) {
+      if (error)
+        *error =
+            ManagerError(51, "Game data changed since the Mii edit. Nothing further was applied.");
+      return NO;
+    }
+    change[@"backup"] = @"RFL_DB";
+    for (NSDictionary *location in SaveLocations())
+      if ([location[@"path"] isEqual:c[@"path"]])
+        change[@"backup"] = location[@"backup"];
+    [rebased addObject:change];
+  }
+  if (![seen containsObject:DatabasePath()]) {
+    if (error)
+      *error = ManagerError(51, "Mii transaction has no database update.");
+    return NO;
+  }
+  records = rebased;
+  intent = [NSPropertyListSerialization dataWithPropertyList:records
+                                                      format:NSPropertyListBinaryFormat_v1_0
+                                                     options:0
+                                                       error:error];
+  if (!intent)
+    return NO;
+  if (!recovering) {
+    NSString *stamp = NSUUID.UUID.UUIDString;
+    for (NSDictionary *c in records)
+      if (!BackupFile(c[@"path"], @"MiiEditorBackups",
+                      [c[@"path"] isEqual:DatabasePath()] ? @"RFL_DB" : c[@"backup"], stamp, error))
+        return NO;
+    if (![intent writeToFile:EditorJournalPath() options:NSDataWritingAtomic error:error])
+      return NO;
+  }
+  NSUInteger written = 0;
+  for (NSDictionary *c in records) {
+#if defined(KARTPAD_MII_MANAGER_TESTING)
+    const char *fail = std::getenv("KARTPAD_MII_TEST_INTERRUPT_AFTER");
+    if (fail && written == std::strtoul(fail, nullptr, 10)) {
+      if (error)
+        *error = ManagerError(51, "Simulated interruption.");
+      return NO;
+    }
+#endif
+    if (![c[@"after"] writeToFile:c[@"path"] options:NSDataWritingAtomic error:error])
+      return NO;
+    written++;
+  }
+  if ([files fileExistsAtPath:EditorPath()] && ![files removeItemAtPath:EditorPath() error:error])
+    return NO;
+  return [files removeItemAtPath:EditorJournalPath() error:error];
+}
 NSArray<NSDictionary<NSString *, id> *> *KartPadMiiRecords(NSError **error) {
   NSData *data = ReadWorkingDatabase(error);
   if (data == nil || !ValidateData(data, error)) return @[];
@@ -268,6 +532,11 @@ NSArray<NSDictionary<NSString *, id> *> *KartPadLicenseRecords(NSError **error) 
 }
 
 BOOL KartPadStageMiiImport(NSData *miiData, NSString **name, NSError **error) {
+  if(KartPadHasPendingMiiChanges()){if(error)*error=ManagerError(50,"Restart KartPad to apply pending changes first.");return NO;}
+
+  try {auto valid=kartpad::mii::Appearance::Decode(Bytes(miiData)).Validate();if(!valid){if(error)*error=ManagerError(50,valid.message);return NO;}}
+  catch(const std::exception& e){if(error)*error=ManagerError(50,e.what());return NO;}
+
   NSData *databaseData = ReadWorkingDatabase(error);
   if (databaseData == nil || !ValidateData(databaseData, error)) return NO;
 
@@ -288,6 +557,8 @@ BOOL KartPadStageMiiImport(NSData *miiData, NSString **name, NSError **error) {
 }
 
 BOOL KartPadStageMiiRemoval(NSUInteger slot, NSError **error) {
+  if(KartPadHasPendingMiiChanges()){if(error)*error=ManagerError(50,"Restart KartPad to apply pending changes first.");return NO;}
+
   NSData *databaseData = ReadWorkingDatabase(error);
   if (databaseData == nil || !ValidateData(databaseData, error)) return NO;
   const auto createId = kartpad::mii::MiiCreateId(Bytes(databaseData), slot);
@@ -546,6 +817,7 @@ static BOOL KartPadApplyPendingGhost(NSError **error);
 static BOOL KartPadApplyPendingSaveRestore(NSError **error);
 
 BOOL KartPadApplyPendingMiiDatabase(NSError **error) {
+  if (!ApplyEditor(error)) return NO;
   if (!KartPadApplyPendingSaveRestore(error)) return NO;
   if (!KartPadApplyPendingGhost(error)) return NO;
   NSString *pending = PendingPath();
@@ -727,7 +999,7 @@ BOOL KartPadApplyPendingMiiDatabase(NSError **error) {
 }
 
 BOOL KartPadHasPendingMiiChanges(void) {
-  return KartPadHasPendingSaveRestore() || [NSFileManager.defaultManager fileExistsAtPath:PendingGhostPath()] || [NSFileManager.defaultManager fileExistsAtPath:PendingPath()] ||
+  return [NSFileManager.defaultManager fileExistsAtPath:EditorPath()] || [NSFileManager.defaultManager fileExistsAtPath:EditorJournalPath()] || KartPadHasPendingSaveRestore() || [NSFileManager.defaultManager fileExistsAtPath:PendingGhostPath()] || [NSFileManager.defaultManager fileExistsAtPath:PendingPath()] ||
       [NSFileManager.defaultManager fileExistsAtPath:PendingIdentityPath()] ||
       [NSFileManager.defaultManager fileExistsAtPath:PendingLicensePath()];
 }
@@ -853,3 +1125,8 @@ static BOOL KartPadApplyPendingSaveRestore(NSError **error){
   if(![plist[@"data"] writeToFile:active options:NSDataWritingAtomic error:error])return NO;
   return KartPadCancelSaveRestore(error);
 }
+
+#if !defined(KARTPAD_MII_MANAGER_TESTING) && !defined(KARTPAD_MII_EDITOR_DISABLED) && \
+    (TARGET_OS_OSX || (TARGET_OS_IOS && !TARGET_OS_TV))
+#include "KartPadMiiEditor.inc.mm"
+#endif
