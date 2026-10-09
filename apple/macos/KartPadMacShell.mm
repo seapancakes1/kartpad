@@ -12,6 +12,7 @@
 
 #include <cstdlib>
 
+#include <aurora/aurora.h>
 #include "runtime_config.h"
 #if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)
 #include "kartpad_retro_rewind_release.h"
@@ -26,6 +27,9 @@ static constexpr NSInteger kKartPadMenuTag = 0x4b505344;
 static NSString *const kKartPadRuntimeProfileDefaultsKey = @"KartPadRuntimeProfile";
 static NSString *const kKartPadBaseProfile = @"base";
 static NSString *const kKartPadRetroProfile = @"retro_rewind";
+// The fullscreen mode Full Screen goes back to: borderless or exclusive.
+static NSString *const kKartPadFullScreenModeDefaultsKey = @"KartPadFullScreenMode";
+static NSString *const kKartPadBackgroundPauseDefaultsKey = @"KartPadPauseInBackground";
 
 static NSURL *DirectoryURL(const std::filesystem::path &path) {
   const std::string value = path.lexically_normal().string();
@@ -336,6 +340,13 @@ static NSString *ValidateRetroRewindRoot(NSString *root, NSError **error) {
   return nil;
 }
 
+// The game this launch is playing (KartPadMacShellPrepareGameData sets it).
+static NSString *RunningRuntimeProfile() {
+  const char *profile = std::getenv("KARTPAD_RUNTIME_PROFILE");
+  return profile != nullptr && strcmp(profile, "retro_rewind") == 0
+      ? kKartPadRetroProfile : kKartPadBaseProfile;
+}
+
 static BOOL WriteRetroRewindRoot(NSString *root) {
   if (root.length == 0) return NO;
   const bool wrote = RuntimeConfigFile::WriteSetting(
@@ -519,6 +530,12 @@ static bool KPFullscreenAcrossNotch() {
   } catch (const std::exception &) { return false; }
 }
 
+// Settings → Game & Data. On unless turned off.
+static bool KPBackgroundPauseEnabled() {
+  id value = [NSUserDefaults.standardUserDefaults objectForKey:kKartPadBackgroundPauseDefaultsKey];
+  return [value isKindOfClass:NSNumber.class] ? [value boolValue] : true;
+}
+
 #include "KartPadControllers.inc.mm"
 #include "KartPadMacMiis.inc.mm"
 
@@ -532,11 +549,19 @@ static bool KPFullscreenAcrossNotch() {
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSTextField *> *settingValues;
 @property(nonatomic, strong) NSTextField *settingsStatus;
 @property(nonatomic, strong) KPMiisWindow *miisWindow;
-// Settings → Game & Data: holding controller buttons opens the Miis window.
-@property(nonatomic, strong) NSButton *miisPadSwitch;
-@property(nonatomic, strong) NSButton *miisPadChoose;
-@property(nonatomic, strong) NSTextField *miisPadButtons;
-@property(nonatomic, strong) NSPopUpButton *miisPadHold;
+// Settings → Game & Data: holding controller buttons opens Miis or Settings, a row for each
+// (KPPadShortcutKind), and the shortcut whose buttons are being chosen (or -1).
+@property(nonatomic, strong) NSArray<NSButton *> *padShortcutSwitches;
+@property(nonatomic, strong) NSArray<NSTextField *> *padShortcutButtons;
+@property(nonatomic, strong) NSArray<NSButton *> *padShortcutChoose;
+@property(nonatomic, strong) NSArray<NSPopUpButton *> *padShortcutHolds;
+@property(nonatomic) NSInteger capturingShortcut;
+@property(nonatomic, strong) NSButton *backgroundPauseSwitch;
+// Changes waiting for a restart, by what they are. While there are any, the Game menu has Restart
+// KartPad and Settings has Restart Now.
+@property(nonatomic, strong) NSMutableSet<NSString *> *restartReasons;
+@property(nonatomic, strong) NSButton *settingsRestart;
+@property(nonatomic, strong) NSMenuItem *restartItem;
 @end
 
 @implementation KartPadMacShellController
@@ -589,6 +614,31 @@ static bool KPFullscreenAcrossNotch() {
   [self finishQuitting:sender];
 }
 
+- (BOOL)restartPending { return self.restartReasons.count > 0; }
+
+- (void)setRestartNeeded:(BOOL)needed for:(NSString *)reason {
+  if (self.restartReasons == nil) self.restartReasons = [NSMutableSet set];
+  if (needed) [self.restartReasons addObject:reason];
+  else [self.restartReasons removeObject:reason];
+  self.settingsRestart.hidden = !self.restartPending;
+}
+
+- (BOOL)askToRestart:(NSString *)title message:(NSString *)message action:(NSString *)action {
+  NSAlert *alert = [NSAlert new];
+  alert.messageText = title;
+  alert.informativeText = message;
+  [alert addButtonWithTitle:action];
+  [alert addButtonWithTitle:@"Later"];
+  return [alert runModal] == NSAlertFirstButtonReturn;
+}
+
+// A change that applies at launch: Restart Now, or Later, which leaves Restart KartPad in the Game
+// menu until then.
+- (void)offerRestart:(NSString *)title message:(NSString *)message reason:(NSString *)reason {
+  [self setRestartNeeded:YES for:reason];
+  if ([self askToRestart:title message:message action:@"Restart Now"]) [self restartKartPad:nil];
+}
+
 - (void)finishQuitting:(id)sender {
   if (NSWindow *window = KPGameWindow()) {
     // Let Aurora observe the native close event. Its window-close path
@@ -614,11 +664,9 @@ static bool KPFullscreenAcrossNotch() {
     [alert runModal];
     return;
   }
-  NSAlert *alert = [NSAlert new];
-  alert.messageText = @"Game Data Ready";
-  alert.informativeText =
-      @"KartPad validated the RMCP01 data. Quit and reopen KartPad to use it.";
-  [alert runModal];
+  [self offerRestart:@"Game Data Ready"
+             message:@"KartPad validated the RMCP01 data. It’s used once KartPad restarts."
+              reason:@"game-data"];
 }
 
 #if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)
@@ -631,15 +679,43 @@ static bool KPFullscreenAcrossNotch() {
                   message:@"KartPad could not update Config.toml."];
     return;
   }
-  [self showSimpleAlert:@"Retro Rewind Ready"
-                message:@"KartPad validated the exact supported pack. Choose Retro Rewind from the Game menu, then reopen KartPad."];
+  if ([RunningRuntimeProfile() isEqualToString:kKartPadRetroProfile]) {
+    [self offerRestart:@"Retro Rewind Ready"
+               message:@"KartPad validated the exact supported pack. It’s used once KartPad restarts."
+                reason:@"retro-data"];
+    return;
+  }
+  if ([self askToRestart:@"Retro Rewind Ready"
+                 message:@"KartPad validated the exact supported pack. Switch to Retro Rewind now? KartPad restarts to switch games. Your saves and settings are kept."
+                  action:@"Switch and Restart"]) {
+    [self chooseRuntimeProfile:kKartPadRetroProfile];
+    [self restartKartPad:nil];
+  }
+}
+
+// The game the next launch plays. The Game menu ticks it.
+- (void)chooseRuntimeProfile:(NSString *)profile {
+  [NSUserDefaults.standardUserDefaults setObject:profile
+                                           forKey:kKartPadRuntimeProfileDefaultsKey];
+  for (NSMenuItem *item in self.restartItem.menu.itemArray) {
+    if (item.action == @selector(useOriginalGame:) || item.action == @selector(useRetroRewind:)) {
+      const BOOL retro = item.action == @selector(useRetroRewind:);
+      item.state = retro == [profile isEqualToString:kKartPadRetroProfile]
+          ? NSControlStateValueOn : NSControlStateValueOff;
+    }
+  }
+  // Going back to the game that's running needs no restart.
+  [self setRestartNeeded:![profile isEqualToString:RunningRuntimeProfile()] for:@"game"];
 }
 
 - (void)selectRuntimeProfile:(NSString *)profile title:(NSString *)title {
-  [NSUserDefaults.standardUserDefaults setObject:profile
-                                           forKey:kKartPadRuntimeProfileDefaultsKey];
-  [self showSimpleAlert:[NSString stringWithFormat:@"%@ Selected", title]
-                message:@"Quit and reopen KartPad to switch games. Your saves and settings are preserved."];
+  [self chooseRuntimeProfile:profile];
+  if ([profile isEqualToString:RunningRuntimeProfile()]) return;
+  if ([self askToRestart:[NSString stringWithFormat:@"Switch to %@?", title]
+                 message:@"KartPad restarts to switch games. Your saves and settings are kept."
+                  action:@"Restart Now"]) {
+    [self restartKartPad:nil];
+  }
 }
 
 - (void)showAutomaticUpdates:(id)sender {
@@ -697,8 +773,15 @@ static bool KPFullscreenAcrossNotch() {
 }
 
 // Rebuilt each time the Player menu opens so the pending-restart state is
-// current. Everything else about Miis happens in the Miis window.
+// current. Everything else about Miis happens in the Miis window. The Game
+// menu shows Restart KartPad while a change waits for one.
 - (void)menuNeedsUpdate:(NSMenu *)menu {
+  if ([menu.title isEqualToString:@"Game"]) {
+    self.restartItem.hidden = !self.restartPending;
+    NSInteger index = [menu indexOfItem:self.restartItem];
+    if (index >= 0 && index + 1 < menu.numberOfItems) [menu itemAtIndex:index + 1].hidden = !self.restartPending;
+    return;
+  }
   if (![menu.title isEqualToString:@"Player"]) return;
   [menu removeAllItems];
   if (KartPadHasPendingMiiChanges()) {
@@ -710,6 +793,38 @@ static bool KPFullscreenAcrossNotch() {
   miis.keyEquivalent = @"m";
   miis.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
   [menu addItem:miis];
+}
+
+// Full Screen (⌃⌘F) is the Display mode setting: windowed, or back to the fullscreen mode last
+// used (borderless at first). It's kept for the next launch, as Option-Return's is.
+- (void)toggleGameFullScreen:(id)sender {
+  (void)sender;
+  NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+  const AuroraDisplayMode active = aurora_get_display_mode();
+  std::string next = "windowed";
+  if (active == AURORA_DISPLAY_MODE_WINDOWED) {
+    next = [[defaults stringForKey:kKartPadFullScreenModeDefaultsKey] isEqualToString:@"exclusive"]
+        ? "exclusive" : "borderless";
+  } else {
+    [defaults setObject:active == AURORA_DISPLAY_MODE_EXCLUSIVE ? @"exclusive" : @"borderless"
+                 forKey:kKartPadFullScreenModeDefaultsKey];
+  }
+  if (!RuntimeConfigFile::WriteSetting("video", "display_mode",
+                                       RuntimeConfigFile::FormatString(next))) {
+    NSBeep();
+    return;
+  }
+  AppendSessionLine([NSString stringWithFormat:@"displayMode=%s; from=full-screen-toggle", next.c_str()]);
+  KartPadRequestSettingsReload();
+  if (self.settingsPanel.visible) [self refreshSettings];
+}
+
+- (BOOL)validateMenuItem:(NSMenuItem *)item {
+  if (item.action == @selector(toggleGameFullScreen:)) {
+    item.title = aurora_get_display_mode() == AURORA_DISPLAY_MODE_WINDOWED
+        ? @"Enter Full Screen" : @"Exit Full Screen";
+  }
+  return YES;
 }
 
 - (void)toggleExperimentalWiimote:(NSMenuItem *)sender {
@@ -784,29 +899,31 @@ static bool KPFullscreenAcrossNotch() {
     }
     [NSUserDefaults.standardUserDefaults setObject:host forKey:@"KartPadPrivateWfcHost"];
   }
-  NSAlert *saved = [NSAlert new];
-  saved.messageText = @"Online Service Saved";
-  saved.informativeText = @"Quit and reopen KartPad to apply the change. Private-server compatibility and complete races still need testing.";
-  [saved runModal];
+  [self offerRestart:@"Online Service Saved"
+             message:@"It’s used once KartPad restarts. Private-server compatibility and complete races still need testing."
+              reason:@"online-service"];
 }
 
+// Rebuilt each time it opens, so the controller shortcuts show their current buttons.
 - (void)showControls:(id)sender {
   (void)sender;
   if (self.controlsPanel == nil) {
     self.controlsPanel = [[NSPanel alloc]
-        initWithContentRect:NSMakeRect(0, 0, 560, 430)
+        initWithContentRect:NSMakeRect(0, 0, 560, 540)
                   styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable)
                     backing:NSBackingStoreBuffered
                       defer:NO];
     self.controlsPanel.title = @"KartPad Controls";
     self.controlsPanel.releasedWhenClosed = NO;
+  }
+  {
 
     NSTextField *intro = [self label:
         @"Player 1 can use the keyboard or any mapped game controller. Keyboard holds are analog-aware during races."];
     intro.maximumNumberOfLines = 2;
     intro.lineBreakMode = NSLineBreakByWordWrapping;
 
-    NSArray<NSArray<NSString *> *> *bindings = @[
+    NSMutableArray<NSArray<NSString *> *> *bindings = [@[
       @[@"Steer", @"W A S D"],
       @[@"Accelerate / confirm", @"U or Return"],
       @[@"Brake / reverse / back", @"M or Delete"],
@@ -818,7 +935,13 @@ static bool KPFullscreenAcrossNotch() {
       @[@"Classic X / Y", @"X / C"],
       @[@"Classic ZL / ZR", @"Z / V"],
       @[@"Settings (also in fullscreen)", @"⌘, or F10 / Fn–F10"],
-    ];
+      @[@"Full screen", @"⌃⌘F or ⌥Return"],
+    ] mutableCopy];
+    for (int kind = 0; kind < KPPadShortcutCount; ++kind) {
+      if (!KPPadShortcutEnabled(kind)) continue;
+      [bindings addObject:@[[NSString stringWithFormat:@"%@ from a controller", KPPadShortcuts[kind].opens],
+          [NSString stringWithFormat:@"Hold %@", KPPadButtonNames(KPPadShortcutButtons(kind))]]];
+    }
     NSMutableArray<NSView *> *rows = [NSMutableArray array];
     for (NSArray<NSString *> *binding in bindings) {
       NSTextField *action = [self label:binding[0]];
@@ -987,6 +1110,40 @@ static KartPadMacShellController *Controller() {
 }
 
 static void KPOpenMiisFromController() { [Controller() showMiis:nil]; }
+static void KPOpenSettingsFromController() { [Controller() showSettings:nil]; }
+
+// The runtime holds the game still while this is true (WaitWhileBackgroundPaused). That includes
+// KartPad hidden and its window minimized (as exclusive fullscreen is on losing the focus), which
+// otherwise only stop the drawing.
+extern "C" bool KartPadBackgroundPauseWanted() {
+  if (NSApp.active || !KPBackgroundPauseEnabled()) return false;
+  @autoreleasepool {
+    for (NSWindow *window in NSApp.windows) {
+      if (![window isKindOfClass:NSPanel.class] && window.windowController == nil) return true;
+    }
+    return false;
+  }
+}
+
+// The title bar says so meanwhile.
+extern "C" void KartPadBackgroundPauseChanged(bool paused) {
+  static __weak NSWindow *window;
+  static NSString *title;
+  @autoreleasepool {
+    AppendSessionLine(paused ? @"backgroundPause=paused" : @"backgroundPause=resumed");
+    if (paused) {
+      for (NSWindow *candidate in NSApp.windows) {
+        if (![candidate isKindOfClass:NSPanel.class] && candidate.windowController == nil) window = candidate;
+      }
+      title = window.title;
+      if (title.length > 0) window.title = [title stringByAppendingString:@" — Paused"];
+    } else {
+      if (title.length > 0) window.title = title;
+      window = nil;
+      title = nil;
+    }
+  }
+}
 
 extern "C" void KartPadOpenSettingsFromShortcut() {
   // SDL event handling can run inside a guest fiber. Open AppKit UI on the
@@ -1003,6 +1160,15 @@ static void InstallSettingsShortcutMonitor() {
         const bool functionKey = event.keyCode == 109;
         const bool commandComma = event.keyCode == 47 && (modifiers & NSEventModifierFlagCommand) &&
             !(modifiers & (NSEventModifierFlagControl | NSEventModifierFlagOption | NSEventModifierFlagShift));
+        // ⌃⌘F from any KartPad window, and in exclusive fullscreen, where the menu doesn't hear it.
+        const NSEventModifierFlags chord = modifiers & (NSEventModifierFlagControl | NSEventModifierFlagOption |
+                                                        NSEventModifierFlagShift | NSEventModifierFlagCommand);
+        // As the menu matches it: by the character, whatever the keyboard layout.
+        if (chord == (NSEventModifierFlagControl | NSEventModifierFlagCommand) && !event.isARepeat &&
+            [event.charactersIgnoringModifiers.lowercaseString isEqualToString:@"f"]) {
+          dispatch_async(dispatch_get_main_queue(), ^{ [Controller() toggleGameFullScreen:nil]; });
+          return nil;
+        }
         if ((functionKey && !(modifiers & (NSEventModifierFlagControl | NSEventModifierFlagOption | NSEventModifierFlagCommand))) ||
             commandComma) {
           KartPadOpenSettingsFromShortcut();
@@ -1131,6 +1297,14 @@ static void InstallMenu() {
       initWithTitle:@"Game" action:nil keyEquivalent:@""];
   gameMenuItem.tag = kKartPadMenuTag;
   NSMenu *gameMenu = [[NSMenu alloc] initWithTitle:@"Game"];
+  gameMenu.delegate = Controller();
+  NSMenuItem *restart = [[NSMenuItem alloc]
+      initWithTitle:@"Restart KartPad to Apply Changes" action:@selector(restartKartPad:) keyEquivalent:@""];
+  restart.target = Controller();
+  Controller().restartItem = restart;
+  [gameMenu addItem:restart];
+  [gameMenu addItem:NSMenuItem.separatorItem];
+  [Controller() menuNeedsUpdate:gameMenu];
 #if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)
   NSString *activeProfile = NSUserDefaults.standardUserDefaults
       ? [NSUserDefaults.standardUserDefaults stringForKey:kKartPadRuntimeProfileDefaultsKey]
@@ -1157,6 +1331,24 @@ static void InstallMenu() {
       keyEquivalent:@""];
   settings.target = Controller();
   [gameMenu addItem:settings];
+  // SDL's Window → Toggle Full Screen (⌃⌘F) is macOS full screen, which the Display mode setting
+  // doesn't follow. It goes through that setting instead.
+  bool fullScreenItem = false;
+  for (NSMenuItem *menu in mainMenu.itemArray) {
+    for (NSMenuItem *item in menu.submenu.itemArray) {
+      if (item.action != @selector(toggleFullScreen:)) continue;
+      item.target = Controller();
+      item.action = @selector(toggleGameFullScreen:);
+      fullScreenItem = true;
+    }
+  }
+  if (!fullScreenItem) {
+    NSMenuItem *fullScreen = [[NSMenuItem alloc]
+        initWithTitle:@"Enter Full Screen" action:@selector(toggleGameFullScreen:) keyEquivalent:@"f"];
+    fullScreen.keyEquivalentModifierMask = NSEventModifierFlagControl | NSEventModifierFlagCommand;
+    fullScreen.target = Controller();
+    [gameMenu addItem:fullScreen];
+  }
   gameMenuItem.submenu = gameMenu;
   [mainMenu insertItem:gameMenuItem atIndex:productMenuIndex++];
 

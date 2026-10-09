@@ -10,6 +10,7 @@
 // Names are typed on the controller keyboard (KartPadMiiPadKeyboard.inc.mm): A on the editor's
 // Nickname or Creator field opens it, and so does an alert asking for a name, as soon as the pad
 // brings one up. File panels take arrows, Return and Escape, and LB/RB as Shift-Tab/Tab.
+// Settings on Mac takes the pads too while it is in front (see Settings below).
 #if TARGET_OS_OSX
 #import <objc/runtime.h>
 
@@ -248,6 +249,97 @@ static void KPPadEditorPress(KPMiiEditor *editor,KartPadMiiPadButton button){
     }
 }
 
+#pragma mark Settings
+
+// Settings is ordinary AppKit controls, which only take the focus with Full Keyboard Access on, so
+// it gets a ring of its own and remembers the control under it. Left and right change a pop-up or a
+// slider in place; A clicks (a pop-up opens its menu), LB and RB change tab, B and Start close.
+@interface KPPadRing : NSView
+@end
+@implementation KPPadRing
+- (NSView *)hitTest:(NSPoint)point{(void)point;return nil;}
+@end
+static __weak NSWindow *KPPadSettings;
+static __weak NSTabView *KPPadSettingsTabs;
+static void (^KPPadSettingsClose)(void);
+static KPPadRing *KPPadSettingsRing;
+static __weak NSControl *KPPadSettingsFocus;
+
+void KartPadMiiPadSetSettings(NSWindow *window,NSTabView *tabs,void (^close)(void)){
+    KPPadSettings=window;KPPadSettingsTabs=tabs;KPPadSettingsClose=[close copy];
+    // Opening Settings with the mouse doesn't bring back a ring from last time.
+    [NSNotificationCenter.defaultCenter addObserverForName:NSWindowWillCloseNotification object:window queue:nil usingBlock:^(NSNotification *note){
+        (void)note;[KPPadSettingsRing removeFromSuperview];KPPadSettingsFocus=nil;
+    }];
+}
+static NSWindow *KPPadSettingsWindow(){NSWindow *window=KPPadSettings;return window.visible?window:nil;}
+// Labels and gauges are controls too, but there's nothing to press on them.
+static BOOL KPPadSettingsControl(NSView *view){
+    return ([view isKindOfClass:NSButton.class]||[view isKindOfClass:NSSlider.class])&&[(NSControl*)view isEnabled];
+}
+static NSArray<NSView*> *KPPadSettingsControls(NSWindow *window){
+    NSMutableArray *controls=[NSMutableArray array];KPPadCollect(window.contentView,^BOOL(NSView *view){return KPPadSettingsControl(view);},controls);return controls;
+}
+// The top control, the leftmost on a tie: where the ring starts on a page.
+static NSView *KPPadSettingsFirst(NSArray<NSView*> *controls){
+    NSView *first=nil;
+    for(NSView *view in controls){
+        NSRect here=KPPadFrame(view),best=first?KPPadFrame(first):NSZeroRect;
+        if(!first||NSMaxY(here)>NSMaxY(best)+1||(std::abs(NSMaxY(here)-NSMaxY(best))<=1&&NSMinX(here)<NSMinX(best)))first=view;
+    }
+    return first;
+}
+static void KPPadSettingsShow(NSControl *control){
+    KPPadSettingsFocus=control;
+    if(!KPPadSettingsRing){
+        KPPadSettingsRing=[[KPPadRing alloc] initWithFrame:NSZeroRect];KPPadSettingsRing.wantsLayer=YES;
+        KPPadSettingsRing.layer.borderWidth=3;KPPadSettingsRing.layer.cornerRadius=7;
+    }
+    KPPadSettingsRing.layer.borderColor=NSColor.controlAccentColor.CGColor;
+    // A checkbox's frame runs on past its title; push buttons, pop-ups and sliders fill theirs.
+    NSRect frame=control.frame;
+    if([control isKindOfClass:NSButton.class]&&![control isKindOfClass:NSPopUpButton.class]&&[(NSButton*)control bezelStyle]!=NSBezelStylePush)
+        frame.size.width=std::min(frame.size.width,control.intrinsicContentSize.width);
+    [KPPadSettingsRing removeFromSuperview];KPPadSettingsRing.frame=NSInsetRect(frame,-4,-4);
+    [control.superview addSubview:KPPadSettingsRing positioned:NSWindowAbove relativeTo:control];
+    [control scrollRectToVisible:NSInsetRect(control.bounds,0,-16)];
+}
+// The ring's control if it's still on the page, else the page's first.
+static NSControl *KPPadSettingsStart(NSArray<NSView*> *controls){
+    NSControl *focus=KPPadSettingsFocus;
+    return [controls containsObject:focus]?focus:(NSControl*)KPPadSettingsFirst(controls);
+}
+static void KPPadSettingsPress(NSWindow *window,KartPadMiiPadButton button){
+    NSArray<NSView*> *controls=KPPadSettingsControls(window);
+    NSControl *focus=KPPadSettingsFocus;if(![controls containsObject:focus])focus=nil;
+    int dx,dy;
+    if(KPPadDirection(button,&dx,&dy)||(button==KartPadMiiPadConfirm&&!focus)){
+        if([focus isKindOfClass:NSSlider.class]&&dx){
+            NSSlider *slider=(NSSlider*)focus;
+            slider.doubleValue=std::clamp(slider.doubleValue+dx*(slider.maxValue-slider.minValue)/20,slider.minValue,slider.maxValue);
+            [slider sendAction:slider.action to:slider.target];return;
+        }
+        if([focus isKindOfClass:NSPopUpButton.class]&&dx){
+            NSPopUpButton *popUp=(NSPopUpButton*)focus;const NSInteger index=popUp.indexOfSelectedItem+dx;
+            if(index>=0&&index<popUp.numberOfItems&&[popUp itemAtIndex:index].enabled){[popUp selectItemAtIndex:index];[popUp sendAction:popUp.action to:popUp.target];}
+            return;
+        }
+        NSView *next=focus?KPPadNearest(controls,focus,dx,dy):KPPadSettingsStart(controls);
+        if(next)KPPadSettingsShow((NSControl*)next);
+        return;
+    }
+    switch(button){
+    case KartPadMiiPadConfirm:if(![focus isKindOfClass:NSSlider.class])[focus performClick:nil];return;
+    case KartPadMiiPadBack:case KartPadMiiPadStart:if(KPPadSettingsClose)KPPadSettingsClose();return;
+    case KartPadMiiPadPreviousTab:case KartPadMiiPadNextTab:{
+        NSTabView *tabs=KPPadSettingsTabs;const NSInteger count=tabs.numberOfTabViewItems;if(count<2)return;
+        const NSInteger current=[tabs indexOfTabViewItem:tabs.selectedTabViewItem];
+        [tabs selectTabViewItemAtIndex:(current+(button==KartPadMiiPadNextTab?1:count-1))%count];
+        if(NSView *first=KPPadSettingsFirst(KPPadSettingsControls(window)))KPPadSettingsShow((NSControl*)first);
+        return;}
+    default:return;
+    }
+}
 #pragma mark Alerts, file panels and menus
 
 static NSArray<NSButton*> *KPPadDialogButtons(NSWindow *window){
@@ -369,20 +461,26 @@ void KartPadMiiPadPress(KartPadMiiPadButton button,BOOL down){
     if(NSMenu *menu=KPPadMenu){KPPadHidePointer();KPPadMenuPress(menu,button);return;}
     // The keyboard takes every press while it is up; one that has dropped behind comes back first.
     if(NSWindow *keyboard=KPPadKeyboardWindow()){KPPadHidePointer();if(keyboard.isKeyWindow)KPPadKeyboardPress(button);else [keyboard makeKeyAndOrderFront:nil];return;}
-    NSWindow *browserWindow=KPPadBrowserWindow(),*editorWindow=KPPadEditorWindow(),*key=NSApp.keyWindow;
-    if(!browserWindow&&!editorWindow)return;
+    NSWindow *browserWindow=KPPadBrowserWindow(),*editorWindow=KPPadEditorWindow(),*settingsWindow=KPPadSettingsWindow(),*key=NSApp.keyWindow;
+    if(!browserWindow&&!editorWindow&&!settingsWindow)return;
     if(key&&key==editorWindow){KPPadHidePointer();KPPadEditorPress(KPMiiActiveEditor,button);return;}
     if(key&&key==browserWindow){KPPadHidePointer();KPPadBrowserPress(KPPadBrowser(),button);return;}
-    // Sheets on either window, and the editor's questions and file panels, which run modally.
-    if(key&&((key.sheetParent&&(key.sheetParent==browserWindow||key.sheetParent==editorWindow))||key==NSApp.modalWindow)){KPPadHidePointer();KPPadDialogPress(key,button);return;}
-    // Settings and Controllers keep their own focus (Controllers listens to the pads itself).
-    if([key isKindOfClass:NSPanel.class])return;
-    // The game window is in front: bring the Mii window back, and let this press only do that.
-    NSWindow *front=editorWindow?:browserWindow;[NSApp activateIgnoringOtherApps:YES];[front makeKeyAndOrderFront:nil];KPPadHidePointer();
+    if(key&&key==settingsWindow){KPPadHidePointer();KPPadSettingsPress(settingsWindow,button);return;}
+    // Sheets on these windows, and the questions and file panels they open, which run modally.
+    if(key&&((key.sheetParent&&(key.sheetParent==browserWindow||key.sheetParent==editorWindow||key.sheetParent==settingsWindow))||key==NSApp.modalWindow)){KPPadHidePointer();KPPadDialogPress(key,button);return;}
+    // Other panels (the control reference, Wii Remote pairing) are left to the mouse, but B closes
+    // them, back to the window underneath.
+    if([key isKindOfClass:NSPanel.class]){if(button==KartPadMiiPadBack&&(key.styleMask&NSWindowStyleMaskClosable))[key performClose:nil];return;}
+    // The game window is in front: bring the window back, and let this press only do that.
+    NSWindow *front=editorWindow?:browserWindow?:settingsWindow;[NSApp activateIgnoringOtherApps:YES];[front makeKeyAndOrderFront:nil];KPPadHidePointer();
 }
 void KartPadMiiPadShowFocus(void){
     NSWindow *window=KPPadBrowserWindow();
     if(!window.isKeyWindow||[window.firstResponder isKindOfClass:KPMiiBrowserButton.class])return;
     KPPadHidePointer();KPPadBrowserPress(KPPadBrowser(),KartPadMiiPadConfirm);
+}
+void KartPadSettingsPadShowFocus(void){
+    NSWindow *window=KPPadSettingsWindow();if(!window.isKeyWindow)return;
+    if(NSControl *start=KPPadSettingsStart(KPPadSettingsControls(window))){KPPadHidePointer();KPPadSettingsShow(start);}
 }
 #endif

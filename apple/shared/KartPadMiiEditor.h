@@ -39,5 +39,11 @@ BOOL KartPadMiiWindowsVisible(void);
 void KartPadMiiPadPress(KartPadMiiPadButton button, BOOL down);
 // The Miis window has just opened from a controller: show the focus ring on the selected Mii.
 void KartPadMiiPadShowFocus(void);
+// Settings takes the same presses while it is the key window. The Mac shell gives its window and
+// tabs once, and what B and Start do (close it).
+@class NSWindow, NSTabView;
+void KartPadMiiPadSetSettings(NSWindow *window, NSTabView *tabs, void (^close)(void));
+// Settings has just opened from a controller: show the focus ring.
+void KartPadSettingsPadShowFocus(void);
 #endif
 NS_ASSUME_NONNULL_END

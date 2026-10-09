@@ -37,8 +37,16 @@ update.
 
 ## Menus and input
 
-- **Game** switches the game for the next launch and opens display and audio
-  settings.
+- **Game** switches the game and opens display and audio settings. Changes
+  that need a restart (switching games, game data, VSync, the online
+  service) offer **Restart Now**; choose **Later** and **Game → Restart
+  KartPad to Apply Changes** stays until you do.
+- **Control-Command-F** (or **Window → Enter Full Screen**, Option-Return or
+  the green window button) switches between a window and full screen.
+  KartPad remembers which for the next launch.
+- The game pauses while another app is in front, except while it loads and
+  while you're online. Turn this off in **Settings → Game & Data** to keep
+  playing with a controller behind another app.
 - **Data** changes the game data folders, manages Miis and opens the data and
   cache folders.
 - **Controls → Controller Settings…** detects and maps controllers for up to
@@ -48,6 +56,10 @@ update.
   items, arrow keys for tricks, Space to pause and Tab for select.
 - The mouse works in KartPad's menus but doesn't drive; use the keyboard or a
   controller in races.
+- On a controller, hold **View + Menu** for a second to open Settings, or
+  **View** to open Miis. The D-pad moves around Settings, left and right change
+  a choice or slider, A presses, LB and RB change tab, and B closes it. Settings
+  → Game & Data changes the buttons or turns the shortcuts off.
 
 Settings and saves are in `~/Library/Application Support/KartPad`, graphics
 caches in `~/Library/Caches/KartPad`. Replacing the app keeps both.

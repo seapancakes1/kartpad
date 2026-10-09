@@ -70,48 +70,70 @@
       self.settingValues[key].stringValue=[NSString stringWithFormat:@"%.0f%%",control.doubleValue];
     } else [(NSButton *)control setState:[value boolValue]?NSControlStateValueOn:NSControlStateValueOff];
   }
-  [self refreshMiisPad];
+  [self refreshPadShortcuts];
 }
-static NSArray<NSNumber *> *KPMiisPadHolds() { return @[@0.5,@1,@2,@3]; }
-- (void)refreshMiisPad {
-  const bool on=KPMiisPadEnabled(),capturing=KPMiisPadCapturing();
-  self.miisPadSwitch.state=on?NSControlStateValueOn:NSControlStateValueOff;
-  self.miisPadButtons.stringValue=capturing?@"Hold buttons on a controller…":[@"Buttons: " stringByAppendingString:KPMiisPadButtonNames(KPMiisPadButtons())];
-  self.miisPadButtons.textColor=on?NSColor.labelColor:NSColor.disabledControlTextColor;
-  self.miisPadChoose.title=capturing?@"Cancel":@"Choose Buttons…";
-  self.miisPadChoose.enabled=on;self.miisPadHold.enabled=on&&!capturing;
-  NSUInteger index=[KPMiisPadHolds() indexOfObject:@(KPMiisPadHold())];
-  [self.miisPadHold selectItemAtIndex:index==NSNotFound?1:index];
-}
-- (void)miisPadChanged:(id)sender {
-  NSUserDefaults *defaults=NSUserDefaults.standardUserDefaults;
-  if(sender==self.miisPadSwitch) {
-    [defaults setBool:self.miisPadSwitch.state==NSControlStateValueOn forKey:KPMiisPadEnabledKey];
-    if(!KPMiisPadEnabled())KPMiisPadCancelCapture();
-  } else if(sender==self.miisPadHold) {
-    [defaults setDouble:KPMiisPadHolds()[self.miisPadHold.indexOfSelectedItem].doubleValue forKey:KPMiisPadHoldKey];
+// VSync and full-display fullscreen as KartPad started, read when Settings is first built (only
+// Settings changes them).
+static bool KPLaunchVsync,KPLaunchNotch;
+static NSArray<NSNumber *> *KPPadShortcutHolds() { return @[@0.5,@1,@2,@3]; }
+- (void)refreshPadShortcuts {
+  const bool capturing=KPPadCapturing();
+  for(int kind=0;kind<KPPadShortcutCount;++kind) {
+    const bool on=KPPadShortcutEnabled(kind),choosing=capturing&&self.capturingShortcut==kind;
+    self.padShortcutSwitches[kind].state=on?NSControlStateValueOn:NSControlStateValueOff;
+    self.padShortcutButtons[kind].stringValue=choosing?@"Hold buttons on a controller…":[@"Buttons: " stringByAppendingString:KPPadButtonNames(KPPadShortcutButtons(kind))];
+    self.padShortcutButtons[kind].textColor=on?NSColor.labelColor:NSColor.disabledControlTextColor;
+    self.padShortcutChoose[kind].title=choosing?@"Cancel":@"Choose Buttons…";
+    self.padShortcutChoose[kind].enabled=on&&(!capturing||choosing);self.padShortcutHolds[kind].enabled=on&&!choosing;
+    NSUInteger index=[KPPadShortcutHolds() indexOfObject:@(KPPadShortcutHold(kind))];
+    [self.padShortcutHolds[kind] selectItemAtIndex:index==NSNotFound?1:index];
   }
-  self.settingsStatus.stringValue=KPMiisPadEnabled()?[NSString stringWithFormat:@"Saved. Hold %@ to open Miis.",KPMiisPadButtonNames(KPMiisPadButtons())]:@"Saved. Controllers no longer open Miis.";
-  [self refreshMiisPad];
+  self.backgroundPauseSwitch.state=KPBackgroundPauseEnabled()?NSControlStateValueOn:NSControlStateValueOff;
+  self.settingsRestart.hidden=!self.restartPending;
+}
+- (NSString *)padShortcutSaved:(int)kind {
+  return KPPadShortcutEnabled(kind)?[NSString stringWithFormat:@"Saved. Hold %@ to open %@.",KPPadButtonNames(KPPadShortcutButtons(kind)),KPPadShortcuts[kind].opens]:
+      [NSString stringWithFormat:@"Saved. Controllers no longer open %@.",KPPadShortcuts[kind].opens];
+}
+- (void)padShortcutChanged:(NSControl *)sender {
+  const int kind=(int)sender.tag;NSUserDefaults *defaults=NSUserDefaults.standardUserDefaults;
+  if([sender isKindOfClass:NSPopUpButton.class]) {
+    [defaults setDouble:KPPadShortcutHolds()[((NSPopUpButton *)sender).indexOfSelectedItem].doubleValue forKey:KPPadShortcuts[kind].holdKey];
+  } else {
+    [defaults setBool:((NSButton *)sender).state==NSControlStateValueOn forKey:KPPadShortcuts[kind].enabledKey];
+    if(!KPPadShortcutEnabled(kind)&&self.capturingShortcut==kind)KPPadCancelCapture();
+  }
+  self.settingsStatus.stringValue=[self padShortcutSaved:kind];
+  [self refreshPadShortcuts];
 }
 // The buttons are whatever is held together on a controller before everything is let go.
-- (void)chooseMiisPadButtons:(id)sender {
-  (void)sender;
-  if(KPMiisPadCapturing()) {
-    KPMiisPadCancelCapture();
-    self.settingsStatus.stringValue=@"The Miis buttons are unchanged.";
-    [self refreshMiisPad];return;
+- (void)choosePadShortcutButtons:(NSButton *)sender {
+  const int kind=(int)sender.tag;
+  if(KPPadCapturing()) {
+    KPPadCancelCapture();
+    self.settingsStatus.stringValue=[NSString stringWithFormat:@"The %@ buttons are unchanged.",KPPadShortcuts[kind].opens];
+    [self refreshPadShortcuts];return;
   }
+  self.capturingShortcut=kind;
   __weak KartPadMacShellController *weak=self;
-  KPMiisPadBeginCapture(^(uint64_t buttons) {
-    KPMiisPadSetButtons(buttons);
-    NSString *saved=[NSString stringWithFormat:@"Saved. Hold %@ to open Miis.",KPMiisPadButtonNames(buttons)];
-    NSString *warning=KPMiisPadWarning(buttons);
+  KPPadBeginCapture(^(uint64_t buttons) {
+    KPPadShortcutSetButtons(kind,buttons);
+    NSString *saved=[weak padShortcutSaved:kind],*warning=KPPadButtonsWarning(buttons);
     weak.settingsStatus.stringValue=warning?[NSString stringWithFormat:@"%@ %@",saved,warning]:saved;
-    [weak refreshMiisPad];
+    [weak refreshPadShortcuts];
   });
   self.settingsStatus.stringValue=@"Let go of everything, then hold the buttons you want together on a controller and let go.";
-  [self refreshMiisPad];
+  [self refreshPadShortcuts];
+}
+- (void)backgroundPauseChanged:(NSButton *)sender {
+  const BOOL on=sender.state==NSControlStateValueOn;
+  [NSUserDefaults.standardUserDefaults setBool:on forKey:kKartPadBackgroundPauseDefaultsKey];
+  self.settingsStatus.stringValue=on?@"Saved. The game pauses while another app is in front.":@"Saved. The game keeps running while another app is in front.";
+}
+- (void)restartFromSettings:(id)sender {
+  // Closing first saves changed controller profiles, as closing Settings always does.
+  [self.settingsPanel performClose:sender];
+  [self restartKartPad:sender];
 }
 - (void)settingChanged:(NSControl *)sender {
   NSString *key=sender.identifier;NSArray *parts=[key componentsSeparatedByString:@"."];
@@ -132,11 +154,15 @@ static NSArray<NSNumber *> *KPMiisPadHolds() { return @[@0.5,@1,@2,@3]; }
     [self refreshSettings];return;
   }
   if([key isEqual:@"video.vsync"]) {
-    self.settingsStatus.stringValue=@"Saved. Quit and reopen KartPad to apply VSync. The saved preference is shown here.";
+    const bool changed=RuntimeConfigFile::LoadConfigFile().vsync.value_or(false)!=KPLaunchVsync;
+    [self setRestartNeeded:changed for:@"vsync"];
+    self.settingsStatus.stringValue=changed?@"Saved. VSync changes when KartPad restarts.":@"Saved. VSync is back to how KartPad started.";
     [self refreshSettings];return;
   }
   if([key isEqual:@"video.fullscreen_across_notch"]) {
-    self.settingsStatus.stringValue=@"Saved. Quit and reopen KartPad to change full-display fullscreen behavior.";
+    const bool changed=KPFullscreenAcrossNotch()!=KPLaunchNotch;
+    [self setRestartNeeded:changed for:@"notch"];
+    self.settingsStatus.stringValue=changed?@"Saved. Full-display fullscreen changes when KartPad restarts.":@"Saved. Full-display fullscreen is back to how KartPad started.";
     [self refreshSettings];return;
   }
   // Preserve the renderer's existing high-frame-rate resolution restriction.
@@ -162,6 +188,7 @@ static NSArray<NSNumber *> *KPMiisPadHolds() { return @[@0.5,@1,@2,@3]; }
 - (void)showSettings:(id)sender {
   (void)sender;
   if(!self.settingsPanel) {
+    KPLaunchVsync=RuntimeConfigFile::LoadConfigFile().vsync.value_or(false);KPLaunchNotch=KPFullscreenAcrossNotch();
     CGFloat height=std::min<CGFloat>(810,NSScreen.mainScreen.visibleFrame.size.height-70);
     self.settingsPanel=[[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,820,height)
       styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable
@@ -178,10 +205,16 @@ static NSArray<NSNumber *> *KPMiisPadHolds() { return @[@0.5,@1,@2,@3]; }
     self.settingsTabs.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;
     [self.settingsPanel.contentView addSubview:self.settingsTabs];
     self.settingsStatus=[self label:@"Graphics and audio changes save automatically. Controllers has its own Save Profile button."];
-    self.settingsStatus.frame=NSMakeRect(24,10,775,24);
+    self.settingsStatus.frame=NSMakeRect(24,10,640,24);
     self.settingsStatus.autoresizingMask=NSViewWidthSizable;
     self.settingsStatus.font=[NSFont systemFontOfSize:11];
+    self.settingsStatus.lineBreakMode=NSLineBreakByTruncatingTail;
     [self.settingsPanel.contentView addSubview:self.settingsStatus];
+    // Shown while a change waits for a restart.
+    self.settingsRestart=[NSButton buttonWithTitle:@"Restart Now" target:self action:@selector(restartFromSettings:)];
+    self.settingsRestart.frame=NSMakeRect(820-24-130,5,130,32);
+    self.settingsRestart.autoresizingMask=NSViewMinXMargin;
+    [self.settingsPanel.contentView addSubview:self.settingsRestart];
 
     NSView *graphics=[self settingsPage:@"Graphics"];
     [graphics setFrameSize:NSMakeSize(780,850)];
@@ -216,27 +249,39 @@ static NSArray<NSNumber *> *KPMiisPadHolds() { return @[@0.5,@1,@2,@3]; }
     [controllers addSubview:KPControllers().content];
 
     NSView *data=[self settingsPage:@"Game & Data"];
-    [self settingsLabel:@"Game, Player & Data" page:data y:680].font=[NSFont boldSystemFontOfSize:19];
-    [self settingsButton:@"Choose Mario Kart Wii Data…" action:@selector(chooseGameData:) page:data y:615];
+    [data setFrameSize:NSMakeSize(780,900)];
+    [self settingsLabel:@"Game, Player & Data" page:data y:840].font=[NSFont boldSystemFontOfSize:19];
+    [self settingsButton:@"Choose Mario Kart Wii Data…" action:@selector(chooseGameData:) page:data y:775];
 #if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)
-    [self settingsButton:@"Choose Retro Rewind Data…" action:@selector(chooseRetroRewindData:) page:data y:570];
+    [self settingsButton:@"Choose Retro Rewind Data…" action:@selector(chooseRetroRewindData:) page:data y:730];
 #endif
-    [self settingsLabel:@"Game-data changes apply after restarting. Existing saves are preserved." page:data y:505];
-    [self settingsButton:@"Miis…" action:@selector(showMiis:) page:data y:440];
-    [self settingsLabel:@"Create, edit and import Miis, and rename, relink or delete licenses." page:data y:395];
-    self.miisPadSwitch=[NSButton checkboxWithTitle:@"Open Miis by holding buttons on a controller" target:self action:@selector(miisPadChanged:)];
-    self.miisPadSwitch.frame=NSMakeRect(24,354,715,28);[data addSubview:self.miisPadSwitch];
-    self.miisPadButtons=[self label:@""];self.miisPadButtons.frame=NSMakeRect(44,318,240,20);
-    self.miisPadButtons.lineBreakMode=NSLineBreakByTruncatingTail;[data addSubview:self.miisPadButtons];
-    self.miisPadChoose=[NSButton buttonWithTitle:@"Choose Buttons…" target:self action:@selector(chooseMiisPadButtons:)];
-    self.miisPadChoose.frame=NSMakeRect(290,310,180,32);[data addSubview:self.miisPadChoose];
-    self.miisPadHold=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(480,312,190,28) pullsDown:NO];
-    [self.miisPadHold addItemsWithTitles:@[@"Hold for ½ second",@"Hold for 1 second",@"Hold for 2 seconds",@"Hold for 3 seconds"]];
-    self.miisPadHold.target=self;self.miisPadHold.action=@selector(miisPadChanged:);self.miisPadHold.accessibilityLabel=@"How long to hold the buttons";
-    [data addSubview:self.miisPadHold];
-    [self settingsButton:@"Open Application Support" action:@selector(showApplicationSupport:) page:data y:270];
-    [self settingsButton:@"Open Cache Folder" action:@selector(showCache:) page:data y:225];
-    [self settingsButton:@"Control Reference…" action:@selector(showControls:) page:data y:155];
+    [self settingsLabel:@"Game-data changes apply after restarting. Existing saves are preserved." page:data y:665];
+    [self settingsButton:@"Miis…" action:@selector(showMiis:) page:data y:600];
+    [self settingsLabel:@"Create, edit and import Miis, and rename, relink or delete licenses." page:data y:555];
+    // One row for each controller shortcut: on or off, its buttons, and how long to hold them.
+    NSMutableArray *switches=[NSMutableArray array],*names=[NSMutableArray array],*choose=[NSMutableArray array],*holds=[NSMutableArray array];
+    for(int kind=0;kind<KPPadShortcutCount;++kind) {
+      const CGFloat y=514-kind*90;
+      NSButton *on=[NSButton checkboxWithTitle:[NSString stringWithFormat:@"Open %@ by holding buttons on a controller",KPPadShortcuts[kind].opens] target:self action:@selector(padShortcutChanged:)];
+      on.frame=NSMakeRect(24,y,715,28);on.tag=kind;[data addSubview:on];[switches addObject:on];
+      NSTextField *buttons=[self label:@""];buttons.frame=NSMakeRect(44,y-36,240,20);
+      buttons.lineBreakMode=NSLineBreakByTruncatingTail;[data addSubview:buttons];[names addObject:buttons];
+      NSButton *pick=[NSButton buttonWithTitle:@"Choose Buttons…" target:self action:@selector(choosePadShortcutButtons:)];
+      pick.frame=NSMakeRect(290,y-44,180,32);pick.tag=kind;[data addSubview:pick];[choose addObject:pick];
+      NSPopUpButton *hold=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(480,y-42,190,28) pullsDown:NO];
+      [hold addItemsWithTitles:@[@"Hold for ½ second",@"Hold for 1 second",@"Hold for 2 seconds",@"Hold for 3 seconds"]];
+      hold.target=self;hold.action=@selector(padShortcutChanged:);hold.tag=kind;
+      hold.accessibilityLabel=[NSString stringWithFormat:@"How long to hold the %@ buttons",KPPadShortcuts[kind].opens];
+      [data addSubview:hold];[holds addObject:hold];
+    }
+    self.padShortcutSwitches=switches;self.padShortcutButtons=names;self.padShortcutChoose=choose;self.padShortcutHolds=holds;
+    self.capturingShortcut=-1;
+    self.backgroundPauseSwitch=[NSButton checkboxWithTitle:@"Pause the game while another app is in front" target:self action:@selector(backgroundPauseChanged:)];
+    self.backgroundPauseSwitch.frame=NSMakeRect(24,330,715,28);[data addSubview:self.backgroundPauseSwitch];
+    [self settingsLabel:@"It keeps going while it loads and while you’re online. Turn this off to keep playing with a controller while another app is in front." page:data y:280];
+    [self settingsButton:@"Open Application Support" action:@selector(showApplicationSupport:) page:data y:215];
+    [self settingsButton:@"Open Cache Folder" action:@selector(showCache:) page:data y:170];
+    [self settingsButton:@"Control Reference…" action:@selector(showControls:) page:data y:100];
 
     NSView *advanced=[self settingsPage:@"Advanced"];
     [self settingsLabel:@"Advanced & Diagnostics" page:advanced y:680].font=[NSFont boldSystemFontOfSize:19];
@@ -248,6 +293,11 @@ static NSArray<NSNumber *> *KPMiisPadHolds() { return @[@0.5,@1,@2,@3]; }
     [self settingsButton:@"Private Wii Server…" action:@selector(showPrivateServer:) page:advanced y:275];
     [self settingsLabel:@"Private server changes apply on the next launch." page:advanced y:215];
     [self.settingsPanel center];
+    __weak KartPadMacShellController *weak=self;
+    KartPadMiiPadSetSettings(self.settingsPanel,self.settingsTabs,^{
+      [weak.settingsPanel performClose:nil];
+      [KPGameWindow() makeKeyAndOrderFront:nil];
+    });
   }
   [self refreshSettings];
   self.settingsPanel.level=KPAuxiliaryWindowLevel();
