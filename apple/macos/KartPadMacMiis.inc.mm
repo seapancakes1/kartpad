@@ -61,7 +61,7 @@ static void KPCenterOnGameScreen(NSWindow *window) {
   self.panel.initialFirstResponder = self.browser.view;
   __weak KPMiisWindow *weakSelf = self;
   self.browser.done = ^{ [weakSelf.panel performClose:nil]; };
-  self.browser.quit = ^{ [weakSelf.owner quitKartPad:nil]; };
+  self.browser.quit = ^{ [NSApp sendAction:@selector(quitKartPad:) to:weakSelf.owner from:nil]; };
 }
 
 - (void)show {
