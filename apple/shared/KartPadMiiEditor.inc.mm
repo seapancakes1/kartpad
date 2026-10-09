@@ -495,6 +495,9 @@ struct KPItem{KPAction action;CGRect rect;unsigned field=0;int value=0;NSString 
 - (void)setHovered:(BOOL)hovered;
 - (void)activate;
 @end
+#if TARGET_OS_OSX
+static NSView *KPPadNearest(NSArray<NSView*> *candidates,NSView *from,int dx,int dy);
+#endif
 @implementation KPMiiWiiButton
 #if TARGET_OS_OSX
 - (BOOL)isFlipped{return YES;}
@@ -502,7 +505,13 @@ struct KPItem{KPAction action;CGRect rect;unsigned field=0;int value=0;NSString 
 - (void)keyDown:(NSEvent*)event{
     NSString *key=event.charactersIgnoringModifiers;
     if([key isEqual:@" "]||[key isEqual:@"\r"]){self.canvas.editor->_history.Begin();[self activate];self.canvas.editor->_history.End();return;}
-    if(event.keyCode>=123&&event.keyCode<=126){const auto&here=self.canvas->_items[self.index];BOOL horizontal=event.keyCode==123||event.keyCode==124;int sign=(event.keyCode==123||event.keyCode==126)?-1:1;KPMiiWiiButton *best=nil;CGFloat score=1e9;for(KPMiiWiiButton *candidate in self.canvas.buttons){if(!candidate.enabled||candidate==self)continue;const auto&there=self.canvas->_items[candidate.index];CGFloat dx=CGRectGetMidX(there.rect)-CGRectGetMidX(here.rect),dy=CGRectGetMidY(there.rect)-CGRectGetMidY(here.rect),primary=horizontal?dx:dy,secondary=horizontal?dy:dx;if(primary*sign<=1)continue;CGFloat cost=std::abs(primary)+std::abs(secondary)*4;if(cost<score){score=cost;best=candidate;}}if(best){[self.window makeFirstResponder:best];[best scrollRectToVisible:best.bounds];}return;}
+    if(event.keyCode>=123&&event.keyCode<=126){
+        // Arrows move as the controller's D-pad does (KartPadMiiGamepad.inc.mm).
+        NSMutableArray *enabled=[NSMutableArray array];for(KPMiiWiiButton *candidate in self.canvas.buttons)if(candidate.enabled)[enabled addObject:candidate];
+        int dx=event.keyCode==123?-1:event.keyCode==124?1:0,dy=event.keyCode==126?-1:event.keyCode==125?1:0;
+        if(NSView *best=KPPadNearest(enabled,self,dx,dy)){[self.window makeFirstResponder:best];[best scrollRectToVisible:best.bounds];}
+        return;
+    }
     [self.canvas keyDown:event];
 }
 - (void)drawRect:(NSRect)rect{[self.canvas drawItem:self.index context:NSGraphicsContext.currentContext.CGContext pressed:self.highlighted];if(self.window.firstResponder==self)KPStroke(NSGraphicsContext.currentContext.CGContext,CGRectInset(self.bounds,1,1),KPP->accentBottom,2.5,std::min(CGFloat(14),self.bounds.size.height/2));}

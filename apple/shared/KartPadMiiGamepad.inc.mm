@@ -5,7 +5,8 @@
 // presses it (held adjustments repeat, as with the mouse). B goes back: Done on the Miis screen,
 // close in the editor. In the editor LB and RB change category, X and Y undo and redo, and Start
 // saves; on the Miis screen Start is Done. Alerts move their default button and press it with A,
-// and B picks Cancel. Pop-up menus take arrows and Return, and B closes them.
+// and B picks Cancel. Pop-up menus take arrows and Return, and B closes them. A press hides the
+// mouse pointer until the mouse moves.
 #if TARGET_OS_OSX
 #import <objc/runtime.h>
 
@@ -47,14 +48,36 @@ static void KPPadCollect(NSView *view,BOOL(^keep)(NSView*),NSMutableArray<NSView
     for(NSView *child in view.subviews){if(child.hidden)continue;if(keep(child))[into addObject:child];KPPadCollect(child,keep,into);}
 }
 static NSRect KPPadFrame(NSView *view){return [view convertRect:view.bounds toView:nil];}
-// The nearest candidate in the pressed direction, with sideways distance weighed as the editor's
-// arrow keys weigh it. Window coordinates run upwards, so dy is flipped to make down positive.
-static NSView *KPPadNearest(NSArray<NSView*> *candidates,NSRect here,int dx,int dy){
-    NSView *best=nil;CGFloat score=CGFLOAT_MAX;
+// The control the pressed direction leads to (dy is positive downwards; window coordinates run
+// upwards). In order of preference:
+// 1. Controls in the same list as the focus (its scroll view), so a grid row leads to the row
+//    below it even when that row is scrolled out of sight;
+// 2. then controls elsewhere that are on screen (the part showing counts);
+// and within each, a control straight ahead (overlapping the focus sideways), then one more ahead
+// than to the side, then anything wholly further that way. Among those the nearest wins, with distance
+// ahead weighing more than sideways offset; on a tie, the earlier control.
+static NSView *KPPadNearest(NSArray<NSView*> *candidates,NSView *from,int dx,int dy){
+    struct Span{CGFloat lo,hi;};
+    // Along runs in the pressed direction; across is the other axis.
+    auto along=[&](NSRect r)->Span{return dx>0?Span{NSMinX(r),NSMaxX(r)}:dx<0?Span{-NSMaxX(r),-NSMinX(r)}:dy>0?Span{-NSMaxY(r),-NSMinY(r)}:Span{NSMinY(r),NSMaxY(r)};};
+    auto across=[&](NSRect r)->Span{return dx?Span{NSMinY(r),NSMaxY(r)}:Span{NSMinX(r),NSMaxX(r)};};
+    NSRect here=KPPadFrame(from);Span a=along(here),p=across(here);NSScrollView *list=from.enclosingScrollView;
+    NSView *best=nil;int bestRank=INT_MAX;CGFloat bestScore=CGFLOAT_MAX;
     for(NSView *view in candidates){
-        NSRect there=KPPadFrame(view);CGFloat x=NSMidX(there)-NSMidX(here),y=NSMidY(here)-NSMidY(there);
-        CGFloat primary=dx?x*dx:y*dy,secondary=dx?y:x;if(primary<=1)continue;
-        CGFloat cost=primary+std::abs(secondary)*4;if(cost<score){score=cost;best=view;}
+        if(view==from)continue;
+        BOOL inList=list&&view.enclosingScrollView==list;NSRect there=KPPadFrame(view);
+        // Clipped to the part its lists show.
+        if(!inList)for(NSScrollView *scroll=view.enclosingScrollView;scroll;scroll=scroll.enclosingScrollView)there=NSIntersectionRect(there,KPPadFrame(scroll.contentView));
+        if(NSIsEmptyRect(there))continue;
+        Span b=along(there),q=across(there);
+        // Further that way: it starts beyond the focus's start (or its end) and ends beyond its end.
+        if(!((a.lo<b.lo||a.hi<=b.lo)&&a.hi<b.hi))continue;
+        CGFloat gap=std::max(CGFloat(0),b.lo-a.hi),overlap=std::min(p.hi,q.hi)-std::max(p.lo,q.lo),side=std::max(CGFloat(0),-overlap);
+        int tier=overlap>0?0:gap>=side?1:2,rank=inList?(tier<2?tier:4):(tier<2?2+tier:5);
+        // Off to the side, it has to lie wholly past the focus, not just reach beyond it.
+        if(tier==2&&b.lo<a.hi)continue;
+        CGFloat offset=(q.lo+q.hi-p.lo-p.hi)/2,score=13*gap*gap+offset*offset;
+        if(rank<bestRank||(rank==bestRank&&score<bestScore)){bestRank=rank;bestScore=score;best=view;}
     }
     return best;
 }
@@ -97,7 +120,7 @@ static void KPPadBrowserPress(KPMiiBrowser *browser,KartPadMiiPadButton button){
     int dx,dy;
     if(KPPadDirection(button,&dx,&dy)||(button==KartPadMiiPadConfirm&&!focus)){
         NSArray *controls=KPPadBrowserControls(browser);NSView *next=nil;
-        if(focus)next=KPPadNearest(controls,KPPadFrame(focus),dx,dy);
+        if(focus)next=KPPadNearest(controls,focus,dx,dy);
         // The first press shows the ring on the selected Mii.
         else{for(KPMiiBrowserButton *tile in browser.tiles)if(tile.slot==browser.selectedSlot&&[controls containsObject:tile])next=tile;next=next?:controls.firstObject;}
         if(next)KPPadBrowserFocus(browser,next);
@@ -121,7 +144,9 @@ static const KPItem *KPPadItem(NSView *view){
     return canvas&&button.index<canvas->_items.size()?&canvas->_items[button.index]:nullptr;
 }
 // The current choice (a feature, the gender), else the open category, else the first control.
-static NSView *KPPadEditorDefault(KPMiiEditor *editor,NSArray<NSView*> *controls){
+// For the page alone (the panel beside the preview): its choice, else its open part, else its first control.
+static NSView *KPPadEditorDefault(KPMiiEditor *editor,NSArray<NSView*> *controls,BOOL page=NO){
+    if(page)controls=[controls filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSView *view,NSDictionary *b){return view.superview!=editor.canvas;}]];
     auto a=kartpad::mii::Appearance::Decode(Bytes(editor.draft));NSView *tab=nil;
     for(NSView *view in controls){
         const KPItem *item=KPPadItem(view);if(!item)continue;
@@ -153,7 +178,10 @@ static void KPPadEditorPress(KPMiiEditor *editor,KartPadMiiPadButton button){
         // Height and weight move with left and right; up and down leave the gauge.
         if([focus isKindOfClass:KPMiiBodySlider.class]&&dx){[(KPMiiBodySlider*)focus step:dx*4];return;}
         NSArray *controls=KPPadEditorControls(editor);
-        NSView *next=focus?KPPadNearest(controls,KPPadFrame(focus),dx,dy):KPPadEditorDefault(editor,controls);
+        NSView *next=focus?KPPadNearest(controls,focus,dx,dy):KPPadEditorDefault(editor,controls);
+        // Down from a category tab opens onto its page rather than whatever sits below the tab.
+        const KPItem *from=KPPadItem(focus),*to=KPPadItem(next);
+        if(dy>0&&from&&from->action==KPAction::Category&&!(to&&to->action==KPAction::Category))next=KPPadEditorDefault(editor,controls,YES)?:next;
         if(next){KPPadFocus(next);KPPlay(KPSound::Hover);}
         return;
     }
@@ -216,7 +244,7 @@ static void KPPadDialogPress(NSWindow *window,KartPadMiiPadButton button){
     for(NSButton *candidate in buttons)if([candidate.keyEquivalent isEqual:@"\r"])current=candidate;
     if(direction){
         NSMutableArray *enabled=[NSMutableArray array];for(NSButton *candidate in buttons)if(candidate.enabled)[enabled addObject:candidate];
-        NSButton *next=current?(NSButton*)KPPadNearest(enabled,KPPadFrame(current),dx,dy):enabled.firstObject;if(!next||next==current)return;
+        NSButton *next=current?(NSButton*)KPPadNearest(enabled,current,dx,dy):enabled.firstObject;if(!next||next==current)return;
         NSButton *cancel=KPPadCancelButton(window,buttons);if(cancel)objc_setAssociatedObject(window,KPPadCancelKey,cancel,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         for(NSButton *candidate in buttons)candidate.keyEquivalent=candidate==next?@"\r":candidate==cancel?@"\033":@"";
         KPPlay(KPSound::Hover);return;
@@ -234,6 +262,10 @@ static void KPPadMenuPress(NSMenu *menu,KartPadMiiPadButton button){
     else if(button==KartPadMiiPadBack)[menu cancelTracking];
 }
 
+// The controller is in use, so the pointer gets out of the way; moving the mouse brings it back.
+// (The runtime's show-cursor calls only reset cursor rects, which leave it hidden.)
+static void KPPadHidePointer(){[NSCursor setHiddenUntilMouseMoves:YES];}
+
 void KartPadMiiPadPress(KartPadMiiPadButton button,BOOL down){
     KPPadWatchMenus();
     if(!down){
@@ -245,16 +277,16 @@ void KartPadMiiPadPress(KartPadMiiPadButton button,BOOL down){
         return;
     }
     if(!NSApp.active)return;
-    if(NSMenu *menu=KPPadMenu){KPPadMenuPress(menu,button);return;}
+    if(NSMenu *menu=KPPadMenu){KPPadHidePointer();KPPadMenuPress(menu,button);return;}
     NSWindow *browserWindow=KPPadBrowserWindow(),*editorWindow=KPPadEditorWindow(),*key=NSApp.keyWindow;
     if(!browserWindow&&!editorWindow)return;
-    if(key&&key==editorWindow){KPPadEditorPress(KPMiiActiveEditor,button);return;}
-    if(key&&key==browserWindow){KPPadBrowserPress(KPPadBrowser(),button);return;}
+    if(key&&key==editorWindow){KPPadHidePointer();KPPadEditorPress(KPMiiActiveEditor,button);return;}
+    if(key&&key==browserWindow){KPPadHidePointer();KPPadBrowserPress(KPPadBrowser(),button);return;}
     // Sheets on either window, and the editor's questions and file panels, which run modally.
-    if(key&&((key.sheetParent&&(key.sheetParent==browserWindow||key.sheetParent==editorWindow))||key==NSApp.modalWindow)){KPPadDialogPress(key,button);return;}
+    if(key&&((key.sheetParent&&(key.sheetParent==browserWindow||key.sheetParent==editorWindow))||key==NSApp.modalWindow)){KPPadHidePointer();KPPadDialogPress(key,button);return;}
     // Settings and Controllers keep their own focus (Controllers listens to the pads itself).
     if([key isKindOfClass:NSPanel.class])return;
     // The game window is in front: bring the Mii window back, and let this press only do that.
-    NSWindow *front=editorWindow?:browserWindow;[NSApp activateIgnoringOtherApps:YES];[front makeKeyAndOrderFront:nil];
+    NSWindow *front=editorWindow?:browserWindow;[NSApp activateIgnoringOtherApps:YES];[front makeKeyAndOrderFront:nil];KPPadHidePointer();
 }
 #endif
