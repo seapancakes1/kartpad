@@ -10,6 +10,10 @@ NSArray<NSDictionary<NSString *, id> *> *KartPadMiiRecords(NSError **error);
 NSArray<NSDictionary<NSString *, id> *> *KartPadLicenseRecords(NSError **error);
 BOOL KartPadStageMiiImport(NSData *miiData, NSString *_Nullable *_Nullable name,
                           NSError **error);
+NSData *_Nullable KartPadReadMii(NSUInteger slot, NSError **error);
+NSData *_Nullable KartPadNewMii(NSError **error);
+NSData *_Nullable KartPadExportMii(NSData *edited, NSError **error);
+BOOL KartPadStageMiiEditor(NSUInteger slot, NSData *_Nullable expected, NSData *edited, NSError **error);
 BOOL KartPadStageMiiRemoval(NSUInteger slot, NSError **error);
 BOOL KartPadStagePlayerName(NSUInteger slot, NSString *name,
                            NSUInteger *_Nullable updatedLicenses,

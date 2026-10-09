@@ -1,6 +1,7 @@
 #import "../mobile/KartPadPrivateServerSettings.h"
 #import "KartPadMacShell.h"
 #import "KartPadMiiManager.h"
+#import "KartPadMiiEditor.h"
 #import "KartPadGameFiles.h"
 #import "KartPadWiimotePairing.h"
 
@@ -766,7 +767,8 @@ static bool KPFullscreenAcrossNotch() {
         summary, pending];
     [manager addButtonWithTitle:@"Import Mii…"];
     [manager addButtonWithTitle:@"Remove a Mii…"];
-    [manager addButtonWithTitle:@"Create a Mii…"];
+    [manager addButtonWithTitle:@"Create Mii…"];
+    [manager addButtonWithTitle:@"Edit Mii…"];
     [manager addButtonWithTitle:@"Done"];
     NSModalResponse response = [manager runModal];
     if (response == NSAlertFirstButtonReturn) {
@@ -821,9 +823,21 @@ static bool KPFullscreenAcrossNotch() {
       continue;
     }
     if (response == NSAlertThirdButtonReturn) {
-      [self showSimpleAlert:@"Create a Mii"
-                    message:@"KartPad does not include the Wii Menu or Mii Channel, so it cannot create a new Mii yet. Create or export a standard 74-byte .mii file with a compatible tool, then import it here. After restarting, choose it from Mario Kart Wii's License Settings → Change Mii screen."];
-      continue;
+      KartPadPresentMiiEditor(NSApp.mainWindow, NSNotFound);
+      return;
+    }
+    if (response == NSAlertFirstButtonReturn + 3) {
+      if (records.count == 0) continue;
+      NSPopUpButton *choices = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0, 0, 300, 26) pullsDown:NO];
+      for (NSDictionary *record in records) [choices addItemWithTitle:record[@"name"]];
+      NSAlert *select = [NSAlert new];
+      select.messageText = @"Edit Mii";
+      select.accessoryView = choices;
+      [select addButtonWithTitle:@"Edit"];
+      [select addButtonWithTitle:@"Cancel"];
+      if ([select runModal] != NSAlertFirstButtonReturn) continue;
+      KartPadPresentMiiEditor(NSApp.mainWindow, [records[choices.indexOfSelectedItem][@"slot"] unsignedIntegerValue]);
+      return;
     }
     return;
   }
@@ -1377,6 +1391,11 @@ bool KartPadMacShellPrepareGameData(void) {
     if (!KartPadApplyPendingMiiDatabase(&miiError)) {
       NSLog(@"[KartPad] pending Mii changes were not applied: %@",
             miiError.localizedDescription);
+      NSAlert *failure = [NSAlert new];
+      failure.messageText = @"Pending Mii changes could not be applied";
+      failure.informativeText = miiError.localizedDescription ?: @"Restart KartPad to retry. Backups and pending changes have been retained.";
+      [failure runModal];
+      return false;
     }
     KartPadApplyExperimentalWiimotePreference();
     RuntimeConfigFile::EnsureConfigFile();

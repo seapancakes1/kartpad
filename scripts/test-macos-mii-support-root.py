@@ -16,7 +16,7 @@ with tempfile.TemporaryDirectory(prefix='kartpad-mii-path-') as directory:
     binary = temporary / 'fixture'
     subprocess.run([
         'clang++', '-std=c++20', '-fobjc-arc', '-UNDEBUG',
-        '-DNSHomeDirectory=KartPadTestHomeDirectory',
+        '-DNSHomeDirectory=KartPadTestHomeDirectory', '-DKARTPAD_MII_EDITOR_DISABLED',
         '-I' + str(repo / 'apple/shared'), '-I' + str(repo / 'runtime/include'),
         '-I' + str(runtime / 'include'), '-isystem', str(runtime / 'third_party/toml11'),
         str(repo / 'runtime/tests/apple_mii_support_root_tests.mm'), str(manager),
