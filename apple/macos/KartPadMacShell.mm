@@ -527,7 +527,6 @@ static bool KPFullscreenAcrossNotch() {
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSArray *> *settingChoices;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSTextField *> *settingValues;
 @property(nonatomic, strong) NSTextField *settingsStatus;
-@property(nonatomic, weak) NSTextField *playerNameField;
 @property(nonatomic, strong) KPMiisWindow *miisWindow;
 @end
 
@@ -689,112 +688,6 @@ static bool KPFullscreenAcrossNotch() {
   }
   [menu addItem:edit];
   [menu addItem:[self playerMenuItem:@"Import Mii…" action:@selector(importMii:) enabled:editable]];
-  [menu addItem:NSMenuItem.separatorItem];
-  [menu addItem:[self playerMenuItem:@"Player Name…" action:@selector(showPlayerNameEditor) enabled:YES]];
-  [menu addItem:[self playerMenuItem:@"Licenses…" action:@selector(showLicenseManager) enabled:YES]];
-}
-
-- (void)playerMiiSelectionChanged:(NSPopUpButton *)sender {
-  self.playerNameField.stringValue = sender.selectedItem.representedObject[@"name"];
-  [self.playerNameField selectText:nil];
-}
-
-- (void)showPlayerNameEditor {
-  NSError *error = nil;
-  NSArray<NSDictionary<NSString *, id> *> *records = KartPadMiiRecords(&error);
-  if (error != nil || records.count == 0) {
-    [self showSimpleAlert:@"Player Identity Unavailable"
-                  message:error.localizedDescription ?: @"Start the game once to create its Mii database."];
-    return;
-  }
-  NSPopUpButton *choices = [[NSPopUpButton alloc]
-      initWithFrame:NSMakeRect(0, 38, 320, 26) pullsDown:NO];
-  for (NSDictionary *record in records) {
-    [choices addItemWithTitle:[NSString stringWithFormat:@"Mii %lu · %@",
-        (unsigned long)([record[@"slot"] unsignedIntegerValue] + 1), record[@"name"]]];
-    choices.lastItem.representedObject = record;
-  }
-  NSTextField *name = [NSTextField textFieldWithString:records.firstObject[@"name"]];
-  self.playerNameField = name;
-  choices.target = self;
-  choices.action = @selector(playerMiiSelectionChanged:);
-  name.placeholderString = @"Player name";
-  name.frame = NSMakeRect(0, 0, 320, 26);
-  NSView *fields = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 320, 64)];
-  [fields addSubview:choices];
-  [fields addSubview:name];
-  NSAlert *editor = [NSAlert new];
-  editor.messageText = @"Set Player Name";
-  editor.informativeText = @"Choose the Mii and enter 1–10 characters. On the next launch, its linked licenses will use this name without changing friend codes or progress.";
-  editor.accessoryView = fields;
-  [editor addButtonWithTitle:@"Save for Next Launch"];
-  [editor addButtonWithTitle:@"Cancel"];
-  editor.window.initialFirstResponder = name;
-  if ([editor runModal] != NSAlertFirstButtonReturn) return;
-  NSUInteger index = choices.indexOfSelectedItem;
-  if (index >= records.count) return;
-  NSUInteger count = 0;
-  if (!KartPadStagePlayerName([records[index][@"slot"] unsignedIntegerValue],
-                              name.stringValue, &count, &error)) {
-    [self showSimpleAlert:@"Player Name Could Not Be Changed" message:error.localizedDescription];
-    return;
-  }
-  [self showSimpleAlert:@"Player Name Scheduled"
-                message:@"Quit and reopen KartPad to apply the new name. KartPad backs up the current Mii database and affected saves first."];
-}
-
-- (void)showLicenseManager {
-  NSError *error = nil;
-  NSArray<NSDictionary<NSString *, id> *> *records = KartPadLicenseRecords(&error);
-  if (error != nil || records.count == 0) {
-    [self showSimpleAlert:@"Existing Licenses"
-                  message:error.localizedDescription ?: @"Create a license in the game first, then return here to rename or delete it."];
-    return;
-  }
-  NSPopUpButton *choices = [[NSPopUpButton alloc]
-      initWithFrame:NSMakeRect(0, 0, 430, 26) pullsDown:NO];
-  for (NSDictionary *record in records) {
-    NSString *pending = [record[@"pendingOperation"] length] > 0 ? @" · pending restart" : @"";
-    [choices addItemWithTitle:[NSString stringWithFormat:@"%@ · Slot %lu · %@%@",
-        record[@"profileTitle"], (unsigned long)([record[@"slot"] unsignedIntegerValue] + 1),
-        record[@"name"], pending]];
-  }
-  NSAlert *actions = [NSAlert new];
-  actions.messageText = @"Manage Existing Licenses";
-  actions.informativeText = @"Choose the exact game profile and slot. Changes apply after quitting and reopening KartPad. Rename keeps its account and progress; deletion requires another confirmation.";
-  actions.accessoryView = choices;
-  [actions addButtonWithTitle:@"Rename…"];
-  [actions addButtonWithTitle:@"Delete…"];
-  [actions addButtonWithTitle:@"Cancel"];
-  NSModalResponse response = [actions runModal];
-  if (response != NSAlertFirstButtonReturn && response != NSAlertSecondButtonReturn) return;
-  NSUInteger index = choices.indexOfSelectedItem;
-  if (index >= records.count) return;
-  NSDictionary *record = records[index];
-  NSAlert *confirm = [NSAlert new];
-  confirm.messageText = choices.titleOfSelectedItem;
-  BOOL renamed = response == NSAlertFirstButtonReturn;
-  NSTextField *name = [NSTextField textFieldWithString:record[@"name"]];
-  if (renamed) {
-    confirm.informativeText = @"Enter 1–10 characters. Friend code, online account, records and progress are preserved.";
-    name.frame = NSMakeRect(0, 0, 320, 26);
-    confirm.accessoryView = name;
-    [confirm addButtonWithTitle:@"Save for Next Launch"];
-    confirm.window.initialFirstResponder = name;
-  } else {
-    confirm.informativeText = @"Delete only this license? Its friend code, account, records and progress will be removed. The Mii appearance remains. A backup is created before applying the deletion on the next launch.";
-    [confirm addButtonWithTitle:@"Delete License"];
-  }
-  [confirm addButtonWithTitle:@"Cancel"];
-  if ([confirm runModal] != NSAlertFirstButtonReturn) return;
-  BOOL succeeded = renamed
-      ? KartPadStageLicenseRename(record[@"profileIdentifier"], [record[@"slot"] unsignedIntegerValue],
-                                  record[@"createId"], name.stringValue, &error)
-      : KartPadStageLicenseDeletion(record[@"profileIdentifier"], [record[@"slot"] unsignedIntegerValue],
-                                    record[@"createId"], &error);
-  [self showSimpleAlert:succeeded ? @"License Change Scheduled" : @"License Could Not Be Changed"
-                message:succeeded ? @"Quit and reopen KartPad to apply the change. Your live save is backed up first."
-                                  : error.localizedDescription];
 }
 
 - (void)toggleExperimentalWiimote:(NSMenuItem *)sender {

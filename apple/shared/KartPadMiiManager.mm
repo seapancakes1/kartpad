@@ -246,6 +246,17 @@ NSData *KartPadNewMii(NSError **error) {
     return nil;
   }
 }
+NSData *KartPadDuplicateMii(NSUInteger slot, NSError **error) {
+  NSData *source = KartPadReadMii(slot, error);
+  NSData *identity = source ? KartPadNewMii(error) : nil;
+  if (!identity)
+    return nil;
+  // The copy keeps every appearance and profile byte but takes a fresh Mii ID and this
+  // console's ID (0x18-0x1F), so the database accepts it as a separate Mii.
+  NSMutableData *copy = source.mutableCopy;
+  [copy replaceBytesInRange:NSMakeRange(0x18, 8) withBytes:(const uint8_t *)identity.bytes + 0x18];
+  return copy;
+}
 NSData *KartPadExportMii(NSData *edited, NSError **error) {
   try {
     auto validation = kartpad::mii::Appearance::Decode(Bytes(edited)).Validate();
@@ -466,6 +477,9 @@ NSArray<NSDictionary<NSString *, id> *> *KartPadMiiRecords(NSError **error) {
     const auto createIdBytes = kartpad::mii::MiiCreateId(Bytes(data), record.slot);
     NSData *createIdData = [NSData dataWithBytes:createIdBytes.data()
                                           length:createIdBytes.size()];
+    const auto block = Bytes(data).subspan(
+        kartpad::mii::kMiiBlockOffset + record.slot * kartpad::mii::kMiiBlockSize,
+        kartpad::mii::kMiiBlockSize);
     [result addObject:@{
       @"slot": @(record.slot),
       @"name": name.length > 0 ? name : @"Unnamed Mii",
@@ -473,6 +487,7 @@ NSArray<NSDictionary<NSString *, id> *> *KartPadMiiRecords(NSError **error) {
       @"favoriteColor": @(record.favoriteColor),
       @"createId": @(record.createId),
       @"createIdBytes": createIdData,
+      @"mii": [NSData dataWithBytes:block.data() length:block.size()],
     }];
   }
   return result;
@@ -1129,4 +1144,5 @@ static BOOL KartPadApplyPendingSaveRestore(NSError **error){
 #if !defined(KARTPAD_MII_MANAGER_TESTING) && !defined(KARTPAD_MII_EDITOR_DISABLED) && \
     (TARGET_OS_OSX || (TARGET_OS_IOS && !TARGET_OS_TV))
 #include "KartPadMiiEditor.inc.mm"
+#include "KartPadMiiBrowser.inc.mm"
 #endif

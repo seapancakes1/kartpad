@@ -1050,9 +1050,10 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
 }
 - (void)windowWillClose:(NSNotification*)note{[[KPMiiSounds shared] suspendSoon];}
 - (void)quit{[self.window performClose:nil];}
-- (instancetype)initWithData:(NSData*)data slot:(NSUInteger)slot{
+// A duplicate is a new Mii that skips the Male/Female screen and opens on Profile for renaming.
+- (instancetype)initWithData:(NSData*)data slot:(NSUInteger)slot duplicate:(BOOL)duplicate{
     NSWindow *window=[[NSWindow alloc]initWithContentRect:NSMakeRect(0,0,960,720) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
-    if((self=[super initWithWindow:window])){self.original=data;self.draft=data.mutableCopy;self.slot=slot;self.choosingGender=slot==NSNotFound;self.category=2;self.feature=7;window.title=slot==NSNotFound?@"Create Mii":@"Edit Mii";window.contentMinSize=NSMakeSize(800,600);window.delegate=self;self.canvas=[[KPMiiCanvas alloc]initWithFrame:NSMakeRect(0,0,960,720)];self.canvas.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;window.contentView=self.canvas;[self setup];[window center];}return self;
+    if((self=[super initWithWindow:window])){self.original=data;self.draft=data.mutableCopy;self.slot=slot;self.choosingGender=slot==NSNotFound&&!duplicate;self.category=duplicate?0:2;self.feature=7;window.title=duplicate?@"Duplicate Mii":slot==NSNotFound?@"Create Mii":@"Edit Mii";window.contentMinSize=NSMakeSize(800,600);window.delegate=self;self.canvas=[[KPMiiCanvas alloc]initWithFrame:NSMakeRect(0,0,960,720)];self.canvas.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;window.contentView=self.canvas;[self setup];[window center];}return self;
 }
 #else
 - (void)quit{
@@ -1077,7 +1078,8 @@ static void KPMiiShowEditor(id parent){
     [NSApp activateIgnoringOtherApps:YES];[KPMiiActiveEditor showWindow:nil];
 }
 #endif
-void KartPadPresentMiiEditor(id parent,NSUInteger slot){
+// data is the draft to open: nil reads the slot (or starts a new Mii); a duplicate passes its copy.
+static void KPMiiPresentEditor(id parent,NSUInteger slot,NSData *data,BOOL duplicate){
     [[KPMiiSounds shared] prepare:KPMiiSoundArchivePath()];
     NSError *error=nil;if(KartPadHasPendingMiiChanges()){KPPlay(KPSound::Reject);
 #if TARGET_OS_OSX
@@ -1090,7 +1092,7 @@ void KartPadPresentMiiEditor(id parent,NSUInteger slot){
 #if TARGET_OS_OSX
     if(KPMiiActiveEditor.window.visible){KPMiiShowEditor(parent);return;}
 #endif
-    NSData *data=slot==NSNotFound?KartPadNewMii(&error):KartPadReadMii(slot,&error);
+    if(!data)data=slot==NSNotFound?KartPadNewMii(&error):KartPadReadMii(slot,&error);
     if(!data){KPPlay(KPSound::Reject);
 #if TARGET_OS_OSX
         NSAlert *alert=[NSAlert new];alert.messageText=error.localizedDescription?:@"Could not read this Mii.";[alert runModal];
@@ -1100,10 +1102,11 @@ void KartPadPresentMiiEditor(id parent,NSUInteger slot){
         return;
     }
 #if TARGET_OS_OSX
-    KPMiiActiveEditor=[[KPMiiEditor alloc]initWithData:data slot:slot];KPMiiShowEditor(parent);
+    KPMiiActiveEditor=[[KPMiiEditor alloc]initWithData:data slot:slot duplicate:duplicate];KPMiiShowEditor(parent);
 #else
-    KPMiiEditor *editor=[KPMiiEditor new];editor.original=data;editor.draft=data.mutableCopy;editor.slot=slot;editor.category=2;editor.feature=7;editor.choosingGender=slot==NSNotFound;editor.modalPresentationStyle=UIModalPresentationFullScreen;
+    KPMiiEditor *editor=[KPMiiEditor new];editor.original=data;editor.draft=data.mutableCopy;editor.slot=slot;editor.category=duplicate?0:2;editor.feature=7;editor.choosingGender=slot==NSNotFound&&!duplicate;editor.modalPresentationStyle=UIModalPresentationFullScreen;
     // Follow the launcher's light/dark choice, which it sets as an override on its own controller.
     editor.overrideUserInterfaceStyle=[(UIViewController*)parent traitCollection].userInterfaceStyle;[(UIViewController*)parent presentViewController:editor animated:YES completion:nil];
 #endif
 }
+void KartPadPresentMiiEditor(id parent,NSUInteger slot){KPMiiPresentEditor(parent,slot,nil,NO);}

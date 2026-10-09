@@ -179,8 +179,7 @@
 #endif
     [self settingsLabel:@"Game-data changes apply after restarting. Existing saves are preserved." page:data y:505];
     [self settingsButton:@"Miis…" action:@selector(showMiis:) page:data y:440];
-    [self settingsButton:@"Player Name…" action:@selector(showPlayerNameEditor) page:data y:395];
-    [self settingsButton:@"Licenses…" action:@selector(showLicenseManager) page:data y:350];
+    [self settingsLabel:@"Create, edit and import Miis, and rename, relink or delete licenses." page:data y:395];
     [self settingsButton:@"Open Application Support" action:@selector(showApplicationSupport:) page:data y:270];
     [self settingsButton:@"Open Cache Folder" action:@selector(showCache:) page:data y:225];
     [self settingsButton:@"Control Reference…" action:@selector(showControls:) page:data y:155];
