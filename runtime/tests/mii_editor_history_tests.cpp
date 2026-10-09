@@ -4,6 +4,9 @@
 #include <iostream>
 int main(){using namespace kartpad::mii;
     for(unsigned field:{7,9,11,14,20,26,29,33,37,38}){auto ids=FeatureIds(field);assert(ids.size()==AppearanceFields[field].maximum+1);std::set<unsigned> unique(ids.begin(),ids.end());assert(unique.size()==ids.size());for(size_t i=0;i<ids.size();i++){auto a=Appearance::Decode(CreateDefaultMii({2,1,2,3,4,5}));a.Set(field,ids[i]);assert(Appearance::Decode(a.bytes).Get(field)==ids[i]);assert(FeaturePage(field,ids[i])==i/12);}}
+    // Mii Channel order spot checks: first tile of each page, and the last hair tile.
+    assert(FeatureIds(11)[0]==33&&FeatureIds(11)[12]==32&&FeatureIds(11)[71]==29&&FeaturePage(11,0)==4);
+    assert(FeatureIds(14)[0]==2&&FeatureIds(14)[47]==47&&FeatureIds(20)[0]==6&&FeatureIds(26)[0]==1&&FeatureIds(29)[0]==23);
     assert(BirthdayDays(0)==0&&BirthdayDays(13)==0&&BirthdayDays(2)==29);
     for(unsigned month:{4,6,9,11})assert(BirthdayDays(month)==30);
     for(unsigned month:{1,3,5,7,8,10,12})assert(BirthdayDays(month)==31);

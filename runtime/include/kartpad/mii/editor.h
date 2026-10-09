@@ -12,14 +12,22 @@ inline constexpr std::array<const char *, 10> EditorCategories = {
 inline constexpr std::array<unsigned, 46> EditorFieldCategories = {
     0,0,0,0,0,1,1,2,2,2,0,3,3,3,5,5,5,5,5,5,4,4,4,4,4,4,6,6,6,7,7,7,7,9,9,9,9,8,8,8,8,8,8,8,8,8};
 // Tile IDs are explicit. Presentation and persistence never share an implicit index.
+// Lists run in Mii Channel order: page by page, rows left to right, 12 tiles per page.
+// Hair, eyebrows, eyes, nose and mouth IDs are not sequential on the Wii; face shape, face
+// details, glasses and facial hair are. Orders as documented by MiiJS's Mii Channel page tables
+// (https://github.com/Stewared/MiiJS, data.js lookupTables.pages).
 inline std::vector<unsigned> FeatureIds(unsigned field) {
     switch (field) {
     case 7: return {0,1,2,3,4,5,6,7};
     case 9: return {0,1,2,3,4,5,6,7,8,9,10,11};
-    case 11: return {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71};
-    case 14: return {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47};
-    case 20: case 29: return {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23};
-    case 26: return {0,1,2,3,4,5,6,7,8,9,10,11};
+    case 11: return {33,40,51,44,39,70,45,49,59,56,68,31, 32,47,37,48,66,52,58,50,55,64,60,62,
+                     43,38,42,23,67,54,36,41,65,30,57,34, 12,13,69,26,4,25,1,19,5,8,27,7,
+                     14,3,22,10,6,20,11,63,17,35,21,0, 61,16,46,9,18,2,28,53,71,24,15,29};
+    case 14: return {2,4,0,8,39,17,1,26,16,15,27,20, 33,11,19,32,9,12,23,34,21,25,40,35,
+                     5,41,13,36,37,6,24,30,31,18,28,46, 7,44,38,42,45,29,3,43,22,10,14,47};
+    case 20: return {6,0,12,1,9,19,7,21,8,17,5,4, 11,10,2,3,14,20,15,13,22,18,16,23};
+    case 26: return {1,10,2,3,6,0,5,4,8,9,7,11};
+    case 29: return {23,1,18,21,22,5,0,8,10,16,6,13, 7,9,2,11,3,4,15,17,20,19,14,12};
     case 33: return {0,1,2,3,4,5,6,7,8};
     case 37: case 38: return {0,1,2,3};
     default: return {};

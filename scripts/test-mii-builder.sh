@@ -7,6 +7,10 @@ clang++ -O2 -std=c++20 -UNDEBUG -I "$repo/runtime/include" "$repo/runtime/tests/
 "$work/appearance"
 clang++ -O2 -std=c++20 -UNDEBUG -I "$repo/runtime/include" "$repo/runtime/tests/mii_editor_history_tests.cpp" -o "$work/history"
 "$work/history"
+# Sound archive reader: synthetic archives always; every editor sound from a real
+# files/sound/revo_kart.brsar when given as the third argument.
+clang++ -O2 -std=c++20 -UNDEBUG -I "$repo/runtime/include" "$repo/runtime/tests/audio_sound_archive_tests.cpp" -o "$work/sounds"
+"$work/sounds" ${3:+"$3"}
 if [[ $# -ge 1 ]]; then
  clang++ -O2 -std=c++20 -UNDEBUG -I "$repo/runtime/include" "$repo/runtime/tests/mii_resource_tests.cpp" -o "$work/resources"
  "$work/resources" "$1"

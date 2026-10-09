@@ -516,8 +516,9 @@ static bool KPFullscreenAcrossNotch() {
 }
 
 #include "KartPadControllers.inc.mm"
+#include "KartPadMacMiis.inc.mm"
 
-@interface KartPadMacShellController : NSObject <NSTabViewDelegate>
+@interface KartPadMacShellController : NSObject <NSTabViewDelegate, NSMenuDelegate>
 @property(nonatomic, strong) NSPanel *settingsPanel;
 @property(nonatomic, strong) NSPanel *controlsPanel;
 @property(nonatomic, strong) id settingsShortcutMonitor;
@@ -527,6 +528,7 @@ static bool KPFullscreenAcrossNotch() {
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSTextField *> *settingValues;
 @property(nonatomic, strong) NSTextField *settingsStatus;
 @property(nonatomic, weak) NSTextField *playerNameField;
+@property(nonatomic, strong) KPMiisWindow *miisWindow;
 @end
 
 @implementation KartPadMacShellController
@@ -539,16 +541,21 @@ static bool KPFullscreenAcrossNotch() {
 }
 
 - (void)quitKartPad:(id)sender {
+  // The Mii editor asks whether to save a changed draft; Keep Editing cancels.
   for (NSWindow *window in NSApp.windows) {
-    if (![window isKindOfClass:NSPanel.class] && window.isVisible) {
-      // Let Aurora observe the native close event. Its window-close path
-      // flushes placement state and exits without running C++ teardown from a
-      // translated guest fiber. That direct exit does not run atexit handlers,
-      // so persist the clean marker immediately before handing off.
-      MarkSessionClean();
+    if (![window isKindOfClass:NSPanel.class] && window.isVisible && window.windowController != nil) {
       [window performClose:sender];
-      return;
+      if (window.isVisible) return;
     }
+  }
+  if (NSWindow *window = KPGameWindow()) {
+    // Let Aurora observe the native close event. Its window-close path
+    // flushes placement state and exits without running C++ teardown from a
+    // translated guest fiber. That direct exit does not run atexit handlers,
+    // so persist the clean marker immediately before handing off.
+    MarkSessionClean();
+    [window performClose:sender];
+    return;
   }
   MarkSessionClean();
   [NSApp terminate:sender];
@@ -618,24 +625,73 @@ static bool KPFullscreenAcrossNotch() {
 }
 #endif
 
-- (void)showMiiManager:(id)sender {
-  (void)sender;
-  while (true) {
-    NSAlert *manager = [NSAlert new];
-    manager.messageText = @"Player Identity";
-    manager.informativeText = KartPadHasPendingMiiChanges()
-        ? @"Changes are pending. Quit and reopen KartPad to apply them before making another change. Your friend codes and progress are preserved when renaming."
-        : @"Set the name used by your Mii and its linked licenses, manage an existing license, or change Mii appearance.";
-    [manager addButtonWithTitle:@"Set Player Name…"];
-    [manager addButtonWithTitle:@"Existing Licenses…"];
-    [manager addButtonWithTitle:@"Mii Appearance…"];
-    [manager addButtonWithTitle:@"Done"];
-    NSModalResponse response = [manager runModal];
-    if (response == NSAlertFirstButtonReturn) [self showPlayerNameEditor];
-    else if (response == NSAlertSecondButtonReturn) [self showLicenseManager];
-    else if (response == NSAlertThirdButtonReturn) [self showMiiAppearanceManager:nil];
-    else return;
+- (KPMiisWindow *)miis {
+  if (self.miisWindow == nil) {
+    self.miisWindow = [KPMiisWindow new];
+    self.miisWindow.owner = self;
   }
+  return self.miisWindow;
+}
+
+- (void)showMiis:(id)sender {
+  (void)sender;
+  [self.miis show];
+}
+
+- (void)createMii:(id)sender {
+  [self.miis show];
+  [self.miis createMii:sender];
+}
+
+- (void)editMii:(NSMenuItem *)sender {
+  [self.miis show];
+  [self.miis editSlot:[sender.representedObject unsignedIntegerValue]];
+}
+
+- (void)importMii:(id)sender {
+  [self.miis show];
+  [self.miis importMii:sender];
+}
+
+- (NSMenuItem *)playerMenuItem:(NSString *)title action:(SEL)action enabled:(BOOL)enabled {
+  NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:title action:action keyEquivalent:@""];
+  item.target = self;
+  item.enabled = enabled;
+  return item;
+}
+
+// Rebuilt each time the Player menu opens so the Mii list and the
+// pending-restart state are current.
+- (void)menuNeedsUpdate:(NSMenu *)menu {
+  if (![menu.title isEqualToString:@"Player"]) return;
+  [menu removeAllItems];
+  NSError *error = nil;
+  NSArray<NSDictionary<NSString *, id> *> *records = KartPadMiiRecords(&error);
+  const BOOL pending = KartPadHasPendingMiiChanges();
+  const BOOL editable = !pending && error == nil;
+  if (pending) {
+    [menu addItem:[self playerMenuItem:@"Mii Changes Apply When KartPad Reopens" action:nil enabled:NO]];
+    [menu addItem:NSMenuItem.separatorItem];
+  }
+  NSMenuItem *miis = [self playerMenuItem:@"Miis…" action:@selector(showMiis:) enabled:YES];
+  miis.keyEquivalent = @"m";
+  miis.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+  [menu addItem:miis];
+  [menu addItem:[self playerMenuItem:@"Create Mii…" action:@selector(createMii:) enabled:editable]];
+  NSMenuItem *edit = [self playerMenuItem:@"Edit Mii" action:nil enabled:editable && records.count > 0];
+  edit.submenu = [[NSMenu alloc] initWithTitle:@"Edit Mii"];
+  edit.submenu.autoenablesItems = NO;
+  for (NSDictionary<NSString *, id> *record in records) {
+    NSMenuItem *item = [self playerMenuItem:[record[@"name"] stringByAppendingString:@"…"]
+                                     action:@selector(editMii:) enabled:editable];
+    item.representedObject = record[@"slot"];
+    [edit.submenu addItem:item];
+  }
+  [menu addItem:edit];
+  [menu addItem:[self playerMenuItem:@"Import Mii…" action:@selector(importMii:) enabled:editable]];
+  [menu addItem:NSMenuItem.separatorItem];
+  [menu addItem:[self playerMenuItem:@"Player Name…" action:@selector(showPlayerNameEditor) enabled:YES]];
+  [menu addItem:[self playerMenuItem:@"Licenses…" action:@selector(showLicenseManager) enabled:YES]];
 }
 
 - (void)playerMiiSelectionChanged:(NSPopUpButton *)sender {
@@ -739,108 +795,6 @@ static bool KPFullscreenAcrossNotch() {
   [self showSimpleAlert:succeeded ? @"License Change Scheduled" : @"License Could Not Be Changed"
                 message:succeeded ? @"Quit and reopen KartPad to apply the change. Your live save is backed up first."
                                   : error.localizedDescription];
-}
-
-- (void)showMiiAppearanceManager:(id)sender {
-  (void)sender;
-  while (true) {
-    NSError *error = nil;
-    NSArray<NSDictionary<NSString *, id> *> *records = KartPadMiiRecords(&error);
-    if (error != nil) {
-      [self showSimpleAlert:@"Miis Could Not Be Read"
-                    message:error.localizedDescription];
-      return;
-    }
-    NSMutableArray<NSString *> *names = [NSMutableArray array];
-    for (NSDictionary<NSString *, id> *record in records) {
-      [names addObject:record[@"name"]];
-    }
-    NSString *summary = names.count == 0 ? @"No Miis found."
-        : [names componentsJoinedByString:@", "];
-    NSString *pending = KartPadHasPendingMiiChanges()
-        ? @"\n\nPending changes will be applied on the next launch." : @"";
-    NSAlert *manager = [NSAlert new];
-    manager.messageText = @"Mii Appearance";
-    manager.informativeText = [NSString stringWithFormat:
-        @"%lu Mii%@ available: %@%@",
-        (unsigned long)records.count, records.count == 1 ? @"" : @"s",
-        summary, pending];
-    [manager addButtonWithTitle:@"Import Mii…"];
-    [manager addButtonWithTitle:@"Remove a Mii…"];
-    [manager addButtonWithTitle:@"Create Mii…"];
-    [manager addButtonWithTitle:@"Edit Mii…"];
-    [manager addButtonWithTitle:@"Done"];
-    NSModalResponse response = [manager runModal];
-    if (response == NSAlertFirstButtonReturn) {
-      NSOpenPanel *panel = NSOpenPanel.openPanel;
-      panel.title = @"Import Mii";
-      panel.message = @"Choose a standard 74-byte .mii file.";
-      panel.prompt = @"Import";
-      panel.canChooseFiles = YES;
-      panel.canChooseDirectories = NO;
-      panel.allowsMultipleSelection = NO;
-      UTType *miiType = [UTType typeWithFilenameExtension:@"mii"
-                                        conformingToType:UTTypeData];
-      panel.allowedContentTypes = miiType != nil ? @[miiType] : @[UTTypeData];
-      if ([panel runModal] != NSModalResponseOK || panel.URL == nil) continue;
-      NSData *data = [NSData dataWithContentsOfURL:panel.URL options:0 error:&error];
-      NSString *name = nil;
-      if (data == nil || !KartPadStageMiiImport(data, &name, &error)) {
-        [self showSimpleAlert:@"Mii Import Failed"
-                      message:error.localizedDescription ?: @"The selected file could not be imported."];
-        continue;
-      }
-      [self showSimpleAlert:@"Mii Import Scheduled"
-                    message:[NSString stringWithFormat:
-          @"%@ will be added the next time KartPad launches. The current database will be backed up automatically.",
-          name.length > 0 ? name : @"The selected Mii"]];
-      continue;
-    }
-    if (response == NSAlertSecondButtonReturn) {
-      if (records.count == 0) continue;
-      NSPopUpButton *choices = [[NSPopUpButton alloc]
-          initWithFrame:NSMakeRect(0, 0, 300, 26) pullsDown:NO];
-      for (NSDictionary<NSString *, id> *record in records) {
-        [choices addItemWithTitle:record[@"name"]];
-      }
-      NSAlert *remove = [NSAlert new];
-      remove.messageText = @"Remove a Mii?";
-      remove.informativeText = @"The removal will be applied on the next launch. KartPad always retains at least one Mii.";
-      remove.accessoryView = choices;
-      [remove addButtonWithTitle:@"Remove"];
-      [remove addButtonWithTitle:@"Cancel"];
-      if ([remove runModal] != NSAlertFirstButtonReturn) continue;
-      NSUInteger index = choices.indexOfSelectedItem;
-      if (index >= records.count) continue;
-      NSUInteger slot = [records[index][@"slot"] unsignedIntegerValue];
-      if (!KartPadStageMiiRemoval(slot, &error)) {
-        [self showSimpleAlert:@"Mii Could Not Be Removed"
-                      message:error.localizedDescription];
-        continue;
-      }
-      [self showSimpleAlert:@"Mii Removal Scheduled"
-                    message:@"Close and reopen KartPad to apply the change. The current database will be backed up automatically."];
-      continue;
-    }
-    if (response == NSAlertThirdButtonReturn) {
-      KartPadPresentMiiEditor(NSApp.mainWindow, NSNotFound);
-      return;
-    }
-    if (response == NSAlertFirstButtonReturn + 3) {
-      if (records.count == 0) continue;
-      NSPopUpButton *choices = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0, 0, 300, 26) pullsDown:NO];
-      for (NSDictionary *record in records) [choices addItemWithTitle:record[@"name"]];
-      NSAlert *select = [NSAlert new];
-      select.messageText = @"Edit Mii";
-      select.accessoryView = choices;
-      [select addButtonWithTitle:@"Edit"];
-      [select addButtonWithTitle:@"Cancel"];
-      if ([select runModal] != NSAlertFirstButtonReturn) continue;
-      KartPadPresentMiiEditor(NSApp.mainWindow, [records[choices.indexOfSelectedItem][@"slot"] unsignedIntegerValue]);
-      return;
-    }
-    return;
-  }
 }
 
 - (void)toggleExperimentalWiimote:(NSMenuItem *)sender {
@@ -1274,6 +1228,15 @@ static void InstallMenu() {
   gameMenuItem.submenu = gameMenu;
   [mainMenu insertItem:gameMenuItem atIndex:productMenuIndex++];
 
+  NSMenuItem *playerMenuItem = [[NSMenuItem alloc]
+      initWithTitle:@"Player" action:nil keyEquivalent:@""];
+  NSMenu *playerMenu = [[NSMenu alloc] initWithTitle:@"Player"];
+  playerMenu.autoenablesItems = NO;
+  playerMenu.delegate = Controller();
+  [Controller() menuNeedsUpdate:playerMenu];
+  playerMenuItem.submenu = playerMenu;
+  [mainMenu insertItem:playerMenuItem atIndex:productMenuIndex++];
+
   NSMenuItem *dataMenuItem = [[NSMenuItem alloc]
       initWithTitle:@"Data" action:nil keyEquivalent:@""];
   NSMenu *dataMenu = [[NSMenu alloc] initWithTitle:@"Data"];
@@ -1289,11 +1252,6 @@ static void InstallMenu() {
   retroData.target = Controller();
   [dataMenu addItem:retroData];
 #endif
-  NSMenuItem *miis = [[NSMenuItem alloc]
-      initWithTitle:@"Player Identity…" action:@selector(showMiiManager:)
-      keyEquivalent:@""];
-  miis.target = Controller();
-  [dataMenu addItem:miis];
   [dataMenu addItem:NSMenuItem.separatorItem];
   NSMenuItem *data = [[NSMenuItem alloc]
       initWithTitle:@"Show KartPad Data"

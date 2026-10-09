@@ -145,8 +145,17 @@ class Portrait {
         auto texture=r.Texture(17,a.Get(11));auto shirt=Shirt[a.Get(3)];
         for(size_t i=0;i<texture.rgba.size();i+=4){for(unsigned c=0;c<3;c++)texture.rgba[i+c]=uint8_t(shirt[c]*(texture.rgba[i+c]/255.f+1)*.5f);texture.rgba[i+3]=255;}return texture;
     }
-    static Image FaceMask(const Resources &r, const Appearance &a) {
+    // RFL expressions (RFL_MakeTex.c): blink swaps in eye texture 26, smile eye texture 48. Both keep the
+    // drawn angle by moving the rotation by the difference in per-texture rotation offsets, clamped to 0-7.
+    enum class Expression { Normal, Blink, Smile };
+    static Image FaceMask(const Resources &r, const Appearance &a, Expression expression = Expression::Normal) {
         auto get = [&](size_t f) { return a.Get(f); };
+        unsigned eyeType = get(14), eyeRotate = get(15);
+        if (expression != Expression::Normal) {
+            unsigned changed = expression == Expression::Blink ? 26 : 48;
+            int rotate = int(eyeRotate) + int(EyeRotation[eyeType]) - int(EyeRotation[changed]);
+            eyeType = changed; eyeRotate = unsigned(std::clamp(rotate, 0, 7));
+        }
         Portrait mask;
         float unit = 8, vertical = 1.1600001f * .9276675f;
         auto scale = [](unsigned value) { return 1.f + .4f * value; };
@@ -157,11 +166,11 @@ class Portrait {
         float eyeWidth = (342.f / 64) * scale(get(18)) * unit,
               eyeHeight = 4.5f * scale(get(18)) * unit;
         float eyeX = .88961464f * get(19) * unit, eyeY = (18.451525f + vertical * get(16)) * unit;
-        float eyeAngle = ((get(15) + EyeRotation[get(14)]) % 32) * 11.25f;
-        Color eyeFirst = get(14) == 9    ? Color{255, 130, 0}
-                         : get(14) == 20 ? Color{0, 255, 255}
+        float eyeAngle = ((eyeRotate + EyeRotation[eyeType]) % 32) * 11.25f;
+        Color eyeFirst = eyeType == 9    ? Color{255, 130, 0}
+                         : eyeType == 20 ? Color{0, 255, 255}
                                          : Color{0, 0, 0};
-        auto eye = ColorMask(r.Texture(1, get(14)), eyeFirst, Eyes[get(17)]);
+        auto eye = ColorMask(r.Texture(1, eyeType), eyeFirst, Eyes[get(17)]);
         mask.TextureDraw(eye, 256 - eyeX, eyeY, eyeWidth, eyeHeight,
                          {255, 255, 255}, eyeAngle, false, -.5f);
         mask.TextureDraw(eye, 256 + eyeX, eyeY, eyeWidth, eyeHeight,
@@ -188,10 +197,33 @@ class Portrait {
         }
         return mask.out;
     }
-    static Image AccessoryThumbnail(const Resources &r,unsigned field,unsigned value) {
+    // colorIndex selects the Glasses (field 33) or Hair (field 37) palette entry.
+    static Image AccessoryThumbnail(const Resources &r,unsigned field,unsigned value,unsigned colorIndex=0) {
         Portrait p;
-        if(field==33){p.originY=256;p.MeshDraw(r.Shape(6,0),Glasses[0],1,0,0,0,false,&r.Texture(7,value),true);}
-        else if(field==37){const auto &texture=r.Texture(12,value);p.TextureDraw(texture,256,256,150,240,Hair[0],0,false,-.5f);p.TextureDraw(texture,256,256,150,240,Hair[0],0,true,.5f);}
+        if(field==33){p.originY=256;p.MeshDraw(r.Shape(6,0),Glasses[std::min<size_t>(colorIndex,Glasses.size()-1)],1,0,0,0,false,&r.Texture(7,value),true);}
+        else if(field==37){const auto &texture=r.Texture(12,value);Color color=Hair[std::min<size_t>(colorIndex,Hair.size()-1)];p.TextureDraw(texture,256,256,150,240,color,0,false,-.5f);p.TextureDraw(texture,256,256,150,240,color,0,true,.5f);}
+        return p.out;
+    }
+    // Face shape tile: the whole head outline in the given skin tone. The faceline mesh alone is open at
+    // the top (RFL leaves the crown to the hair meshes), so the bald style's (30) forehead and scalp
+    // close it, drawn in skin like a bald Mii. One framing for all eight shapes keeps jaws comparable.
+    static Image FaceShapeThumbnail(const Resources &r,unsigned value,Color skin) {
+        constexpr unsigned Bald=30;Portrait p;float low=0,high=0,radius=0;
+        auto bounds=[&](const Mesh&mesh,float x,float y,float z){for(auto&v:mesh.triangles){low=std::min(low,v.y+y);high=std::max(high,v.y+y);radius=std::max(radius,std::abs(v.x+x));}};
+        for(unsigned shape=0;shape<8;shape++){const auto&face=r.Shape(3,shape);bounds(face,0,0,0);for(unsigned group:{5u,8u})bounds(r.Shape(group,Bald),face.transforms[6],face.transforms[7],face.transforms[8]);}
+        p.pixelsPerUnit=std::min(470.f/std::max(1.f,high-low),470.f/std::max(1.f,radius*2));p.originY=256+(low+high)*.5f*p.pixelsPerUnit;
+        const auto&face=r.Shape(3,value);p.MeshDraw(face,skin);
+        for(unsigned group:{5u,8u})p.MeshDraw(r.Shape(group,Bald),skin,1,face.transforms[6],face.transforms[7],face.transforms[8]);
+        constexpr int N=512,R=9;std::vector<uint8_t> solid(N*N),outside(N*N),row(N*N),eroded(N*N);
+        for(int i=0;i<N*N;i++)solid[i]=p.out.rgba[i*4+3]>127;
+        // Anything not reachable from the border is inside the head: fill pin holes between meshes.
+        std::vector<int> stack;for(int i=0;i<N;i++)for(int k:{i,(N-1)*N+i,i*N,i*N+N-1})if(!solid[k]&&!outside[k]){outside[k]=1;stack.push_back(k);}
+        while(!stack.empty()){int k=stack.back();stack.pop_back();int x=k%N,y=k/N;for(int n:{x>0?k-1:-1,x<N-1?k+1:-1,y>0?k-N:-1,y<N-1?k+N:-1})if(n>=0&&!solid[n]&&!outside[n]){outside[n]=1;stack.push_back(n);}}
+        for(int i=0;i<N*N;i++)if(!outside[i]){float alpha=p.out.rgba[i*4+3]/255.f;for(int c=0;c<3;c++)p.out.rgba[i*4+c]=uint8_t(p.out.rgba[i*4+c]*alpha+skin[c]*(1-alpha));p.out.rgba[i*4+3]=255;solid[i]=1;}
+        // Outline = coverage minus its erosion (separable min filter).
+        for(int y=0;y<N;y++)for(int x=0;x<N;x++){uint8_t m=1;for(int k=-R;k<=R&&m;k++){int xx=x+k;m=xx>=0&&xx<N&&solid[y*N+xx];}row[y*N+x]=m;}
+        for(int y=0;y<N;y++)for(int x=0;x<N;x++){uint8_t m=1;for(int k=-R;k<=R&&m;k++){int yy=y+k;m=yy>=0&&yy<N&&row[yy*N+x];}eroded[y*N+x]=m;}
+        for(int i=0;i<N*N;i++)if(solid[i]&&!eroded[i]){p.out.rgba[i*4]=74;p.out.rgba[i*4+1]=52;p.out.rgba[i*4+2]=44;p.out.rgba[i*4+3]=255;}
         return p.out;
     }
     static Image Render(const Resources &r, const Appearance &a) {

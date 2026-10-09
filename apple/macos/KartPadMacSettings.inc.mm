@@ -178,9 +178,9 @@
     [self settingsButton:@"Choose Retro Rewind Data…" action:@selector(chooseRetroRewindData:) page:data y:570];
 #endif
     [self settingsLabel:@"Game-data changes apply after restarting. Existing saves are preserved." page:data y:505];
-    [self settingsButton:@"Player Identity…" action:@selector(showPlayerNameEditor) page:data y:440];
-    [self settingsButton:@"License Manager…" action:@selector(showLicenseManager) page:data y:395];
-    [self settingsButton:@"Mii Appearance…" action:@selector(showMiiAppearanceManager:) page:data y:350];
+    [self settingsButton:@"Miis…" action:@selector(showMiis:) page:data y:440];
+    [self settingsButton:@"Player Name…" action:@selector(showPlayerNameEditor) page:data y:395];
+    [self settingsButton:@"Licenses…" action:@selector(showLicenseManager) page:data y:350];
     [self settingsButton:@"Open Application Support" action:@selector(showApplicationSupport:) page:data y:270];
     [self settingsButton:@"Open Cache Folder" action:@selector(showCache:) page:data y:225];
     [self settingsButton:@"Control Reference…" action:@selector(showControls:) page:data y:155];
@@ -197,16 +197,8 @@
     [self.settingsPanel center];
   }
   [self refreshSettings];
-  // Exclusive SDL windows sit above the menu-bar level. A normal NSPanel
-  // would open behind the game even though the hotkey was received.
-  NSInteger level=NSFloatingWindowLevel;
-  NSWindow *gameWindow=nil;
-  for(NSWindow *window in NSApp.windows) {
-    if(window!=self.settingsPanel && ![window isKindOfClass:NSPanel.class] && window.visible) {
-      gameWindow=window;level=std::max<NSInteger>(level,window.level+1);break;
-    }
-  }
-  self.settingsPanel.level=level;
+  self.settingsPanel.level=KPAuxiliaryWindowLevel();
+  NSWindow *gameWindow=KPGameWindow();
   if(gameWindow.screen) {
     NSRect available=gameWindow.screen.visibleFrame;
     NSRect frame=self.settingsPanel.frame;
