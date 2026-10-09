@@ -14,6 +14,7 @@
 #include "runtime_config.h"
 #if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)
 #include "kartpad_retro_rewind_release.h"
+#import "KartPadLocalUpdater.inc.mm"
 #endif
 
 static NSString *KPControllerDiagnostics();
@@ -590,6 +591,11 @@ static bool KPFullscreenAcrossNotch() {
                                            forKey:kKartPadRuntimeProfileDefaultsKey];
   [self showSimpleAlert:[NSString stringWithFormat:@"%@ Selected", title]
                 message:@"Quit and reopen KartPad to switch games. Your saves and settings are preserved."];
+}
+
+- (void)showAutomaticUpdates:(id)sender {
+  (void)sender;
+  KPShowLocalUpdateStatus();
 }
 
 - (void)useOriginalGame:(id)sender {
@@ -1220,6 +1226,15 @@ static void InstallMenu() {
     }
   }
 
+#if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)
+  if (KPLocalUpdateSettings() != nil) {
+    NSMenuItem *updates = [[NSMenuItem alloc] initWithTitle:@"Automatic Updates…"
+        action:@selector(showAutomaticUpdates:) keyEquivalent:@""];
+    updates.target = Controller();
+    [appMenu insertItem:updates atIndex:MAX(0, (NSInteger)appMenu.numberOfItems - 1)];
+  }
+#endif
+
   NSInteger productMenuIndex = mainMenu.numberOfItems;
   for (NSInteger index = 0; index < mainMenu.numberOfItems; ++index) {
     if ([[mainMenu itemAtIndex:index].title isEqualToString:@"Window"]) {
@@ -1365,10 +1380,18 @@ void KartPadMacShellInstall(void) {
     [NSApplication sharedApplication];
     InstallSettingsShortcutMonitor();
     InstallMenu();
+#if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)
+    KPCheckLocalUpdates();
+#endif
   });
 }
 
 bool KartPadMacShellPrepareGameData(void) {
+#if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)
+  // Activation completes before any game files are opened. The helper relaunches
+  // the replacement app after this process exits.
+  if (KPActivateLocalUpdate()) return false;
+#endif
   KartPadApplyPrivateServerAtLaunch();
   @autoreleasepool {
     const std::filesystem::path configPath = RuntimeConfigFile::ResolveConfigPath();
