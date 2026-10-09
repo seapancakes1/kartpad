@@ -22,6 +22,23 @@ static NSInteger KPAuxiliaryWindowLevel() {
   return std::max<NSInteger>(NSFloatingWindowLevel, game != nil ? game.level + 1 : 0);
 }
 
+// When KartPad opens, the game window takes the focus as soon as it appears, so play starts without
+// a click. The window only shows once loading is done, by when macOS may not hand it the focus.
+// Once per launch, and not if another KartPad window (Settings, say) already has it.
+static void KPFocusGameWindowAtLaunch() {
+  static bool done;
+  NSWindow *game = KPGameWindow();
+  if (done || game == nil) return;
+  done = true;
+  NSWindow *key = NSApp.keyWindow;
+  if (key != nil && key != game) return;
+  // The game loop can run inside a guest fiber; AppKit takes over on the next turn.
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [NSApp activateIgnoringOtherApps:YES];
+    [game makeKeyAndOrderFront:nil];
+  });
+}
+
 static void KPCenterOnGameScreen(NSWindow *window) {
   NSScreen *screen = KPGameWindow().screen ?: NSScreen.mainScreen;
   if (screen == nil) return;
@@ -326,6 +343,7 @@ static void KPMiisPadTick() {
 extern "C" void KartPadControllersTick() {
   @autoreleasepool {
     KPGameLoopTime = NSProcessInfo.processInfo.systemUptime;
+    KPFocusGameWindowAtLaunch();
     [KPControllers() tick];
     KPMiiPadTick();
     KPMiisPadTick();
