@@ -144,6 +144,9 @@ struct KPUIState {
 @property(nonatomic, weak) NSResponder *previousResponder;
 // Return, Space or Enter went down on this control; its release presses it.
 @property(nonatomic, weak) KPUIButton *keyPressed, *padPressed;
+// Escape or Delete went down on a screen (it goes back when it comes up, so it isn't still held,
+// and the key that opened HOME from the game doesn't close it again).
+@property(nonatomic) int backKey;
 @property(nonatomic) CGFloat scale;
 @property(nonatomic) CGSize stage;
 // The latest press came from the keyboard (not a controller).
@@ -530,6 +533,7 @@ static KPUIButton *KPUINearest(NSArray<KPUIButton *> *candidates, KPUIButton *fr
     _stack = [NSMutableArray array];
     _toasts = [NSMutableArray array];
     _scale = 1;
+    _backKey = -1;
     _host = [[KPOverlayHost alloc] initWithFrame:NSZeroRect];
     _host.wantsLayer = YES;
     _host.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
@@ -782,6 +786,9 @@ static KPUIButton *KPUINearest(NSArray<KPUIButton *> *candidates, KPUIButton *fr
       self.keyPressed = nil;
       pressed.pressed = NO;
       if (pressed && pressed == self.top.focus) [pressed fire];
+    } else if (button == KartPadMiiPadBack && self.backKey == key) {
+      self.backKey = -1;
+      [self padPress:KartPadMiiPadBack down:YES];
     }
     return YES;
   }
@@ -795,7 +802,10 @@ static KPUIButton *KPUINearest(NSArray<KPUIButton *> *candidates, KPUIButton *fr
     }
     return YES;
   }
-  if (button == KartPadMiiPadBack && event.isARepeat) return YES;
+  if (button == KartPadMiiPadBack) {
+    if (!event.isARepeat) self.backKey = key;
+    return YES;
+  }
   [self padPress:button down:YES];
   return YES;
 }

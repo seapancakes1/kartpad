@@ -70,7 +70,10 @@ static NSString *KPQADirectory();  // KartPadQA.inc.mm
 static void KPRestartWithCurtain(NSString *heading, NSString *detail) {
   NSWindow *game = KPGameWindow();
   NSString *app = NSBundle.mainBundle.bundlePath;
+  // An open Mii editor asks about unsaved changes first; Keep Editing stays put.
+  if (![Controller() closeWindows:nil]) return;
   if (game == nil || ![app.pathExtension isEqualToString:@"app"]) {
+    [KPOverlay() closeAll];
     [Controller() restartKartPad:nil];
     return;
   }
@@ -81,7 +84,9 @@ static void KPRestartWithCurtain(NSString *heading, NSString *detail) {
   card.detail = detail;
   KPOverlayController *overlay = KPOverlay();
   while (overlay.stack.count) {
-    [overlay.stack.lastObject removeFromSuperview];
+    KPScreen *screen = overlay.stack.lastObject;
+    [screen willDisappear];
+    [screen removeFromSuperview];
     [overlay.stack removeLastObject];
   }
   [overlay present:card];
@@ -113,6 +118,7 @@ static void KPRestartWithCurtain(NSString *heading, NSString *detail) {
   NSError *error = nil;
   if (![handoff writeToURL:[NSURL fileURLWithPath:path] error:&error] || ![task launchAndReturnError:&error]) {
     AppendSessionLine(@"restart=curtain-failed; falling back");
+    [KPOverlay() closeAll];
     [Controller() restartKartPad:nil];
     return;
   }
@@ -248,9 +254,20 @@ static void KPRunCurtain(NSString *path) {
   NSError *error = nil;
   const BOOL failed = ![open launchAndReturnError:&error];
   if (failed) NSLog(@"[KartPad] curtain could not reopen KartPad: %@", error);
+  // Until the new KartPad says it's up, or it exits (or never appears), or a minute passes.
   const CFTimeInterval reopened = CACurrentMediaTime();
-  while (!shown && !failed && CACurrentMediaTime() - reopened < 60)
+  BOOL appeared = NO;
+  CFTimeInterval checked = 0;
+  while (!shown && !failed && CACurrentMediaTime() - reopened < 60) {
     [NSRunLoop.mainRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+    if (CACurrentMediaTime() - checked < 0.5) continue;
+    checked = CACurrentMediaTime();
+    BOOL running = NO;
+    for (NSRunningApplication *other in [NSRunningApplication runningApplicationsWithBundleIdentifier:NSBundle.mainBundle.bundleIdentifier])
+      if (other.processIdentifier != NSProcessInfo.processInfo.processIdentifier && !other.terminated) running = YES;
+    if (running) appeared = YES;
+    else if (appeared || CACurrentMediaTime() - reopened > 20) break;
+  }
   [NSDistributedNotificationCenter.defaultCenter removeObserver:observer];
   // A breath for the game's first frame, then fade.
   [NSRunLoop.mainRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.25]];

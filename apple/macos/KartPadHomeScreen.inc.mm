@@ -180,7 +180,7 @@ static KPScreen *KPMakeMiisScreen();
 
 @interface KPHomeScreen : KPScreen <KPRosterListener>
 @property(nonatomic, strong) KPUIView *topBar, *bottomBar;
-@property(nonatomic, strong) KPUIButton *resume, *switchGame, *miis, *controllers, *volume, *display, *settings, *quit,
+@property(nonatomic, strong) KPUIButton *resume, *switchGame, *miis, *controllers, *volume, *displayToggle, *settings, *quit,
     *restart, *close;
 @property(nonatomic, strong) NSMutableArray<KPUIButton *> *slots;
 @property(nonatomic) NSInteger miiCount;
@@ -296,7 +296,7 @@ static KPScreen *KPMakeMiisScreen();
   };
 
   // Window or full screen: A flips it, left and right pick a side.
-  self.display = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
+  self.displayToggle = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
     KPButtonFace(c, r, KPStyle::Plain, NO, state.enabled, state.pressed, state.focused);
     const BOOL full = aurora_get_display_mode() != AURORA_DISPLAY_MODE_WINDOWED;
     const CGRect inner = CGRectInset(r, 8, 8);
@@ -315,9 +315,9 @@ static KPScreen *KPMakeMiisScreen();
                    NSTextAlignmentLeft);
     }
   } action:^{ [weakSelf toggleDisplay]; }];
-  self.display.label = @"Window or full screen";
-  self.display.sound = KPUISound::Tab;
-  self.display.adjust = ^BOOL(int direction) {
+  self.displayToggle.label = @"Window or full screen";
+  self.displayToggle.sound = KPUISound::Tab;
+  self.displayToggle.adjust = ^BOOL(int direction) {
     const BOOL full = aurora_get_display_mode() != AURORA_DISPLAY_MODE_WINDOWED;
     if ((direction > 0) == full) return NO;  // already there: move on along the row
     KPUIPlay(KPUISound::Tab);
@@ -397,12 +397,12 @@ static KPScreen *KPMakeMiisScreen();
   self.restart.hidden = !restart;
   if (restart) {
     [self place:self.volume at:CGRectMake(left, row, 452, 74)];
-    [self place:self.display at:CGRectMake(left + 452 + gap, row, 340, 74)];
+    [self place:self.displayToggle at:CGRectMake(left + 452 + gap, row, 340, 74)];
     [self place:self.restart at:CGRectMake(left + 452 + gap + 340 + gap, row, total - 452 - 340 - 3 * gap - 168, 74)];
   } else {
     const CGFloat spread = (total - 500 - 360 - 168) / 2;
     [self place:self.volume at:CGRectMake(left, row, 500, 74)];
-    [self place:self.display at:CGRectMake(left + 500 + spread, row, 360, 74)];
+    [self place:self.displayToggle at:CGRectMake(left + 500 + spread, row, 360, 74)];
   }
   [self place:self.quit at:CGRectMake(left + total - 168, row, 168, 74)];
 
@@ -414,6 +414,7 @@ static KPScreen *KPMakeMiisScreen();
 - (KPUIButton *)initialFocus { return self.resume; }
 
 - (void)willAppear {
+  [KPControllerRoster.shared.listeners addObject:self];
   self.canPause = !Network_HLE_HasOpenSockets();
   self.shownVolume = KPConfiguredVolume();
   self.shownMute = KPConfiguredMute();
@@ -487,7 +488,7 @@ static KPScreen *KPMakeMiisScreen();
     self.resume.needsDisplay = YES;
   }
   if (self.restart.hidden == KPRestartWaiting()) [self layoutDesign];
-  self.display.needsDisplay = YES;
+  self.displayToggle.needsDisplay = YES;
 }
 
 // X on a player identifies their controller (it buzzes and flashes); Y opens Controllers.
@@ -612,7 +613,7 @@ static KPScreen *KPMakeMiisScreen();
 
 - (void)toggleDisplay {
   [Controller() toggleGameFullScreen:nil];
-  self.display.needsDisplay = YES;
+  self.displayToggle.needsDisplay = YES;
 }
 
 - (void)askToSwitch {

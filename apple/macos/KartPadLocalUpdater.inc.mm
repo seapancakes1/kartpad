@@ -278,9 +278,13 @@ static NSTask *KPLocalUpdateTask(NSString *action, NSArray<NSString *> *options)
 
 // Runs before game files open: installs a finished update, or counts a launch of a
 // newly installed app and returns to the previous version if it keeps failing.
+static void KPCurtainDone();  // KartPadCurtain.inc.mm
+
 static BOOL KPActivateLocalUpdate() {
   BOOL installing = KPLocalUpdateStateExists(@"pending.json") || KPLocalUpdateStateExists(@"activation.json");
   if (!installing && !KPLocalUpdateStateExists(@"trial.json")) return NO;
+  // A restart's curtain mustn't hide the install notice (or stay up while this process hands over).
+  if (installing) KPCurtainDone();
   NSTask *task = KPLocalUpdateTask(@"activate", @[]);
   NSError *error = nil;
   if (task == nil || ![task launchAndReturnError:&error]) return NO;

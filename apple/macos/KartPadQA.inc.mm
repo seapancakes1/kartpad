@@ -93,6 +93,19 @@ static void KPQARun(NSString *line) {
              NSStringFromRect(overlay.host.frame), overlay.host.superview, overlay.host.superview.subviews.lastObject == overlay.host,
              (unsigned long)overlay.toasts.count]);
     for (NSView *toast in overlay.toasts) KPQALog([NSString stringWithFormat:@"  toast frame=%@ alpha=%.2f", NSStringFromRect(toast.frame), toast.alphaValue]);
+  } else if ([command isEqualToString:@"roster"]) {
+    // Every controller as the roster sees it, and which player Aurora has it on.
+    KPControllerRoster *roster = KPControllerRoster.shared;
+    [roster refresh];
+    NSMutableString *text = [NSMutableString stringWithFormat:@"roster keyboardPort=%d lastPresser=%u keyboardInput=%d", KPKeyboardPort(),
+                             (unsigned)KPPadLastPresser, KPOverlay().keyboardInput];
+    for (KPPadDevice *device in roster.devices) {
+      SDL_Gamepad *pad = device.gamepad;
+      [text appendFormat:@"\n  %@ %@ slot=%d port=%d index=%d", device.identifier, device.name, device.slot,
+                         pad ? KPPortForGamepad(pad) : -9, pad ? KPIndexForGamepad(pad) : -9];
+    }
+    for (int port = 0; port < KPPlayerCount; ++port) [text appendFormat:@"\n  port%d index=%d", port, PADGetIndexForPort(port)];
+    KPQALog(text);
   } else if ([command isEqualToString:@"frames"]) {
     KPQALog([NSString stringWithFormat:@"frames %llu", (unsigned long long)KartPadPresentedFrames()]);
   } else if ([command isEqualToString:@"editmii"]) {

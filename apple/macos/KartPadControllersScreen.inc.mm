@@ -708,6 +708,13 @@ static const SDL_Scancode KPDefaultKeys[12] = {
   }
   [super back];
 }
+// Closed or covered (HOME, another screen) while listening: stop, or the pads stay quiet for it.
+- (void)willDisappear {
+  if (self.capturing < 0) return;
+  self.capturing = -1;
+  KPControllers().capture = -1;
+  self.status = nil;
+}
 
 - (void)drawDesign:(CGContextRef)c size:(CGSize)size {
   [super drawDesign:c size:size];

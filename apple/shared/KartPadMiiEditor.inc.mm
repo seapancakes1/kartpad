@@ -1317,6 +1317,8 @@ static KPMiiEditor *KPMiiActiveEditor;
 // the screens' 1280×720 design size and draws scaled to fit, like KartPad's other screens. Closing
 // it gives the keyboard back to the game window.
 @interface KPMiiEmbeddedWindow:NSWindow
+// Following the game window's size; removed on close.
+@property(nonatomic,strong) NSMutableArray *observers;
 @end
 @implementation KPMiiEmbeddedWindow
 - (BOOL)canBecomeKeyWindow{return YES;}
@@ -1327,6 +1329,8 @@ static KPMiiEditor *KPMiiActiveEditor;
     [self close];
 }
 - (void)close{
+    for(id observer in self.observers)[NSNotificationCenter.defaultCenter removeObserver:observer];
+    [self.observers removeAllObjects];
     NSWindow *game=self.parentWindow;[game removeChildWindow:self];[super close];
     [game makeKeyAndOrderFront:nil];
 }
@@ -1348,6 +1352,8 @@ static void KPMiiFollowGameWindow(NSWindow *host,NSWindow *game){
 static void KPMiiEmbedEditor(KPMiiEditor *editor,NSWindow *game){
     if([editor.window isKindOfClass:KPMiiEmbeddedWindow.class]){[editor.window makeKeyAndOrderFront:nil];return;}
     NSWindow *old=editor.window;NSView *canvas=editor.canvas;
+    // Open in a window of its own already (from the Miis panel): it moves in here.
+    [old orderOut:nil];
     KPMiiEmbeddedWindow *host=[[KPMiiEmbeddedWindow alloc]initWithContentRect:[game convertRectToScreen:game.contentView.frame] styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
     host.releasedWhenClosed=NO;host.hasShadow=NO;host.title=old.title;
     host.collectionBehavior=NSWindowCollectionBehaviorFullScreenAuxiliary|NSWindowCollectionBehaviorCanJoinAllSpaces;
@@ -1356,8 +1362,10 @@ static void KPMiiEmbedEditor(KPMiiEditor *editor,NSWindow *game){
     canvas.autoresizingMask=NSViewNotSizable;[container addSubview:canvas];container.canvas=canvas;host.contentView=container;
     old.delegate=nil;host.delegate=editor;editor.window=host;
     [game addChildWindow:host ordered:NSWindowAbove];
+    host.observers=[NSMutableArray array];__weak KPMiiEmbeddedWindow *weakHost=host;__weak NSWindow *weakGame=game;
     for(NSNotificationName name in @[NSWindowDidResizeNotification,NSWindowDidEndLiveResizeNotification])
-        [NSNotificationCenter.defaultCenter addObserverForName:name object:game queue:nil usingBlock:^(NSNotification*note){if(host.visible)KPMiiFollowGameWindow(host,game);}];
+        [host.observers addObject:[NSNotificationCenter.defaultCenter addObserverForName:name object:game queue:nil usingBlock:^(NSNotification*note){
+            KPMiiEmbeddedWindow *live=weakHost;NSWindow *parent=weakGame;if(live.visible&&parent)KPMiiFollowGameWindow(live,parent);}]];
     [host makeKeyAndOrderFront:nil];
 }
 // Open above the parent (the Miis window), which sits above the game window.

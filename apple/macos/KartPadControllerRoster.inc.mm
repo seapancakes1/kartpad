@@ -179,6 +179,9 @@ extern "C" void KartPadSetKeyboardDrivesWiiChannel0(bool drives);  // runtime kp
   NSTimeInterval _startedAt, _keyboardMovedAt;
   NSArray<NSDictionary *> *_miiRecords;
   NSTimeInterval _miiRecordsAt;
+  // Who was on which player at the last refresh. The devices themselves are updated in place, so
+  // comparing them with the previous list would never see a controller change player.
+  NSString *_seating;
 }
 
 + (instancetype)shared {
@@ -385,7 +388,10 @@ extern "C" void KartPadSetKeyboardDrivesWiiChannel0(bool drives);  // runtime kp
   }];
   NSMutableArray *all = [NSMutableArray arrayWithObject:keyboard];
   [all addObjectsFromArray:pads];
-  const BOOL changed = added.count || gone.count || ![[previous valueForKey:@"slot"] isEqual:[all valueForKey:@"slot"]];
+  NSMutableString *seating = [NSMutableString string];
+  for (KPPadDevice *device in all) [seating appendFormat:@"%@=%d;", device.identifier, device.slot];
+  const BOOL changed = added.count || gone.count || ![seating isEqualToString:_seating ?: @""];
+  _seating = seating;
   self.devices = all;
   // A controller coming or going makes the runtime lay Config.toml's shared bindings over every port
   // again; each controller's own profile goes back on top on the next tick.
@@ -456,7 +462,11 @@ extern "C" void KartPadSetKeyboardDrivesWiiChannel0(bool drives);  // runtime kp
 - (void)move:(KPPadDevice *)device toSlot:(int)slot {
   if (device == nil) return;
   const int from = device.slot;
-  if (from == slot) return;
+  if (from == slot) {
+    // Already there: the keyboard is now pinned there rather than following free players.
+    if (device.isKeyboard) [NSUserDefaults.standardUserDefaults setObject:@(slot) forKey:KPKeyboardPlayerKey];
+    return;
+  }
   KPPadDevice *occupant = slot >= 0 ? [self deviceInSlot:slot] : nil;
   NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
   auto placePad = [](KPPadDevice *pad, int port) {

@@ -1197,9 +1197,10 @@ static bool KPShowScreen(NSString *which) {
 
 // The runtime holds the game still while this is true (WaitWhileBackgroundPaused). That includes
 // KartPad hidden and its window minimized (as exclusive fullscreen is on losing the focus), which
-// otherwise only stop the drawing.
+// otherwise only stop the drawing. Automated runs in the background (KARTPAD_BACKGROUND) never
+// hold: they're meant to run unfocused, and the Mac's own setting is shared with the player's copy.
 extern "C" bool KartPadBackgroundPauseWanted() {
-  if (NSApp.active || !KPBackgroundPauseEnabled()) return false;
+  if (NSApp.active || !KPBackgroundPauseEnabled() || KPUIBackgroundAutomation()) return false;
   @autoreleasepool {
     for (NSWindow *window in NSApp.windows) {
       if (![window isKindOfClass:NSPanel.class] && window.windowController == nil) return true;
@@ -1391,9 +1392,9 @@ static void InstallMenu() {
   gameMenuItem.tag = kKartPadMenuTag;
   NSMenu *gameMenu = [[NSMenu alloc] initWithTitle:@"Game"];
   gameMenu.delegate = Controller();
-  // HOME: everything players need, over the game (Escape, or HOME on a controller).
-  NSMenuItem *home = [[NSMenuItem alloc] initWithTitle:@"HOME" action:@selector(openHome:) keyEquivalent:@"\033"];
-  home.keyEquivalentModifierMask = 0;
+  // HOME: everything players need, over the game. Escape opens it from the game window (the key
+  // monitor), not as a menu shortcut, so Escape keeps its meaning in the Mii editor and text fields.
+  NSMenuItem *home = [[NSMenuItem alloc] initWithTitle:@"HOME (esc)" action:@selector(openHome:) keyEquivalent:@""];
   home.target = Controller();
   [gameMenu addItem:home];
   [gameMenu addItem:NSMenuItem.separatorItem];

@@ -46,6 +46,8 @@ static NSString *KPRetroFolder() {
   size_t _current;
   NSMutableArray<NSString *> *_files;
   BOOL _cancelled;
+  // Each run (and each cancel) moves this on; work from an older run stops where it notices.
+  std::atomic<uint64_t> _generation;
 }
 
 + (instancetype)shared {
@@ -93,6 +95,7 @@ static NSString *KPRetroFolder() {
   _current = 0;
   _files = [NSMutableArray array];
   _cancelled = NO;
+  ++_generation;
   self.problem = nil;
   // Room for the downloads, the unpacked pack and a little over.
   uint64_t needed = 256ull << 20;
@@ -130,8 +133,8 @@ static NSString *KPRetroFolder() {
 - (void)URLSession:(NSURLSession *)session downloadTask:(NSURLSessionDownloadTask *)task didWriteData:(int64_t)written
     totalBytesWritten:(int64_t)total totalBytesExpectedToWrite:(int64_t)expected {
   (void)session;
-  (void)task;
   (void)written;
+  if (task != _task) return;
   self.done = total;
   if (expected > 0) self.total = expected;
   self.progress = self.total > 0 ? (double)total / self.total : 0;
@@ -139,6 +142,7 @@ static NSString *KPRetroFolder() {
 
 - (void)URLSession:(NSURLSession *)session downloadTask:(NSURLSessionDownloadTask *)task didFinishDownloadingToURL:(NSURL *)location {
   (void)session;
+  if (task != _task || _cancelled) return;
   NSHTTPURLResponse *response = (NSHTTPURLResponse *)task.response;
   if ([response isKindOfClass:NSHTTPURLResponse.class] && response.statusCode != 200) {
     [self fail:[NSString stringWithFormat:@"The download server answered %ld.", (long)response.statusCode]];
@@ -159,13 +163,14 @@ static NSString *KPRetroFolder() {
 
 - (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error {
   (void)session;
-  (void)task;
+  if (task != _task) return;
   if (error && !_cancelled) [self fail:@"The download stopped. Check the internet connection and try again."];
 }
 
 // Size and SHA-256, read in chunks off the main thread.
 - (void)verify:(NSString *)file archive:(KPRetroArchive)archive {
   self.stage = KPRetroVerifying;
+  const uint64_t generation = _generation;
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
     NSFileHandle *handle = [NSFileHandle fileHandleForReadingAtPath:file];
     const uint64_t size = [[NSFileManager.defaultManager attributesOfItemAtPath:file error:nil] fileSize];
@@ -192,6 +197,10 @@ static NSString *KPRetroFolder() {
     }
     [handle closeFile];
     dispatch_async(dispatch_get_main_queue(), ^{
+      if (generation != self->_generation) {
+        [NSFileManager.defaultManager removeItemAtPath:file error:nil];
+        return;
+      }
       if (!good) {
         [NSFileManager.defaultManager removeItemAtPath:file error:nil];
         [self fail:@"The download didn't match the pack this KartPad plays, so it was thrown away. Try again."];
@@ -207,6 +216,7 @@ static NSString *KPRetroFolder() {
 - (void)install {
   self.stage = KPRetroInstalling;
   NSArray<NSString *> *archives = _files.copy;
+  const uint64_t generation = _generation;
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
     NSFileManager *files = NSFileManager.defaultManager;
     NSString *base = KPRetroFolder();
@@ -247,7 +257,8 @@ static NSString *KPRetroFolder() {
       if (validation || error) problem = validation ?: @"The unpacked pack didn't pass KartPad's check.";
     }
     NSString *destination = [base stringByAppendingPathComponent:@KARTPAD_RR_ROOT];
-    if (!problem) {
+    const BOOL cancelled = generation != self->_generation;
+    if (!problem && !cancelled) {
       NSString *previous = [base stringByAppendingPathComponent:[@"Previous-" stringByAppendingString:NSUUID.UUID.UUIDString]];
       if ([files fileExistsAtPath:destination]) [files moveItemAtPath:destination toPath:previous error:nil];
       NSError *error = nil;
@@ -261,6 +272,7 @@ static NSString *KPRetroFolder() {
     [files removeItemAtPath:staging error:nil];
     for (NSString *archive in archives) [files removeItemAtPath:archive error:nil];
     dispatch_async(dispatch_get_main_queue(), ^{
+      if (cancelled || generation != self->_generation) return;
       if (problem) {
         [self fail:problem];
         return;
@@ -292,6 +304,9 @@ static NSString *KPRetroFolder() {
 }
 
 - (void)fail:(NSString *)problem {
+  // Nothing half-done stays behind (a verified first archive is 2 GB).
+  for (NSString *file in _files) [NSFileManager.defaultManager removeItemAtPath:file error:nil];
+  [_files removeAllObjects];
   self.problem = problem;
   self.stage = KPRetroFailed;
   AppendSessionLine(@"retroDownload=failed");
@@ -303,9 +318,12 @@ static NSString *KPRetroFolder() {
 
 - (void)cancel {
   _cancelled = YES;
+  ++_generation;
   [_task cancel];
   _task = nil;
-  for (NSString *file in _files) [NSFileManager.defaultManager removeItemAtPath:file error:nil];
+  // While unpacking, the install step tidies its own files once ditto lets go of them.
+  if (self.stage != KPRetroInstalling)
+    for (NSString *file in _files) [NSFileManager.defaultManager removeItemAtPath:file error:nil];
   self.stage = KPRetroIdle;
   AppendSessionLine(@"retroDownload=cancelled");
 }
@@ -332,7 +350,8 @@ static NSString *KPRetroFolder() {
     [weakSelf layoutDesign];
   }];
   self.retry = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
-    KPDrawPill(c, r, state, KPStyle::Plain, KPUIGlyph::Restart, @"Try Again");
+    const BOOL first = KPRetroDownload.shared.stage == KPRetroIdle;
+    KPDrawPill(c, r, state, KPStyle::Plain, first ? KPUIGlyph::Play : KPUIGlyph::Restart, first ? @"Download" : @"Try Again");
   } action:^{
     [KPRetroDownload.shared start];
     [weakSelf layoutDesign];
@@ -366,7 +385,8 @@ static NSString *KPRetroFolder() {
     case KPRetroIdle: title = @"Not downloaded"; detail = @"About 2 GB. It keeps downloading while you play."; break;
     case KPRetroDownloading:
       title = @"Downloading…";
-      detail = [NSString stringWithFormat:@"%@ of %@", KPBytesText(download.done), KPBytesText(download.total)];
+      detail = download.done > 0 ? [NSString stringWithFormat:@"%@ of %@", KPBytesText(download.done), KPBytesText(download.total)]
+                                 : @"Starting…";
       break;
     case KPRetroVerifying: title = @"Checking the download…"; detail = @"Making sure it's exactly the pack this KartPad plays."; break;
     case KPRetroInstalling: title = @"Installing…"; detail = @"Unpacking and checking the files."; break;

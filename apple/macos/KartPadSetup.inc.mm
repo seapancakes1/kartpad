@@ -480,7 +480,11 @@ static NSString *KPRunSetup(BOOL recovering) {
   screen.finish = ^(NSString *profile) {
     result = profile;
     finished = YES;
+    // A controller's press comes from a timer, not an event: stopModal only ends the modal loop
+    // once an event arrives, so post one.
     [app stopModal];
+    [app postEvent:[NSEvent otherEventWithType:NSEventTypeApplicationDefined location:NSZeroPoint modifierFlags:0
+                                      timestamp:0 windowNumber:0 context:nil subtype:0 data1:0 data2:0] atStart:YES];
   };
   [controller showWindow:nil];
   if (!KPUIBackgroundAutomation()) [app activateIgnoringOtherApps:YES];

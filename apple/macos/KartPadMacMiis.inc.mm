@@ -241,8 +241,11 @@ static void KPMiiPadSend(KartPadMiiPadButton button, BOOL down) {
   NSTimer *timer = [NSTimer timerWithTimeInterval:0 repeats:NO block:^(NSTimer *t) {
     (void)t;
     @autoreleasepool {
-      if (KPOverlayTakesPads()) KPOverlayPadPress(button, down);
-      else KartPadMiiPadPress(button, down);
+      // KartPad's screens answer only while KartPad is in front, as HOME and the shortcuts do: the
+      // controller may be playing something else. (A release always goes, so nothing stays pressed.)
+      if (KPOverlayTakesPads()) {
+        if (NSApp.active || !down) KPOverlayPadPress(button, down);
+      } else KartPadMiiPadPress(button, down);
     }
   }];
   [NSRunLoop.mainRunLoop addTimer:timer forMode:NSRunLoopCommonModes];
