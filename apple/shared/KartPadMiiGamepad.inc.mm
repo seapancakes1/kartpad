@@ -252,8 +252,10 @@ static void KPPadEditorPress(KPMiiEditor *editor,KartPadMiiPadButton button){
 #pragma mark Settings
 
 // Settings is ordinary AppKit controls, which only take the focus with Full Keyboard Access on, so
-// it gets a ring of its own and remembers the control under it. Left and right change a pop-up or a
-// slider in place; A clicks (a pop-up opens its menu), LB and RB change tab, B and Start close.
+// it gets a ring of its own and remembers the control under it. Left and right change a slider in
+// place, and a pop-up too when nothing else is on its row (else they move along the row, as from
+// Vibration's strength to Test Vibration); A clicks (a pop-up opens its menu), LB and RB change tab,
+// B and Start close.
 @interface KPPadRing : NSView
 @end
 @implementation KPPadRing
@@ -280,8 +282,11 @@ static BOOL KPPadSettingsControl(NSView *view){
 static NSArray<NSView*> *KPPadSettingsControls(NSWindow *window){
     NSMutableArray *controls=[NSMutableArray array];KPPadCollect(window.contentView,^BOOL(NSView *view){return KPPadSettingsControl(view);},controls);return controls;
 }
-// The top control, the leftmost on a tie: where the ring starts on a page.
+// Where the ring starts on a page: the page's initialFirstResponder while it can be pressed
+// (Controllers starts on the player choice), else the top control, the leftmost on a tie.
 static NSView *KPPadSettingsFirst(NSArray<NSView*> *controls){
+    NSTabView *tabs=KPPadSettingsTabs;NSView *initial=tabs.selectedTabViewItem.initialFirstResponder;
+    if(initial&&[controls containsObject:initial])return initial;
     NSView *first=nil;
     for(NSView *view in controls){
         NSRect here=KPPadFrame(view),best=first?KPPadFrame(first):NSZeroRect;
@@ -296,13 +301,20 @@ static void KPPadSettingsShow(NSControl *control){
         KPPadSettingsRing.layer.borderWidth=3;KPPadSettingsRing.layer.cornerRadius=7;
     }
     KPPadSettingsRing.layer.borderColor=NSColor.controlAccentColor.CGColor;
-    // A checkbox's frame runs on past its title; push buttons, pop-ups and sliders fill theirs.
+    // A checkbox's frame runs on past its title; push buttons, pop-ups and sliders fill theirs. Only
+    // checkboxes and radio buttons are unbordered (push buttons' bezel style is automatic on macOS 26).
     NSRect frame=control.frame;
-    if([control isKindOfClass:NSButton.class]&&![control isKindOfClass:NSPopUpButton.class]&&[(NSButton*)control bezelStyle]!=NSBezelStylePush)
+    if([control isKindOfClass:NSButton.class]&&![(NSButton*)control isBordered])
         frame.size.width=std::min(frame.size.width,control.intrinsicContentSize.width);
     [KPPadSettingsRing removeFromSuperview];KPPadSettingsRing.frame=NSInsetRect(frame,-4,-4);
     [control.superview addSubview:KPPadSettingsRing positioned:NSWindowAbove relativeTo:control];
     [control scrollRectToVisible:NSInsetRect(control.bounds,0,-16)];
+}
+// Whether no other control shares the control's row.
+static BOOL KPPadSettingsAlone(NSArray<NSView*> *controls,NSView *control){
+    NSRect here=KPPadFrame(control);
+    for(NSView *view in controls){NSRect there=KPPadFrame(view);if(view!=control&&NSMinY(there)<NSMaxY(here)&&NSMinY(here)<NSMaxY(there))return NO;}
+    return YES;
 }
 // The ring's control if it's still on the page, else the page's first.
 static NSControl *KPPadSettingsStart(NSArray<NSView*> *controls){
@@ -319,7 +331,7 @@ static void KPPadSettingsPress(NSWindow *window,KartPadMiiPadButton button){
             slider.doubleValue=std::clamp(slider.doubleValue+dx*(slider.maxValue-slider.minValue)/20,slider.minValue,slider.maxValue);
             [slider sendAction:slider.action to:slider.target];return;
         }
-        if([focus isKindOfClass:NSPopUpButton.class]&&dx){
+        if([focus isKindOfClass:NSPopUpButton.class]&&dx&&KPPadSettingsAlone(controls,focus)){
             NSPopUpButton *popUp=(NSPopUpButton*)focus;const NSInteger index=popUp.indexOfSelectedItem+dx;
             if(index>=0&&index<popUp.numberOfItems&&[popUp itemAtIndex:index].enabled){[popUp selectItemAtIndex:index];[popUp sendAction:popUp.action to:popUp.target];}
             return;

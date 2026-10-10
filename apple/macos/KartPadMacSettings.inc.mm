@@ -280,6 +280,8 @@ static NSArray<NSNumber *> *KPVibrationStrengths() { return @[@0,@0.25,@0.5,@1];
     KPControllers().content.frame=NSMakeRect(0,420,760,740);
     KPControllers().content.autoresizingMask=NSViewWidthSizable;
     [controllers addSubview:KPControllers().content];
+    // A controller starts on its player choice (it shows itself; see followPad:).
+    [self.settingsTabs tabViewItemAtIndex:[self.settingsTabs indexOfTabViewItemWithIdentifier:@"Controllers"]].initialFirstResponder=KPControllers().player;
     [self settingsHeading:@"Vibration" page:controllers y:372];
     [self settingsLabel:@"Strength" page:controllers y:312];
     self.vibrationChoice=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(180,336,190,28) pullsDown:NO];

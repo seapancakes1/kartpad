@@ -89,6 +89,8 @@ static NSString *KPProfileKey(SDL_Gamepad *pad) {
 @property NSMutableDictionary *profiles;
 @property NSMutableDictionary<NSNumber *, NSString *> *applied;
 @property SDL_JoystickID selectedID;
+// The controller that last drove Settings (followPad:).
+@property SDL_JoystickID followedID;
 @property NSInteger capture;
 @property BOOL armed;
 @property BOOL dirty;
@@ -275,7 +277,7 @@ static NSString *KPProfileKey(SDL_Gamepad *pad) {
   (void)notification; [self cancelCapture];
 }
 - (void)windowWillClose:(NSNotification *)notification {
-  (void)notification; [self cancelCapture];
+  (void)notification; [self cancelCapture]; self.followedID = 0;
   if(self.backgroundHintOwned) {
     if(self.previousBackgroundHint) SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS,self.previousBackgroundHint.UTF8String);
     else SDL_ResetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS);
@@ -288,6 +290,15 @@ static NSString *KPProfileKey(SDL_Gamepad *pad) {
   (void)sender;
   [self cancelCapture];
   self.selectedID = [self.devices.selectedItem.representedObject isEqual:@"keyboard"] ? (SDL_JoystickID)-1 : [self.devices.selectedItem.representedObject unsignedIntValue];
+}
+// A controller driving Settings becomes the one shown, so its player can be chosen without a mouse.
+// Only a change of controller does this: one controller can still pick another in the list.
+- (void)followPad:(SDL_JoystickID)identifier {
+  if (identifier == self.followedID || self.capture >= 0 || self.keyboardCaptureKind >= 0) return;
+  self.followedID = identifier;
+  if (self.selectedID == identifier) return;
+  for (NSMenuItem *item in self.devices.itemArray)
+    if ([item.representedObject isEqual:@(identifier)]) { [self.devices selectItem:item]; [self selectDevice:nil]; [self tick]; return; }
 }
 - (void)assign:(id)sender {
   (void)sender;

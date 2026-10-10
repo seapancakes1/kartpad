@@ -143,14 +143,19 @@ static bool KPPadWindowsVisible() { return KartPadMiiWindowsVisible() || KPContr
 static bool KPMiiPadOwnsInput() { return KPMiiPadOwned || KPPadWindowsVisible(); }
 
 // Every connected pad counts. The bottom and right face buttons are the game's confirm and back.
-static uint32_t KPMiiPadRead(bool *anyHeld) {
+// pressedBy is the pad that pressed something since the last read (0 if none did).
+static uint32_t KPMiiPadRead(bool *anyHeld, SDL_JoystickID *pressedBy) {
+  static NSMutableDictionary<NSNumber *, NSNumber *> *before = [NSMutableDictionary dictionary];
+  NSMutableDictionary<NSNumber *, NSNumber *> *now = [NSMutableDictionary dictionary];
   uint32_t held = 0;
   *anyHeld = false;
+  *pressedBy = 0;
   for (unsigned i = 0; i < PADCount(); ++i) {
     SDL_Gamepad *pad = PADGetSDLGamepadForIndex(i);
     if (pad == nullptr) continue;
+    uint32_t mine = 0;
     auto down = [&](SDL_GamepadButton button) { return SDL_GetGamepadButton(pad, button); };
-    auto set = [&](KartPadMiiPadButton button, bool on) { if (on) held |= 1u << button; };
+    auto set = [&](KartPadMiiPadButton button, bool on) { if (on) mine |= 1u << button; };
     for (int button = 0; button < SDL_GAMEPAD_BUTTON_COUNT; ++button)
       *anyHeld |= down((SDL_GamepadButton)button);
     // The stick moves along its stronger axis once past half way.
@@ -169,7 +174,12 @@ static uint32_t KPMiiPadRead(bool *anyHeld) {
     set(KartPadMiiPadPreviousTab, down(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER));
     set(KartPadMiiPadNextTab, down(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER));
     set(KartPadMiiPadStart, down(SDL_GAMEPAD_BUTTON_START));
+    held |= mine;
+    NSNumber *identifier = @(SDL_GetGamepadID(pad));
+    if (mine & ~before[identifier].unsignedIntValue) *pressedBy = identifier.unsignedIntValue;
+    now[identifier] = @(mine);
   }
+  [before setDictionary:now];
   return held;
 }
 
@@ -188,7 +198,8 @@ static void KPMiiPadPoll() {
   if (now - KPGameLoopTime > 0.1) SDL_UpdateGamepads();
   const bool visible = KPPadWindowsVisible();
   bool anyHeld = false;
-  const uint32_t held = KPMiiPadRead(&anyHeld);
+  SDL_JoystickID pressedBy = 0;
+  const uint32_t held = KPMiiPadRead(&anyHeld, &pressedBy);
   if (KPControllers().capture >= 0 || KPPadCapturing()) KPMiiPadQuiet = true;
   else if (!anyHeld) KPMiiPadQuiet = false;
   // Buttons already down when a window opens aren't presses for it, and don't repeat.
@@ -205,6 +216,8 @@ static void KPMiiPadPoll() {
     KPMiiPadRepeatAt = now + 0.11;
   }
   KPMiiPadHeld = held;
+  // Settings → Controllers shows the controller in use, so it can choose its own player.
+  if (listening && pressedBy && KPControllers().panel.keyWindow) [KPControllers() followPad:pressedBy];
   if (visible) {
     KPMiiPadOwned = true;
   } else if (!anyHeld) {
