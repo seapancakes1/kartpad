@@ -102,7 +102,9 @@ static AVAudioPCMBuffer *KPMiiSoundBuffer(const kartpad::audio::Pcm &pcm,AVAudio
     }});
 }
 - (void)play:(KPSound)sound{
-    if(!self.enabled)return;
+    // Automated checks (KARTPAD_MUTED=1) stay silent.
+    static const BOOL muted=[NSProcessInfo.processInfo.environment[@"KARTPAD_MUTED"] isEqual:@"1"];
+    if(!self.enabled||muted)return;
     if(!_buffers){if(_loadingKey){_pending=sound;_pendingTime=CACurrentMediaTime();_hasPending=YES;}return;}
     AVAudioPCMBuffer *buffer=_buffers[size_t(sound)];if(![buffer isKindOfClass:AVAudioPCMBuffer.class])return;
     // Pointer hover never cuts off another sound; anything else replaces whatever is playing.

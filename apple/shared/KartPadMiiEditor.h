@@ -45,5 +45,15 @@ void KartPadMiiPadShowFocus(void);
 void KartPadMiiPadSetSettings(NSWindow *window, NSTabView *tabs, void (^close)(void));
 // Settings has just opened from a controller: show the focus ring.
 void KartPadSettingsPadShowFocus(void);
+
+// The Mac shell's own screens (HOME, Controllers, Settings) share the Mii screens' menu sounds and
+// Mii portraits. sound is a kartpad::mii::EditorSound; prepare renders them from the game data once.
+void KartPadUIPrepareSounds(void);
+void KartPadUIPlaySound(NSInteger sound);
+BOOL KartPadUISoundsEnabled(void);
+void KartPadUISetSoundsEnabled(BOOL enabled);
+// The Mii's head portrait (an NSImage), or nil while it renders; ready runs on the main thread once
+// it is there (or failed).
+id _Nullable KartPadMiiPortrait(NSData *mii, void (^ready)(void));
 #endif
 NS_ASSUME_NONNULL_END

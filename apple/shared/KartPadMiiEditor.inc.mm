@@ -3,19 +3,7 @@
 #include "kartpad/mii/editor.h"
 #include <memory>
 #include <atomic>
-#if TARGET_OS_OSX
-#import <AppKit/AppKit.h>
-using KPMiiImage=NSImage;
-using KPMiiFont=NSFont;
-using KPMiiColor=NSColor;
-#else
-#import <UIKit/UIKit.h>
-using KPMiiImage=UIImage;
-using KPMiiFont=UIFont;
-using KPMiiColor=UIColor;
-#define NSFontWeightSemibold UIFontWeightSemibold
-#define NSFontWeightRegular UIFontWeightRegular
-#endif
+#include "KartPadStyle.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 __asm__(".linker_option \"-framework\", \"UniformTypeIdentifiers\"");
 #include "KartPadMiiPreview.inc.mm"
@@ -223,81 +211,6 @@ static void KPMiiRequestPortrait(NSData *mii,void(^ready)(void)){
         });
     });
 }
-// Mii Channel palette: silver gloss on pinstriped white, Wii-blue selection. Dark keeps the blue on graphite.
-struct KPPalette{unsigned background,stripe,panel,panelStroke,well,buttonTop,buttonBottom,buttonStroke,tabTop,tabBottom,selectedTop,selectedBottom,accentTop,accentBottom,accentStroke,text,secondaryText,icon,switchOff;CGFloat gloss,shadow;unsigned ledge,accentLedge;};
-static const KPPalette KPLightPalette{0xf2f4f5,0xe8ecee,0xfbfcfc,0xc9d1d6,0xe6ecef,0xffffff,0xdfe5e8,0xb3bdc3,0xfafbfc,0xd3dade,0xebf8fe,0xbde8fa,0x5ccbf3,0x1b9ad5,0x1784bc,0x3a4348,0x6a747a,0x5a646a,0xc3cbd0,.9,.20,0xb0bbc1,0x14709f};
-static const KPPalette KPDarkPalette{0x15181b,0x191d20,0x22272b,0x363d43,0x191d21,0x3c4349,0x2a3035,0x4c555c,0x3f464c,0x2b3136,0x1f4b5f,0x163748,0x4cc6f2,0x168ac4,0x63d0f5,0xe6ebee,0x9aa5ab,0xc3cbd0,0x4a535a,.13,.55,0x0c0e10,0x0d5880};
-static const KPPalette *KPP=&KPLightPalette;
-static void KPUsePalette(id view){
-#if TARGET_OS_OSX
-    BOOL dark=[[[(NSView*)view effectiveAppearance] bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua,NSAppearanceNameDarkAqua]] isEqualToString:NSAppearanceNameDarkAqua];
-#else
-    BOOL dark=[(UIView*)view traitCollection].userInterfaceStyle==UIUserInterfaceStyleDark;
-#endif
-    KPP=dark?&KPDarkPalette:&KPLightPalette;
-}
-static void KPRefresh(id view){
-#if TARGET_OS_OSX
-    [(NSView*)view setNeedsDisplay:YES];
-#else
-    [(UIView*)view setNeedsDisplay];
-#endif
-}
-static KPMiiColor *KPColor(unsigned hex,CGFloat alpha=1){return [KPMiiColor colorWithRed:((hex>>16)&255)/255. green:((hex>>8)&255)/255. blue:(hex&255)/255. alpha:alpha];}
-static void KPSetInk(CGContextRef c,unsigned hex,CGFloat alpha=1){CGFloat r=((hex>>16)&255)/255.,g=((hex>>8)&255)/255.,b=(hex&255)/255.;CGContextSetRGBFillColor(c,r,g,b,alpha);CGContextSetRGBStrokeColor(c,r,g,b,alpha);}
-static void KPFill(CGContextRef c,CGRect rect,unsigned hex,CGFloat radius=0,CGFloat alpha=1){
-    KPSetInk(c,hex,alpha);
-    CGPathRef path=CGPathCreateWithRoundedRect(rect,radius,radius,nullptr);CGContextAddPath(c,path);CGContextFillPath(c);CGPathRelease(path);
-}
-static void KPStroke(CGContextRef c,CGRect rect,unsigned hex,CGFloat width=1,CGFloat radius=0,CGFloat alpha=1){
-    KPSetInk(c,hex,alpha);CGContextSetLineWidth(c,width);radius=std::max(CGFloat(0),radius-width/2);
-    CGPathRef path=CGPathCreateWithRoundedRect(CGRectInset(rect,width/2,width/2),radius,radius,nullptr);CGContextAddPath(c,path);CGContextStrokePath(c);CGPathRelease(path);
-}
-static void KPText(NSString*text,CGRect rect,CGFloat size,unsigned hex,BOOL bold=NO,NSTextAlignment align=NSTextAlignmentCenter){
-    NSMutableParagraphStyle *style=[NSMutableParagraphStyle new];style.alignment=align;style.lineBreakMode=rect.size.height>size*2.6?NSLineBreakByWordWrapping:NSLineBreakByTruncatingTail;
-    KPMiiFont *font=[KPMiiFont systemFontOfSize:size weight:bold?NSFontWeightSemibold:NSFontWeightRegular];
-#if !TARGET_OS_OSX
-    font=[UIFontMetrics.defaultMetrics scaledFontForFont:font maximumPointSize:std::max(size,std::min(size*1.3,rect.size.height*.75))];
-#endif
-    [text drawInRect:rect withAttributes:@{NSFontAttributeName:font,NSForegroundColorAttributeName:KPColor(hex),NSParagraphStyleAttributeName:style}];
-}
-// One line of text centred vertically in a button face.
-static void KPCenteredText(NSString*text,CGRect r,CGFloat size,unsigned hex,BOOL bold=NO,NSTextAlignment align=NSTextAlignmentCenter){KPText(text,CGRectMake(r.origin.x,CGRectGetMidY(r)-size*.66,r.size.width,size*1.5),size,hex,bold,align);}
-static void KPGradientFill(CGContextRef c,CGRect r,CGFloat radius,unsigned top,unsigned bottom){
-    CGPathRef path=CGPathCreateWithRoundedRect(r,radius,radius,nullptr);CGContextSaveGState(c);CGContextAddPath(c,path);CGContextClip(c);CGPathRelease(path);
-    CGFloat colors[]={((top>>16)&255)/255.,((top>>8)&255)/255.,(top&255)/255.,1,((bottom>>16)&255)/255.,((bottom>>8)&255)/255.,(bottom&255)/255.,1};
-    CGColorSpaceRef space=CGColorSpaceCreateDeviceRGB();CGGradientRef gradient=CGGradientCreateWithColorComponents(space,colors,nullptr,2);
-    CGContextDrawLinearGradient(c,gradient,CGPointMake(0,r.origin.y),CGPointMake(0,CGRectGetMaxY(r)),0);CGGradientRelease(gradient);CGColorSpaceRelease(space);CGContextRestoreGState(c);
-}
-// Art tiles hold feature artwork; they stay light in dark mode so black eyes and dark hair remain visible.
-enum class KPStyle{Plain,Primary,Tab,Tile,Art,Round,Card};
-// Wii channel face: a rounded rectangle on a solid ledge, a soft vertical gradient and a double rim.
-// Pressing drops the face onto its ledge.
-// Hovering (Mac pointer, iPad trackpad) lights the rim in Wii blue, like the Wii pointer highlight.
-static void KPButtonFace(CGContextRef c,CGRect r,KPStyle style,BOOL selected,BOOL enabled,BOOL pressed,BOOL hovered=NO){
-    const KPPalette *theme=KPP;if(style==KPStyle::Art){KPP=&KPLightPalette;style=KPStyle::Tile;}
-    CGFloat ledge=3,radius=style==KPStyle::Card?14:style==KPStyle::Round?10:style==KPStyle::Tile?10:8;
-    CGRect body=CGRectMake(r.origin.x,r.origin.y,r.size.width,r.size.height-ledge);
-    BOOL accent=style==KPStyle::Primary||(selected&&style==KPStyle::Tab),highlight=selected&&!accent;
-    CGContextSaveGState(c);if(!enabled)CGContextSetAlpha(c,.42);
-    KPFill(c,CGRectOffset(body,0,ledge),accent?KPP->accentLedge:highlight?KPP->accentStroke:KPP->ledge,radius);
-    if(pressed)body=CGRectOffset(body,0,ledge-1);
-    unsigned top=accent?KPP->accentTop:highlight?KPP->selectedTop:style==KPStyle::Tab?KPP->tabTop:KPP->buttonTop;
-    unsigned bottom=accent?KPP->accentBottom:highlight?KPP->selectedBottom:style==KPStyle::Tab?KPP->tabBottom:KPP->buttonBottom;
-    if(pressed)std::swap(top,bottom);
-    KPGradientFill(c,body,radius,top,bottom);
-    BOOL lit=hovered&&enabled&&!pressed&&!highlight;
-    KPStroke(c,body,accent||highlight?KPP->accentStroke:lit?KPP->accentTop:KPP->buttonStroke,highlight||lit?2.5:1.25,radius);
-    if(!pressed)KPStroke(c,CGRectInset(body,highlight?4:3,highlight?4:3),0xffffff,1,radius-3,KPP->gloss*(accent?.45:1));
-    CGContextRestoreGState(c);KPP=theme;
-}
-// On/off indicator in the same rounded-rectangle language as the buttons.
-static void KPSwitch(CGContextRef c,CGRect track,BOOL on){
-    KPFill(c,track,on?KPP->accentBottom:KPP->switchOff,7);KPStroke(c,track,on?KPP->accentLedge:KPP->buttonStroke,1,7);
-    CGFloat d=track.size.height-6;CGRect knob=CGRectMake(on?CGRectGetMaxX(track)-d-3:track.origin.x+3,track.origin.y+3,d,d);
-    KPFill(c,CGRectOffset(knob,0,1.5),0x000000,5,.22);KPGradientFill(c,knob,5,0xffffff,0xe3e8eb);KPStroke(c,knob,KPP->buttonStroke,1,5);
-}
-static void KPLine(CGContextRef c,CGFloat x,CGFloat y,CGFloat x2,CGFloat y2){CGContextMoveToPoint(c,x,y);CGContextAddLineToPoint(c,x2,y2);CGContextStrokePath(c);}
 // Category silhouettes on a 40-unit grid, one stroke weight, drawn in the tab's ink.
 static void KPIcon(CGContextRef c,unsigned category,CGRect rect,unsigned ink){
     CGContextSaveGState(c);CGContextTranslateCTM(c,rect.origin.x,rect.origin.y);CGContextScaleCTM(c,rect.size.width/40,rect.size.height/40);
@@ -362,49 +275,6 @@ static void KPIcon(CGContextRef c,unsigned category,CGRect rect,unsigned ink){
     case 9: // Glasses: lenses, bridge and arms.
         for(CGFloat x:{2.5,22.5}){CGPathRef lens=CGPathCreateWithRoundedRect(CGRectMake(x,13,15,13),5.5,5.5,nullptr);CGContextAddPath(c,lens);CGContextStrokePath(c);CGPathRelease(lens);}
         CGContextMoveToPoint(c,17.5,18);CGContextAddQuadCurveToPoint(c,20,15,22.5,18);CGContextStrokePath(c);KPLine(c,2.5,16,1.5,12.5);KPLine(c,37.5,16,38.5,12.5);break;
-    }
-    CGContextRestoreGState(c);
-}
-static void KPArrowHead(CGContextRef c,CGPoint tip,CGFloat angle,CGFloat length=8){
-    CGContextMoveToPoint(c,tip.x,tip.y);CGContextAddLineToPoint(c,tip.x-length*cos(angle-.6),tip.y-length*sin(angle-.6));CGContextAddLineToPoint(c,tip.x-length*cos(angle+.6),tip.y-length*sin(angle+.6));CGContextClosePath(c);CGContextFillPath(c);
-}
-static void KPArrow(CGContextRef c,CGPoint from,CGPoint to,CGFloat width=3.4){
-    CGFloat angle=atan2(to.y-from.y,to.x-from.x);CGContextSetLineWidth(c,width);KPLine(c,from.x,from.y,to.x-4*cos(angle),to.y-4*sin(angle));KPArrowHead(c,to,angle);
-}
-// Clockwise arc (y-down) from start to end with a head at the end.
-static void KPArcArrow(CGContextRef c,CGPoint center,CGFloat radius,CGFloat start,CGFloat end,CGFloat width=3.4){
-    CGContextSetLineWidth(c,width);CGContextAddArc(c,center.x,center.y,radius,start,end,0);CGContextStrokePath(c);
-    CGFloat tip=end+.32;KPArrowHead(c,CGPointMake(center.x+radius*cos(tip),center.y+radius*sin(tip)),tip+M_PI_2,9);
-}
-enum class KPGlyph{Move,Across,Size,Rotate,Spacing,Undo,More,Chevron,Turn,Front,None,Check};
-static void KPControlIcon(CGContextRef c,CGRect rect,KPGlyph kind,int direction,unsigned ink){
-    CGContextSaveGState(c);CGContextTranslateCTM(c,rect.origin.x,rect.origin.y);CGContextScaleCTM(c,rect.size.width/40,rect.size.height/40);
-    KPSetInk(c,ink);CGContextSetLineJoin(c,kCGLineJoinRound);CGContextSetLineCap(c,kCGLineCapRound);
-    auto mirror=[&](BOOL flip){if(flip){CGContextTranslateCTM(c,40,0);CGContextScaleCTM(c,-1,1);}};
-    switch(kind){
-    case KPGlyph::Move: // −1 moves up.
-        CGContextFillEllipseInRect(c,CGRectMake(6,16,8,8));KPArrow(c,CGPointMake(26,direction<0?33:7),CGPointMake(26,direction<0?7:33));break;
-    case KPGlyph::Across:
-        CGContextFillEllipseInRect(c,CGRectMake(16,5,8,8));KPArrow(c,CGPointMake(direction<0?34:6,28),CGPointMake(direction<0?6:34,28));break;
-    case KPGlyph::Size:{ // Corner arrows pointing in (smaller) or out (larger).
-        CGFloat dot=direction<0?3.5:5.5;CGContextFillEllipseInRect(c,CGRectMake(20-dot,20-dot,dot*2,dot*2));
-        for(int x:{-1,1})for(int y:{-1,1}){CGPoint inner{20+x*8.5,20+y*8.5},outer{20+x*18.,20+y*18.};KPArrow(c,direction<0?outer:inner,direction<0?inner:outer,3);}break;}
-    case KPGlyph::Rotate: // Mii Channel tilt: a dot with a curved arrow over it (−1, clockwise) or under it (+1, counter-clockwise).
-        if(direction>0){CGContextTranslateCTM(c,0,40);CGContextScaleCTM(c,1,-1);}
-        CGContextFillEllipseInRect(c,CGRectMake(15,21.5,10,10));KPArcArrow(c,CGPointMake(20,26.5),14.5,M_PI*.93,M_PI*1.8,4.2);break;
-    case KPGlyph::Spacing:
-        if(direction<0){CGContextFillEllipseInRect(c,CGRectMake(16,16,8,8));KPArrow(c,{2,20},{13,20});KPArrow(c,{38,20},{27,20});}
-        else{CGContextFillEllipseInRect(c,CGRectMake(2,16,8,8));CGContextFillEllipseInRect(c,CGRectMake(30,16,8,8));KPArrow(c,{17,20},{11,20});KPArrow(c,{23,20},{29,20});}break;
-    case KPGlyph::Undo: // Redo is the mirror image.
-        mirror(direction>0);CGContextSetLineWidth(c,3.6);CGContextMoveToPoint(c,31,31);CGContextAddCurveToPoint(c,32,19,25,14,15,14);CGContextStrokePath(c);KPArrowHead(c,CGPointMake(6,14),M_PI,11);break;
-    case KPGlyph::More:for(CGFloat x:{8.,17.,26.})CGContextFillEllipseInRect(c,CGRectMake(x,17,6,6));break;
-    case KPGlyph::Chevron:mirror(direction<0);CGContextSetLineWidth(c,4.4);CGContextMoveToPoint(c,15,8);CGContextAddLineToPoint(c,27,20);CGContextAddLineToPoint(c,15,32);CGContextStrokePath(c);break;
-    case KPGlyph::Turn: // A three-quarter turn around the Mii.
-        mirror(direction<0);CGContextFillEllipseInRect(c,CGRectMake(15.5,16.5,9,9));KPArcArrow(c,CGPointMake(20,21),13,M_PI*.62,M_PI*2.02);break;
-    case KPGlyph::Front:
-        CGContextSetLineWidth(c,2.8);CGContextStrokeEllipseInRect(c,CGRectMake(10,7,20,25));CGContextFillEllipseInRect(c,CGRectMake(14.5,16,3.4,3.4));CGContextFillEllipseInRect(c,CGRectMake(22.1,16,3.4,3.4));KPLine(c,16.5,25,23.5,25);break;
-    case KPGlyph::None:CGContextSetLineWidth(c,3);CGContextStrokeEllipseInRect(c,CGRectMake(8,8,24,24));KPLine(c,12.5,27.5,27.5,12.5);break;
-    case KPGlyph::Check:CGContextSetLineWidth(c,4.5);CGContextMoveToPoint(c,9,21);CGContextAddLineToPoint(c,17,29);CGContextAddLineToPoint(c,31,12);CGContextStrokePath(c);break;
     }
     CGContextRestoreGState(c);
 }
@@ -665,9 +535,9 @@ static NSString *KPBirthdayPart(const kartpad::mii::Appearance &a,unsigned field
 static id KPLabelView(NSString *text,CGRect frame,CGFloat size=16,BOOL bold=NO,BOOL secondary=NO){
     KPMiiColor *color=KPColor(secondary?KPP->secondaryText:KPP->text);auto weight=bold?NSFontWeightSemibold:NSFontWeightRegular;
 #if TARGET_OS_OSX
-    NSTextField *label=[NSTextField wrappingLabelWithString:text];label.frame=frame;label.font=[NSFont systemFontOfSize:size weight:weight];label.textColor=color;
+    NSTextField *label=[NSTextField wrappingLabelWithString:text];label.frame=frame;label.font=KPStyleFont(size,weight);label.textColor=color;
 #else
-    UILabel *label=[[UILabel alloc]initWithFrame:frame];label.text=text;label.font=[UIFontMetrics.defaultMetrics scaledFontForFont:[UIFont systemFontOfSize:size weight:weight] maximumPointSize:std::max(size,std::min(size*1.3,frame.size.height*.75))];label.adjustsFontForContentSizeCategory=YES;label.textColor=color;label.numberOfLines=0;
+    UILabel *label=[[UILabel alloc]initWithFrame:frame];label.text=text;label.font=[UIFontMetrics.defaultMetrics scaledFontForFont:KPStyleFont(size,weight) maximumPointSize:std::max(size,std::min(size*1.3,frame.size.height*.75))];label.adjustsFontForContentSizeCategory=YES;label.textColor=color;label.numberOfLines=0;
 #endif
     return label;
 }
@@ -959,7 +829,7 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
             // A column wide enough for the longest title puts each adjustment on one row (less, title, more);
             // a narrower one stacks the title above the two buttons.
             CGFloat oneRow=176;
-            for(const auto &adjustment:adjustments){CGFloat size=TARGET_OS_OSX?12:14;oneRow=std::max(oneRow,std::ceil([adjustment.title sizeWithAttributes:@{NSFontAttributeName:[KPMiiFont systemFontOfSize:size weight:NSFontWeightSemibold]}].width)+108);}
+            for(const auto &adjustment:adjustments){CGFloat size=TARGET_OS_OSX?12:14;oneRow=std::max(oneRow,std::ceil([adjustment.title sizeWithAttributes:@{NSFontAttributeName:KPStyleFont(size,NSFontWeightSemibold)}].width)+108);}
             auto adjust=[&](CGFloat sx,CGFloat sy,CGFloat cw,BOOL emit)->CGFloat{
                 BOOL inline_=cw>=oneRow;CGFloat sy0=sy;
                 for(const auto &adjustment:adjustments){
@@ -1442,8 +1312,60 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
 @end
 #if TARGET_OS_OSX
 static KPMiiEditor *KPMiiActiveEditor;
+// Inside the game window (KartPad's Miis screen is there): the editor takes a borderless window laid
+// exactly over the game's content, which moves with it and follows its size; the canvas lays out at
+// the screens' 1280×720 design size and draws scaled to fit, like KartPad's other screens. Closing
+// it gives the keyboard back to the game window.
+@interface KPMiiEmbeddedWindow:NSWindow
+@end
+@implementation KPMiiEmbeddedWindow
+- (BOOL)canBecomeKeyWindow{return YES;}
+- (BOOL)canBecomeMainWindow{return YES;}
+- (void)performClose:(id)sender{
+    id<NSWindowDelegate> delegate=self.delegate;
+    if([delegate respondsToSelector:@selector(windowShouldClose:)]&&![delegate windowShouldClose:self])return;
+    [self close];
+}
+- (void)close{
+    NSWindow *game=self.parentWindow;[game removeChildWindow:self];[super close];
+    [game makeKeyAndOrderFront:nil];
+}
+@end
+@interface KPMiiScaledHost:NSView
+@property(nonatomic,weak) NSView *canvas;
+@end
+@implementation KPMiiScaledHost
+- (BOOL)isFlipped{return YES;}
+- (void)layout{
+    [super layout];NSView *canvas=self.canvas;if(!canvas)return;
+    const CGFloat w=self.bounds.size.width,h=self.bounds.size.height,scale=std::clamp(std::min(w/1280,h/720),CGFloat(.5),CGFloat(3));
+    canvas.frame=self.bounds;[canvas setBoundsSize:NSMakeSize(w/scale,h/scale)];canvas.needsLayout=YES;
+}
+@end
+static void KPMiiFollowGameWindow(NSWindow *host,NSWindow *game){
+    [host setFrame:[game convertRectToScreen:game.contentView.frame] display:YES];
+}
+static void KPMiiEmbedEditor(KPMiiEditor *editor,NSWindow *game){
+    if([editor.window isKindOfClass:KPMiiEmbeddedWindow.class]){[editor.window makeKeyAndOrderFront:nil];return;}
+    NSWindow *old=editor.window;NSView *canvas=editor.canvas;
+    KPMiiEmbeddedWindow *host=[[KPMiiEmbeddedWindow alloc]initWithContentRect:[game convertRectToScreen:game.contentView.frame] styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
+    host.releasedWhenClosed=NO;host.hasShadow=NO;host.title=old.title;
+    host.collectionBehavior=NSWindowCollectionBehaviorFullScreenAuxiliary|NSWindowCollectionBehaviorCanJoinAllSpaces;
+    KPMiiScaledHost *container=[[KPMiiScaledHost alloc]initWithFrame:NSMakeRect(0,0,host.frame.size.width,host.frame.size.height)];
+    container.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;old.contentView=nil;
+    canvas.autoresizingMask=NSViewNotSizable;[container addSubview:canvas];container.canvas=canvas;host.contentView=container;
+    old.delegate=nil;host.delegate=editor;editor.window=host;
+    [game addChildWindow:host ordered:NSWindowAbove];
+    for(NSNotificationName name in @[NSWindowDidResizeNotification,NSWindowDidEndLiveResizeNotification])
+        [NSNotificationCenter.defaultCenter addObserverForName:name object:game queue:nil usingBlock:^(NSNotification*note){if(host.visible)KPMiiFollowGameWindow(host,game);}];
+    [host makeKeyAndOrderFront:nil];
+}
 // Open above the parent (the Miis window), which sits above the game window.
 static void KPMiiShowEditor(id parent){
+    // The game window: no window controller, not a panel.
+    if([parent isKindOfClass:NSWindow.class]&&![parent isKindOfClass:NSPanel.class]&&[(NSWindow*)parent windowController]==nil&&KPMiiActiveEditor){
+        KPMiiEmbedEditor(KPMiiActiveEditor,(NSWindow*)parent);return;
+    }
     NSWindow *window=KPMiiActiveEditor.window;
     if([parent isKindOfClass:NSWindow.class])window.level=std::max(window.level,((NSWindow*)parent).level);
     window.collectionBehavior|=NSWindowCollectionBehaviorFullScreenAuxiliary;
@@ -1488,3 +1410,13 @@ static void KPMiiPresentEditor(id parent,NSUInteger slot,NSData *data,BOOL dupli
 #endif
 }
 void KartPadPresentMiiEditor(id parent,NSUInteger slot){KPMiiPresentEditor(parent,slot,nil,NO);}
+#if TARGET_OS_OSX
+void KartPadUIPrepareSounds(void){[[KPMiiSounds shared] prepare:KPMiiSoundArchivePath()];}
+void KartPadUIPlaySound(NSInteger sound){if(sound>=0&&sound<NSInteger(KPSound::Count))KPPlay(KPSound(sound));}
+BOOL KartPadUISoundsEnabled(void){return [KPMiiSounds shared].enabled;}
+void KartPadUISetSoundsEnabled(BOOL enabled){[KPMiiSounds shared].enabled=enabled;}
+id KartPadMiiPortrait(NSData *mii,void(^ready)(void)){
+    if(KPMiiImage *image=[KPMiiPortraits() objectForKey:mii])return image;
+    KPMiiRequestPortrait(mii,ready);return nil;
+}
+#endif
