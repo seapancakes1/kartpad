@@ -1,0 +1,1084 @@
+// KartPad's own screens over the game: HOME, Controllers, Settings and the rest. They live inside
+// the game window, above SDL's Metal view, so they follow it into full screen and onto a TV. Each is
+// laid out on one 1280×720 design canvas that scales with the window, like a console's menus: the
+// canvas is centred, and backgrounds and bars run on to the window's edges. While one is open the
+// game holds still (KartPadOverlayPauseWanted) and gets no input; a controller, the keyboard or the
+// mouse drives the screen. Controllers reach it through the Mii windows' reader
+// (KartPadMacMiis.inc.mm), which hands each press here while a screen is up.
+// Included by KartPadMacShell.mm after KartPadMacMiis.inc.mm.
+
+#include "KartPadStyle.h"
+#include "kartpad/mii/editor_sounds.h"
+#import <QuartzCore/QuartzCore.h>
+#include <vector>
+
+using KPUISound = kartpad::mii::EditorSound;
+static void KPUIPlay(KPUISound sound) { KartPadUIPlaySound(static_cast<NSInteger>(sound)); }
+
+static constexpr CGFloat KPUIDesignWidth = 1280, KPUIDesignHeight = 720;
+static BOOL KPUIReduceMotion() { return NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion; }
+// The controller is in use, so the pointer gets out of the way; moving the mouse brings it back.
+static void KPPadHideCursor() { [NSCursor setHiddenUntilMouseMoves:YES]; }
+
+#pragma mark Views
+
+// A view drawn in design points: it scales its drawing by `scale` (window points per design point),
+// so text and artwork stay sharp at any window size. Decoration ignores the mouse.
+@interface KPUIView : NSView
+@property(nonatomic) CGFloat scale;
+@property(nonatomic, copy) void (^paint)(CGContextRef c, CGSize size);
+- (CGSize)designSize;
+- (void)drawDesign:(CGContextRef)c size:(CGSize)size;
+@end
+
+@implementation KPUIView
+- (instancetype)initWithFrame:(NSRect)frame {
+  if ((self = [super initWithFrame:frame])) {
+    _scale = 1;
+    self.wantsLayer = YES;
+    self.layerContentsRedrawPolicy = NSViewLayerContentsRedrawOnSetNeedsDisplay;
+  }
+  return self;
+}
+- (BOOL)isFlipped { return YES; }
+- (BOOL)isOpaque { return NO; }
+- (NSView *)hitTest:(NSPoint)point { (void)point; return nil; }
+- (void)setScale:(CGFloat)scale {
+  if (scale == _scale) return;
+  _scale = scale;
+  self.needsDisplay = YES;
+}
+- (CGSize)designSize { return CGSizeMake(self.bounds.size.width / self.scale, self.bounds.size.height / self.scale); }
+- (void)viewDidChangeEffectiveAppearance {
+  [super viewDidChangeEffectiveAppearance];
+  self.needsDisplay = YES;
+}
+- (void)drawRect:(NSRect)rect {
+  (void)rect;
+  CGContextRef c = NSGraphicsContext.currentContext.CGContext;
+  KPUsePalette(self);
+  CGContextSaveGState(c);
+  CGContextScaleCTM(c, self.scale, self.scale);
+  [self drawDesign:c size:self.designSize];
+  CGContextRestoreGState(c);
+}
+- (void)drawDesign:(CGContextRef)c size:(CGSize)size {
+  if (self.paint) self.paint(c, size);
+}
+@end
+
+struct KPUIState {
+  BOOL focused, pressed, enabled;
+};
+
+@class KPScreen;
+
+// A Wii-style control: a face its block paints, the focus ring, a springy pop when it takes the focus,
+// and its own mouse tracking. (NSButton's tracking loop would stall the game, which shares this thread.)
+@interface KPUIButton : KPUIView
+// r is the face, in the button's design points; the margin around it holds the focus glow.
+@property(nonatomic, copy) void (^face)(CGContextRef c, CGRect r, KPUIState state);
+@property(nonatomic, copy) void (^activate)(void);
+// Left and right change the control in place (a slider, a choice) rather than moving the focus.
+@property(nonatomic, copy) BOOL (^adjust)(int direction);
+@property(nonatomic) BOOL enabled, focused, pressed;
+@property(nonatomic) KPUISound sound;
+@property(nonatomic) CGFloat margin, radius, focusScale;
+@property(nonatomic, copy) NSString *label;
+@property(nonatomic, weak) KPScreen *screen;
+// Something the screen keeps with the control (a slot number, a device).
+@property(nonatomic, strong) id tagObject;
+@property(nonatomic) NSInteger tag2;
+- (CGRect)faceRect;
+- (void)springTo:(CGFloat)scale;
+@end
+
+@interface KPScreen : KPUIView
+// The 1280×720 design area, in this screen's design points (the screen covers the whole window).
+@property(nonatomic, readonly) CGRect safe;
+@property(nonatomic, weak) KPUIButton *focus;
+// Pinstriped Mii Channel panel behind everything (the game hidden); otherwise the game shows dimmed.
+@property(nonatomic) BOOL solid;
+// The game holds still while this screen is open.
+@property(nonatomic) BOOL pausesGame;
+// The screen hosts a view with its own controller handling (the Mii browser): presses go there.
+@property(nonatomic) BOOL forwardsPads;
+@property(nonatomic, copy) NSString *title;
+- (void)build;
+- (void)layoutDesign;
+- (void)place:(NSView *)view at:(CGRect)design;
+- (KPUIButton *)button:(CGRect)design face:(void (^)(CGContextRef, CGRect, KPUIState))face action:(void (^)(void))action;
+- (NSArray<KPUIButton *> *)focusables;
+- (KPUIButton *)initialFocus;
+// A press the screen handles itself; NO leaves it to the navigator (moving, A, B).
+- (BOOL)handle:(KartPadMiiPadButton)button;
+// A key the screen wants as itself (a key being chosen for a button), before it is navigation.
+- (BOOL)takesKey:(NSEvent *)event;
+- (void)back;
+- (void)willAppear;
+- (void)didAppear;
+- (void)willDisappear;
+- (void)tick;
+- (void)relayout;
+@end
+
+#pragma mark Overlay controller
+
+@interface KPOverlayHost : NSView
+@end
+
+@interface KPToastView : KPUIView
+@property(nonatomic, copy) NSString *heading, *detail;
+@property(nonatomic) unsigned stripe;
+@property(nonatomic, copy) void (^icon)(CGContextRef c, CGRect r);
+@property(nonatomic, strong) NSImage *image;
+@end
+
+@interface KPOverlayController : NSObject
+@property(nonatomic, strong) KPOverlayHost *host;
+@property(nonatomic, strong) KPUIView *scrim;
+@property(nonatomic, strong) NSMutableArray<KPScreen *> *stack;
+@property(nonatomic, strong) NSMutableArray<KPToastView *> *toasts;
+@property(nonatomic, strong) id keyMonitor;
+@property(nonatomic, strong) NSTimer *ticker;
+@property(nonatomic, weak) NSResponder *previousResponder;
+// Return, Space or Enter went down on this control; its release presses it.
+@property(nonatomic, weak) KPUIButton *keyPressed, *padPressed;
+@property(nonatomic) CGFloat scale;
+@property(nonatomic) CGSize stage;
+// The latest press came from the keyboard (not a controller).
+@property(nonatomic) BOOL keyboardInput;
+// Setup, before there's a game window: the screens go in this window instead.
+@property(nonatomic, weak) NSWindow *hostWindow;
++ (instancetype)shared;
+- (BOOL)active;
+- (KPScreen *)top;
+- (void)present:(KPScreen *)screen;
+- (void)pop;
+- (void)replaceTop:(KPScreen *)screen;
+- (void)closeAll;
+- (void)focus:(KPUIButton *)button sound:(BOOL)sound;
+- (void)padPress:(KartPadMiiPadButton)button down:(BOOL)down;
+- (void)toast:(NSString *)heading detail:(NSString *)detail stripe:(unsigned)stripe
+         icon:(void (^)(CGContextRef c, CGRect r))icon image:(NSImage *)image;
+- (void)toast:(NSString *)heading detail:(NSString *)detail stripe:(unsigned)stripe
+         icon:(void (^)(CGContextRef c, CGRect r))icon image:(NSImage *)image seconds:(NSTimeInterval)seconds;
+- (void)relayout;
+@end
+static KPOverlayController *KPOverlay() { return [KPOverlayController shared]; }
+// The keys go to KartPad's screen while the game window has them, unless a name is being typed.
+static bool KPOverlayWantsKeys() {
+  NSWindow *key = NSApp.keyWindow;
+  if (key == nil || key != KPOverlay().host.window) return false;
+  return ![key.firstResponder isKindOfClass:NSTextView.class];
+}
+
+#pragma mark KPUIButton
+
+@implementation KPUIButton {
+  NSTrackingArea *_tracking;
+  BOOL _inside;
+}
+- (instancetype)initWithFrame:(NSRect)frame {
+  if ((self = [super initWithFrame:frame])) {
+    _enabled = YES;
+    _margin = 8;
+    _radius = 14;
+    _focusScale = 1.04;
+    _sound = KPUISound::Press;
+  }
+  return self;
+}
+- (NSView *)hitTest:(NSPoint)point {
+  if (self.hidden || !self.enabled) return nil;
+  NSPoint local = [self convertPoint:point fromView:self.superview];
+  return NSPointInRect(local, self.bounds) ? self : nil;
+}
+- (CGRect)faceRect {
+  CGSize size = self.designSize;
+  return CGRectMake(self.margin, self.margin, size.width - 2 * self.margin, size.height - 2 * self.margin);
+}
+- (void)setEnabled:(BOOL)enabled {
+  if (enabled == _enabled) return;
+  _enabled = enabled;
+  self.needsDisplay = YES;
+}
+- (void)setPressed:(BOOL)pressed {
+  if (pressed == _pressed) return;
+  _pressed = pressed;
+  self.needsDisplay = YES;
+  [self springTo:pressed ? 0.97 : (self.focused ? self.focusScale : 1)];
+}
+- (void)setFocused:(BOOL)focused {
+  if (focused == _focused) return;
+  _focused = focused;
+  self.needsDisplay = YES;
+  [self springTo:focused ? self.focusScale : 1];
+  if (focused) NSAccessibilityPostNotification(self, NSAccessibilityFocusedUIElementChangedNotification);
+}
+// Scales about the centre with a spring; Reduce Motion skips the motion (the ring still shows focus).
+- (void)springTo:(CGFloat)k {
+  CALayer *layer = self.layer;
+  if (layer == nil) return;
+  const CGSize size = layer.bounds.size;
+  const CGPoint anchor = layer.anchorPoint;
+  const CGFloat cx = size.width * (0.5 - anchor.x), cy = size.height * (0.5 - anchor.y);
+  const CATransform3D target = KPUIReduceMotion() || k == 1 ? CATransform3DIdentity :
+      CATransform3DConcat(CATransform3DConcat(CATransform3DMakeTranslation(-cx, -cy, 0), CATransform3DMakeScale(k, k, 1)),
+                          CATransform3DMakeTranslation(cx, cy, 0));
+  const CATransform3D from = layer.presentationLayer ? layer.presentationLayer.transform : layer.transform;
+  [CATransaction begin];
+  [CATransaction setDisableActions:YES];
+  layer.transform = target;
+  if (!KPUIReduceMotion()) {
+    CASpringAnimation *spring = [CASpringAnimation animationWithKeyPath:@"transform"];
+    spring.fromValue = [NSValue valueWithCATransform3D:from];
+    spring.toValue = [NSValue valueWithCATransform3D:target];
+    spring.damping = 15;
+    spring.stiffness = 320;
+    spring.mass = 1;
+    spring.duration = spring.settlingDuration;
+    [layer addAnimation:spring forKey:@"pop"];
+  }
+  [CATransaction commit];
+}
+- (void)drawDesign:(CGContextRef)c size:(CGSize)size {
+  (void)size;
+  const CGRect face = self.faceRect;
+  const KPUIState state{self.focused, self.pressed, self.enabled};
+  if (self.focused && self.enabled) {
+    // Wii-blue glow around the face, as the Wii pointer lights what it rests on.
+    CGContextSaveGState(c);
+    CGContextSetShadowWithColor(c, CGSizeZero, 10, KPColor(KPP->accentTop, 0.85).CGColor);
+    KPStroke(c, CGRectInset(face, -3.5, -3.5), KPP->accentTop, 3.5, self.radius + 3.5);
+    CGContextRestoreGState(c);
+  }
+  if (self.face) self.face(c, face, state);
+}
+- (void)updateTrackingAreas {
+  [super updateTrackingAreas];
+  if (_tracking) [self removeTrackingArea:_tracking];
+  _tracking = [[NSTrackingArea alloc] initWithRect:NSZeroRect
+      options:NSTrackingMouseEnteredAndExited | NSTrackingMouseMoved | NSTrackingActiveAlways | NSTrackingInVisibleRect
+        owner:self userInfo:nil];
+  [self addTrackingArea:_tracking];
+}
+// The pointer is the Wii pointer: what it rests on takes the focus.
+- (void)mouseEntered:(NSEvent *)event {
+  (void)event;
+  if (self.enabled && self.screen == KPOverlay().top) [KPOverlay() focus:self sound:YES];
+}
+- (void)mouseMoved:(NSEvent *)event {
+  (void)event;
+  if (self.enabled && !self.focused && self.screen == KPOverlay().top) [KPOverlay() focus:self sound:NO];
+}
+- (void)mouseDown:(NSEvent *)event {
+  (void)event;
+  if (!self.enabled) return;
+  _inside = YES;
+  self.pressed = YES;
+}
+- (void)mouseDragged:(NSEvent *)event {
+  _inside = NSPointInRect([self convertPoint:event.locationInWindow fromView:nil], self.bounds);
+  self.pressed = _inside;
+}
+- (void)mouseUp:(NSEvent *)event {
+  (void)event;
+  const BOOL fire = self.pressed && _inside;
+  self.pressed = NO;
+  if (fire) [self fire];
+}
+- (void)scrollWheel:(NSEvent *)event {
+  if (self.adjust && fabs(event.scrollingDeltaY) > 0.5 && fabs(event.scrollingDeltaY) > fabs(event.scrollingDeltaX))
+    self.adjust(event.scrollingDeltaY > 0 ? 1 : -1);
+  else [super scrollWheel:event];
+}
+- (void)fire {
+  if (!self.enabled || !self.activate) return;
+  if (self.sound != KPUISound::Count) KPUIPlay(self.sound);
+  void (^activate)(void) = self.activate;
+  // Let this press finish before the action opens or closes a screen.
+  dispatch_async(dispatch_get_main_queue(), activate);
+}
+- (BOOL)isAccessibilityElement { return YES; }
+- (NSAccessibilityRole)accessibilityRole { return NSAccessibilityButtonRole; }
+- (NSString *)accessibilityLabel { return self.label; }
+- (BOOL)accessibilityPerformPress { [self fire]; return YES; }
+- (BOOL)isAccessibilityEnabled { return self.enabled; }
+@end
+
+// A little side-to-side wobble about the centre: a card saying hello (a controller joined, was found
+// or pressed). Nothing with Reduce Motion.
+static void KPUIWobble(NSView *view) {
+  CALayer *layer = view.layer;
+  if (layer == nil || KPUIReduceMotion()) return;
+  const CGSize size = layer.bounds.size;
+  const CGFloat cx = size.width * (0.5 - layer.anchorPoint.x), cy = size.height * (0.5 - layer.anchorPoint.y);
+  NSMutableArray *frames = [NSMutableArray array];
+  for (NSNumber *angle in @[@0, @0.05, @-0.045, @0.03, @-0.015, @0]) {
+    const CATransform3D turn = CATransform3DConcat(
+        CATransform3DConcat(CATransform3DMakeTranslation(-cx, -cy, 0), CATransform3DMakeRotation(angle.doubleValue, 0, 0, 1)),
+        CATransform3DMakeTranslation(cx, cy, 0));
+    [frames addObject:[NSValue valueWithCATransform3D:CATransform3DConcat(turn, layer.transform)]];
+  }
+  CAKeyframeAnimation *wobble = [CAKeyframeAnimation animationWithKeyPath:@"transform"];
+  wobble.values = frames;
+  wobble.duration = 0.55;
+  wobble.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
+  [layer addAnimation:wobble forKey:@"wobble"];
+}
+
+#pragma mark KPScreen
+
+@implementation KPScreen {
+  BOOL _built;
+}
+- (instancetype)initWithFrame:(NSRect)frame {
+  if ((self = [super initWithFrame:frame])) {
+    _pausesGame = YES;
+  }
+  return self;
+}
+// Screens catch every click, so nothing reaches the game under them.
+- (NSView *)hitTest:(NSPoint)point {
+  if (self.hidden) return nil;
+  NSView *hit = [super hitTest:point];
+  if (hit != nil) return hit;
+  NSPoint local = [self convertPoint:point fromView:self.superview];
+  return NSPointInRect(local, self.bounds) ? self : nil;
+}
+- (void)mouseDown:(NSEvent *)event { (void)event; }
+- (void)rightMouseDown:(NSEvent *)event { (void)event; }
+- (CGRect)safe {
+  const CGSize size = self.designSize;
+  return CGRectMake(std::round((size.width - KPUIDesignWidth) / 2), std::round((size.height - KPUIDesignHeight) / 2),
+                    KPUIDesignWidth, KPUIDesignHeight);
+}
+- (void)build {}
+- (void)layoutDesign {}
+- (void)relayout {
+  if (!_built) {
+    _built = YES;
+    [self build];
+  }
+  [self layoutDesign];
+  self.needsDisplay = YES;
+}
+- (void)place:(NSView *)view at:(CGRect)design {
+  CGFloat margin = [view isKindOfClass:KPUIButton.class] ? ((KPUIButton *)view).margin : 0;
+  const CGRect r = CGRectInset(design, -margin, -margin);
+  const CGFloat s = self.scale;
+  view.frame = NSMakeRect(std::round(r.origin.x * s), std::round(r.origin.y * s), std::round(r.size.width * s),
+                          std::round(r.size.height * s));
+  if ([view isKindOfClass:KPUIView.class]) {
+    KPUIView *ui = (KPUIView *)view;
+    // Rounding the frame to whole points shifts its scale a hair; keep drawing exact to the frame.
+    ui.scale = r.size.width > 0 ? view.frame.size.width / r.size.width : s;
+  }
+  if (view.superview != self) [self addSubview:view];
+}
+- (KPUIButton *)button:(CGRect)design face:(void (^)(CGContextRef, CGRect, KPUIState))face action:(void (^)(void))action {
+  KPUIButton *button = [[KPUIButton alloc] initWithFrame:NSZeroRect];
+  button.face = face;
+  button.activate = action;
+  button.screen = self;
+  [self place:button at:design];
+  return button;
+}
+- (NSArray<KPUIButton *> *)focusables {
+  NSMutableArray *found = [NSMutableArray array];
+  __block void (^walk)(NSView *) = nil;
+  __block __weak void (^weakWalk)(NSView *) = nil;
+  weakWalk = walk = ^(NSView *view) {
+    for (NSView *child in view.subviews) {
+      if (child.hidden) continue;
+      if ([child isKindOfClass:KPUIButton.class] && ((KPUIButton *)child).enabled && ((KPUIButton *)child).activate)
+        [found addObject:child];
+      else if ([child isKindOfClass:KPUIButton.class] && ((KPUIButton *)child).enabled && ((KPUIButton *)child).adjust)
+        [found addObject:child];
+      weakWalk(child);
+    }
+  };
+  walk(self);
+  return found;
+}
+- (KPUIButton *)initialFocus { return self.focusables.firstObject; }
+- (BOOL)handle:(KartPadMiiPadButton)button { (void)button; return NO; }
+- (BOOL)takesKey:(NSEvent *)event { (void)event; return NO; }
+- (void)back { [KPOverlay() pop]; }
+- (void)willAppear {}
+- (void)didAppear {}
+- (void)willDisappear {}
+- (void)tick {}
+- (void)drawDesign:(CGContextRef)c size:(CGSize)size {
+  if (!self.solid) return;
+  KPFill(c, CGRectMake(0, 0, size.width, size.height), KPP->background);
+  KPPinstripes(c, CGRectMake(0, 0, size.width, size.height), KPP->stripe);
+}
+@end
+
+#pragma mark Host and toasts
+
+@implementation KPOverlayHost
+- (BOOL)isFlipped { return YES; }
+- (BOOL)acceptsFirstResponder { return YES; }
+// Over the game the host is invisible to the mouse unless a screen is open.
+- (NSView *)hitTest:(NSPoint)point {
+  if (!KPOverlay().active) return nil;
+  NSView *hit = [super hitTest:point];
+  return hit ?: self;
+}
+- (void)setFrameSize:(NSSize)size {
+  const BOOL changed = !NSEqualSizes(size, self.frame.size);
+  [super setFrameSize:size];
+  if (changed) [KPOverlay() relayout];
+}
+// Keys are handled by the controller's monitor; swallow the rest so the window doesn't beep.
+- (void)keyDown:(NSEvent *)event { (void)event; }
+@end
+
+@implementation KPToastView
+- (void)drawDesign:(CGContextRef)c size:(CGSize)size {
+  const CGRect card = CGRectMake(6, 4, size.width - 12, size.height - 12);
+  CGContextSaveGState(c);
+  CGContextSetShadowWithColor(c, CGSizeMake(0, 4), 14, [NSColor colorWithWhite:0 alpha:0.28].CGColor);
+  KPFill(c, card, KPP->panel, 18);
+  CGContextRestoreGState(c);
+  KPStroke(c, card, KPP->panelStroke, 1, 18);
+  // The player's colour runs down the leading edge.
+  if (self.stripe) {
+    CGContextSaveGState(c);
+    CGPathRef clip = CGPathCreateWithRoundedRect(card, 18, 18, nullptr);
+    CGContextAddPath(c, clip);
+    CGContextClip(c);
+    CGPathRelease(clip);
+    KPFill(c, CGRectMake(card.origin.x, card.origin.y, 8, card.size.height), self.stripe);
+    CGContextRestoreGState(c);
+  }
+  const CGRect art = CGRectMake(card.origin.x + 22, card.origin.y + (card.size.height - 52) / 2, 52, 52);
+  if (self.image) {
+    KPFill(c, art, KPLightPalette.well, 14);
+    CGContextSaveGState(c);
+    NSGraphicsContext *previous = NSGraphicsContext.currentContext;
+    [self.image drawInRect:CGRectInset(art, 3, 3) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver
+                  fraction:1 respectFlipped:YES hints:@{NSImageHintInterpolation: @(NSImageInterpolationHigh)}];
+    NSGraphicsContext.currentContext = previous;
+    CGContextRestoreGState(c);
+  } else if (self.icon) {
+    KPFill(c, art, KPP->well, 14);
+    self.icon(c, CGRectInset(art, 9, 9));
+  }
+  const CGFloat x = art.origin.x + art.size.width + 16, w = CGRectGetMaxX(card) - x - 18;
+  if (self.detail.length) {
+    KPTextWeight(self.heading, CGRectMake(x, card.origin.y + 17, w, 26), 19, KPP->text, NSFontWeightSemibold, NSTextAlignmentLeft);
+    KPTextWeight(self.detail, CGRectMake(x, card.origin.y + 44, w, 22), 15, KPP->secondaryText, NSFontWeightRegular, NSTextAlignmentLeft);
+  } else {
+    KPTextWeight(self.heading, CGRectMake(x, CGRectGetMidY(card) - 13, w, 26), 19, KPP->text, NSFontWeightSemibold, NSTextAlignmentLeft);
+  }
+}
+@end
+
+#pragma mark Navigation
+
+// The control the pressed direction leads to, in design points (dy positive downwards): one straight
+// ahead first (overlapping sideways), then one more ahead than aside, then anything further that way;
+// the nearest wins, distance ahead weighing more than sideways offset.
+static KPUIButton *KPUINearest(NSArray<KPUIButton *> *candidates, KPUIButton *from, int dx, int dy) {
+  struct Span { CGFloat lo, hi; };
+  auto frame = [](NSView *view) { return [view convertRect:((KPUIButton *)view).bounds toView:nil]; };
+  // Window coordinates run upwards.
+  auto along = [&](NSRect r) -> Span {
+    return dx > 0 ? Span{NSMinX(r), NSMaxX(r)} : dx < 0 ? Span{-NSMaxX(r), -NSMinX(r)}
+         : dy > 0 ? Span{-NSMaxY(r), -NSMinY(r)} : Span{NSMinY(r), NSMaxY(r)};
+  };
+  auto across = [&](NSRect r) -> Span { return dx ? Span{NSMinY(r), NSMaxY(r)} : Span{NSMinX(r), NSMaxX(r)}; };
+  const NSRect here = frame(from);
+  const Span a = along(here), p = across(here);
+  KPUIButton *best = nil;
+  int bestRank = INT_MAX;
+  CGFloat bestScore = CGFLOAT_MAX;
+  for (KPUIButton *view in candidates) {
+    if (view == from) continue;
+    const NSRect there = frame(view);
+    const Span b = along(there), q = across(there);
+    if (!((a.lo < b.lo || a.hi <= b.lo) && a.hi < b.hi)) continue;
+    const CGFloat gap = std::max(CGFloat(0), b.lo - a.hi), overlap = std::min(p.hi, q.hi) - std::max(p.lo, q.lo),
+                  side = std::max(CGFloat(0), -overlap);
+    const int rank = overlap > 0 ? 0 : gap >= side ? 1 : 2;
+    if (rank == 2 && b.lo < a.hi) continue;
+    const CGFloat offset = (q.lo + q.hi - p.lo - p.hi) / 2, score = 13 * gap * gap + offset * offset;
+    if (rank < bestRank || (rank == bestRank && score < bestScore)) {
+      bestRank = rank;
+      bestScore = score;
+      best = view;
+    }
+  }
+  return best;
+}
+
+@implementation KPOverlayController
+
++ (instancetype)shared {
+  static KPOverlayController *shared;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{ shared = [KPOverlayController new]; });
+  return shared;
+}
+
+- (instancetype)init {
+  if ((self = [super init])) {
+    _stack = [NSMutableArray array];
+    _toasts = [NSMutableArray array];
+    _scale = 1;
+    _host = [[KPOverlayHost alloc] initWithFrame:NSZeroRect];
+    _host.wantsLayer = YES;
+    _host.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    _host.hidden = YES;
+    _scrim = [[KPUIView alloc] initWithFrame:NSZeroRect];
+    _scrim.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    _scrim.paint = ^(CGContextRef c, CGSize size) {
+      KPFill(c, CGRectMake(0, 0, size.width, size.height), 0x000000, 0, KPP == &KPDarkPalette ? 0.62 : 0.46);
+    };
+    [_host addSubview:_scrim];
+    _scrim.alphaValue = 0;
+  }
+  return self;
+}
+
+- (BOOL)active { return self.stack.count > 0; }
+- (KPScreen *)top { return self.stack.lastObject; }
+
+// Into the game window, above SDL's Metal view (which SDL can re-create), once that window exists.
+- (BOOL)attach {
+  NSWindow *game = self.hostWindow ?: KPGameWindow();
+  NSView *content = game.contentView;
+  if (content == nil) return NO;
+  if (self.host.superview != content) {
+    [self.host removeFromSuperview];
+    self.host.frame = content.bounds;
+    [content addSubview:self.host positioned:NSWindowAbove relativeTo:nil];
+    [self relayout];
+  } else if (content.subviews.lastObject != self.host) {
+    [content addSubview:self.host positioned:NSWindowAbove relativeTo:nil];
+  }
+  return YES;
+}
+
+- (void)relayout {
+  const NSSize size = self.host.bounds.size;
+  if (size.width < 1 || size.height < 1) return;
+  self.scale = std::min(size.width / KPUIDesignWidth, size.height / KPUIDesignHeight);
+  self.stage = CGSizeMake(size.width / self.scale, size.height / self.scale);
+  self.scrim.frame = self.host.bounds;
+  self.scrim.scale = self.scale;
+  for (KPScreen *screen in self.stack) {
+    screen.frame = self.host.bounds;
+    screen.scale = self.scale;
+    [screen relayout];
+  }
+  [self layoutToasts:NO];
+}
+
+- (void)showHost {
+  self.host.hidden = NO;
+  if (self.active) {
+    NSWindow *game = self.host.window;
+    // The keyboard comes to the screens: arrows, Return and Escape go to the focus, not the game. A
+    // hosted screen (the Mii browser) puts its own view first instead.
+    if (!self.top.forwardsPads && game.firstResponder != self.host) [game makeFirstResponder:self.host];
+    if (!KPUIBackgroundAutomation() && !game.isKeyWindow && NSApp.active) [game makeKeyAndOrderFront:nil];
+    [self installKeyMonitor];
+    [self startTicker];
+  }
+}
+
+- (void)present:(KPScreen *)screen {
+  if (![self attach]) return;
+  const BOOL opening = !self.active;
+  if (opening) self.previousResponder = self.host.window.firstResponder;
+  KartPadUIPrepareSounds();
+  [self.top willDisappear];
+  self.top.hidden = YES;
+  screen.frame = self.host.bounds;
+  screen.scale = self.scale;
+  [self.stack addObject:screen];
+  [self.host addSubview:screen positioned:NSWindowAbove relativeTo:self.scrim];
+  [screen relayout];
+  [screen willAppear];
+  [self showHost];
+  [self layoutToasts:NO];
+  KPUIButton *focus = screen.focus.enabled && !screen.focus.hidden ? screen.focus : [screen initialFocus];
+  screen.focus = nil;
+  [self focus:focus sound:NO];
+  if (opening) {
+    KPUIPlay(KPUISound::Open);
+    [self fadeScrim:!screen.solid];
+    AppendSessionLine(@"overlay=opened");
+  }
+  [self animateIn:screen];
+  [screen didAppear];
+}
+
+- (void)fadeScrim:(BOOL)visible {
+  [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context) {
+    context.duration = KPUIReduceMotion() ? 0.12 : 0.2;
+    self.scrim.animator.alphaValue = visible ? 1 : 0;
+  }];
+}
+
+- (void)animateIn:(KPScreen *)screen {
+  screen.alphaValue = 0;
+  [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context) {
+    context.duration = KPUIReduceMotion() ? 0.12 : 0.18;
+    screen.animator.alphaValue = 1;
+  }];
+}
+
+- (void)removeScreen:(KPScreen *)screen {
+  [screen willDisappear];
+  [self.stack removeObject:screen];
+  [screen removeFromSuperview];
+}
+
+- (void)pop {
+  KPScreen *leaving = self.top;
+  if (leaving == nil) return;
+  if (self.stack.count == 1) {
+    [self closeAll];
+    return;
+  }
+  [self removeScreen:leaving];
+  KPUIPlay(KPUISound::Close);
+  KPScreen *back = self.top;
+  back.hidden = NO;
+  [back relayout];
+  [back willAppear];
+  [self showHost];
+  [self fadeScrim:!back.solid];
+  [self focus:back.focus.enabled && !back.focus.hidden ? back.focus : [back initialFocus] sound:NO];
+  [self animateIn:back];
+  [back didAppear];
+}
+
+- (void)replaceTop:(KPScreen *)screen {
+  KPScreen *leaving = self.top;
+  if (leaving) [self removeScreen:leaving];
+  [self present:screen];
+}
+
+// Back to the game: every screen closes, the keyboard returns to the game and the game carries on
+// once the buttons that closed it are let go.
+- (void)closeAll {
+  if (!self.active) return;
+  NSArray<KPScreen *> *closing = self.stack.copy;
+  for (KPScreen *screen in closing.reverseObjectEnumerator) [screen willDisappear];
+  [self.stack removeAllObjects];
+  KPUIPlay(KPUISound::Close);
+  AppendSessionLine(@"overlay=closed");
+  [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context) {
+    context.duration = KPUIReduceMotion() ? 0.1 : 0.16;
+    for (KPScreen *screen in closing) screen.animator.alphaValue = 0;
+    self.scrim.animator.alphaValue = 0;
+  } completionHandler:^{
+    for (KPScreen *screen in closing) [screen removeFromSuperview];
+    if (!self.active && self.toasts.count == 0) self.host.hidden = YES;
+  }];
+  NSWindow *game = self.host.window;
+  if (game.firstResponder == self.host) {
+    NSResponder *previous = self.previousResponder;
+    [game makeFirstResponder:previous.nextResponder || [previous isKindOfClass:NSView.class] ? previous : game.contentView];
+  }
+  [self removeKeyMonitor];
+  [self.ticker invalidate];
+  self.ticker = nil;
+}
+
+- (void)focus:(KPUIButton *)button sound:(BOOL)sound {
+  KPScreen *screen = self.top;
+  if (button == screen.focus) return;
+  screen.focus.focused = NO;
+  screen.focus.pressed = NO;
+  screen.focus = button;
+  button.focused = YES;
+  if (sound && button) KPUIPlay(KPUISound::Hover);
+}
+
+- (void)move:(int)dx dy:(int)dy {
+  KPScreen *screen = self.top;
+  NSArray<KPUIButton *> *controls = [screen focusables];
+  KPUIButton *focus = screen.focus;
+  if (focus == nil || ![controls containsObject:focus]) {
+    [self focus:[screen initialFocus] sound:YES];
+    return;
+  }
+  if (dx && focus.adjust && focus.adjust(dx)) return;
+  KPUIButton *next = KPUINearest(controls, focus, dx, dy);
+  if (next) [self focus:next sound:YES];
+}
+
+- (void)padPress:(KartPadMiiPadButton)button down:(BOOL)down {
+  KPScreen *screen = self.top;
+  if (screen == nil) return;
+  KPPadHideCursor();
+  if (!down) {
+    // A acts on release, on what it went down on.
+    if (button != KartPadMiiPadConfirm) return;
+    KPUIButton *pressed = self.padPressed;
+    self.padPressed = nil;
+    if (pressed == nil) return;
+    pressed.pressed = NO;
+    if (pressed == screen.focus) [pressed fire];
+    return;
+  }
+  if ([screen handle:button]) return;
+  switch (button) {
+    case KartPadMiiPadUp: [self move:0 dy:-1]; break;
+    case KartPadMiiPadDown: [self move:0 dy:1]; break;
+    case KartPadMiiPadLeft: [self move:-1 dy:0]; break;
+    case KartPadMiiPadRight: [self move:1 dy:0]; break;
+    case KartPadMiiPadConfirm:
+      if (screen.focus.enabled && screen.focus.activate) {
+        screen.focus.pressed = YES;
+        self.padPressed = screen.focus;
+      } else if (screen.focus == nil) {
+        [self focus:[screen initialFocus] sound:YES];
+      }
+      break;
+    case KartPadMiiPadBack: [screen back]; break;
+    case KartPadMiiPadStart: [self closeAll]; break;
+    default: break;
+  }
+}
+
+#pragma mark Keyboard
+
+// While a screen is up, the keyboard drives it: arrows move, Return / Space / Enter press, Escape and
+// Delete go back, Tab and Shift-Tab change page. Command shortcuts still reach the menus.
+- (BOOL)handleKey:(NSEvent *)event {
+  const NSEventModifierFlags modifiers = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
+  if (modifiers & (NSEventModifierFlagCommand | NSEventModifierFlagControl)) return NO;
+  if (event.window != self.host.window) return NO;
+  self.keyboardInput = YES;
+  if ([self.top takesKey:event]) return YES;
+  // A hosted screen with its own keyboard handling (the Mii browser) gets the keys as they are.
+  if (self.top.forwardsPads) return NO;
+  const unsigned short key = event.keyCode;
+  const BOOL down = event.type == NSEventTypeKeyDown;
+  KartPadMiiPadButton button = KartPadMiiPadButtonCount;
+  switch (key) {
+    case kVK_UpArrow: button = KartPadMiiPadUp; break;
+    case kVK_DownArrow: button = KartPadMiiPadDown; break;
+    case kVK_LeftArrow: button = KartPadMiiPadLeft; break;
+    case kVK_RightArrow: button = KartPadMiiPadRight; break;
+    case kVK_Return: case kVK_ANSI_KeypadEnter: case kVK_Space: button = KartPadMiiPadConfirm; break;
+    case kVK_Escape: case kVK_Delete: button = KartPadMiiPadBack; break;
+    case kVK_Tab: button = (modifiers & NSEventModifierFlagShift) ? KartPadMiiPadPreviousTab : KartPadMiiPadNextTab; break;
+    default: break;
+  }
+  if (button == KartPadMiiPadButtonCount) return YES;  // other keys do nothing here (and don't beep)
+  if (!down) {
+    if (button == KartPadMiiPadConfirm) {
+      KPUIButton *pressed = self.keyPressed;
+      self.keyPressed = nil;
+      pressed.pressed = NO;
+      if (pressed && pressed == self.top.focus) [pressed fire];
+    }
+    return YES;
+  }
+  if (button == KartPadMiiPadConfirm) {
+    if (event.isARepeat) return YES;
+    KPScreen *screen = self.top;
+    if ([screen handle:button]) return YES;
+    if (screen.focus.enabled && screen.focus.activate) {
+      screen.focus.pressed = YES;
+      self.keyPressed = screen.focus;
+    }
+    return YES;
+  }
+  if (button == KartPadMiiPadBack && event.isARepeat) return YES;
+  [self padPress:button down:YES];
+  return YES;
+}
+
+- (void)installKeyMonitor {
+  if (self.keyMonitor) return;
+  __weak KPOverlayController *weakSelf = self;
+  self.keyMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown | NSEventMaskKeyUp
+      handler:^NSEvent *(NSEvent *event) {
+        KPOverlayController *overlay = weakSelf;
+        if (overlay == nil || !overlay.active || !KPOverlayWantsKeys()) return event;
+        return [overlay handleKey:event] ? nil : event;
+      }];
+}
+
+- (void)removeKeyMonitor {
+  if (self.keyMonitor) [NSEvent removeMonitor:self.keyMonitor];
+  self.keyMonitor = nil;
+}
+
+#pragma mark Ticks and toasts
+
+- (void)startTicker {
+  if (self.ticker) return;
+  __weak KPOverlayController *weakSelf = self;
+  self.ticker = [NSTimer timerWithTimeInterval:1.0 / 30 repeats:YES block:^(NSTimer *timer) {
+    (void)timer;
+    @autoreleasepool { [weakSelf.top tick]; }
+  }];
+  [NSRunLoop.mainRunLoop addTimer:self.ticker forMode:NSRunLoopCommonModes];
+}
+
+// Toasts stack down from the top right, in front of the game and any screen, and never take the
+// focus or a click.
+- (void)toast:(NSString *)heading detail:(NSString *)detail stripe:(unsigned)stripe
+         icon:(void (^)(CGContextRef c, CGRect r))icon image:(NSImage *)image {
+  [self toast:heading detail:detail stripe:stripe icon:icon image:image seconds:3.4];
+}
+- (void)toast:(NSString *)heading detail:(NSString *)detail stripe:(unsigned)stripe
+         icon:(void (^)(CGContextRef c, CGRect r))icon image:(NSImage *)image seconds:(NSTimeInterval)seconds {
+  if (![self attach]) return;
+  KPToastView *toast = [[KPToastView alloc] initWithFrame:NSZeroRect];
+  toast.heading = heading;
+  toast.detail = detail;
+  toast.stripe = stripe;
+  toast.icon = icon;
+  toast.image = image;
+  [self.toasts addObject:toast];
+  while (self.toasts.count > 3) {
+    [self.toasts.firstObject removeFromSuperview];
+    [self.toasts removeObjectAtIndex:0];
+  }
+  self.host.hidden = NO;
+  [self.host addSubview:toast positioned:NSWindowAbove relativeTo:nil];
+  [self layoutToasts:NO];
+  toast.alphaValue = 0;
+  const CGFloat slide = KPUIReduceMotion() ? 0 : 40 * self.scale;
+  NSRect end = toast.frame;
+  [toast setFrameOrigin:NSMakePoint(end.origin.x + slide, end.origin.y)];
+  [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context) {
+    context.duration = 0.28;
+    context.timingFunction = [CAMediaTimingFunction functionWithControlPoints:0.2 :1.3 :0.4 :1];
+    toast.animator.alphaValue = 1;
+    toast.animator.frame = end;
+  }];
+  __weak KPToastView *weakToast = toast;
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(seconds * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    KPToastView *gone = weakToast;
+    if (gone == nil) return;
+    [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context) {
+      context.duration = 0.25;
+      gone.animator.alphaValue = 0;
+    } completionHandler:^{
+      [gone removeFromSuperview];
+      [self.toasts removeObject:gone];
+      [self layoutToasts:YES];
+      if (!self.active && self.toasts.count == 0) self.host.hidden = YES;
+    }];
+  });
+}
+
+- (void)layoutToasts:(BOOL)animated {
+  const CGFloat s = self.scale, width = 420, height = 92;
+  CGFloat y = 18;
+  for (KPToastView *toast in self.toasts.reverseObjectEnumerator) {
+    const NSRect frame = NSMakeRect(std::round((self.stage.width - width - 18) * s), std::round(y * s),
+                                    std::round(width * s), std::round(height * s));
+    toast.scale = s;
+    if (animated) toast.animator.frame = frame;
+    else toast.frame = frame;
+    y += height - 4;
+  }
+}
+
+@end
+
+#pragma mark Dialogs
+
+// A Wii-style question over whatever is showing: a card with a heading, a message and two or three
+// big buttons. B picks the last (cancel) choice.
+@interface KPDialogScreen : KPScreen
+@property(nonatomic, copy) NSString *heading, *message;
+@property(nonatomic, copy) NSArray<NSString *> *choices;
+@property(nonatomic) NSInteger primary, destructive;
+@property(nonatomic, copy) void (^done)(NSInteger choice);
+@end
+
+@implementation KPDialogScreen
+- (instancetype)initWithFrame:(NSRect)frame {
+  if ((self = [super initWithFrame:frame])) {
+    _primary = 0;
+    _destructive = -1;
+  }
+  return self;
+}
+// As tall as the message needs, centred.
+- (CGRect)card {
+  const CGRect s = self.safe;
+  const CGFloat text = std::ceil([self.message boundingRectWithSize:NSMakeSize(680, 400) options:NSStringDrawingUsesLineFragmentOrigin
+                                                         attributes:@{NSFontAttributeName: KPStyleFont(21, NSFontWeightRegular)}].size.height);
+  const CGFloat height = std::min<CGFloat>(560, 92 + text + 40 + 104);
+  return CGRectMake(s.origin.x + 260, std::round(s.origin.y + (720 - height) / 2), 760, height);
+}
+- (void)build {
+  for (NSInteger i = 0; i < (NSInteger)self.choices.count; ++i) {
+    __weak KPDialogScreen *weakSelf = self;
+    KPUIButton *button = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
+      KPDialogScreen *dialog = weakSelf;
+      const BOOL primary = i == dialog.primary;
+      KPButtonFace(c, r, primary ? KPStyle::Primary : KPStyle::Plain, NO, state.enabled, state.pressed, state.focused);
+      const unsigned ink = primary ? 0xffffff : i == dialog.destructive ? 0xd0342c : KPP->text;
+      KPTextWeight(dialog.choices[i], CGRectMake(r.origin.x, CGRectGetMidY(r) - 16, r.size.width, 32), 23, ink,
+                   NSFontWeightSemibold);
+    } action:^{
+      KPDialogScreen *dialog = weakSelf;
+      void (^done)(NSInteger) = dialog.done;
+      [KPOverlay() pop];
+      if (done) done(i);
+    }];
+    button.tag2 = i;
+    button.label = self.choices[i];
+    button.sound = i == (NSInteger)self.choices.count - 1 ? KPUISound::Close : KPUISound::Confirm;
+  }
+}
+- (void)layoutDesign {
+  const CGRect card = self.card;
+  const NSInteger count = self.choices.count;
+  const CGFloat gap = 20, width = (card.size.width - 64 - gap * (count - 1)) / count;
+  for (NSView *view in self.subviews) {
+    if (![view isKindOfClass:KPUIButton.class]) continue;
+    KPUIButton *button = (KPUIButton *)view;
+    [self place:button at:CGRectMake(card.origin.x + 32 + button.tag2 * (width + gap), CGRectGetMaxY(card) - 104, width, 72)];
+  }
+}
+- (KPUIButton *)initialFocus {
+  for (KPUIButton *button in self.focusables)
+    if (button.tag2 == self.primary) return button;
+  return [super initialFocus];
+}
+- (void)willAppear { KPUIPlay(KPUISound::Dialog); }
+- (void)back {
+  void (^done)(NSInteger) = self.done;
+  const NSInteger cancel = (NSInteger)self.choices.count - 1;
+  [KPOverlay() pop];
+  if (done) done(cancel);
+}
+- (void)drawDesign:(CGContextRef)c size:(CGSize)size {
+  KPFill(c, CGRectMake(0, 0, size.width, size.height), 0x000000, 0, 0.35);
+  const CGRect card = self.card;
+  CGContextSaveGState(c);
+  CGContextSetShadowWithColor(c, CGSizeMake(0, 10), 30, [NSColor colorWithWhite:0 alpha:0.35].CGColor);
+  KPFill(c, card, KPP->panel, 28);
+  CGContextRestoreGState(c);
+  KPStroke(c, card, KPP->panelStroke, 1.5, 28);
+  KPFill(c, CGRectMake(card.origin.x, card.origin.y + 22, 6, 54), KPP->accentBottom, 3);
+  KPTextWeight(self.heading, CGRectMake(card.origin.x + 40, card.origin.y + 30, card.size.width - 80, 44), 31, KPP->text,
+               NSFontWeightBold, NSTextAlignmentLeft);
+  KPTextWeight(self.message, CGRectMake(card.origin.x + 40, card.origin.y + 92, card.size.width - 80, card.size.height - 92 - 104), 21,
+               KPP->secondaryText, NSFontWeightRegular, NSTextAlignmentLeft);
+}
+@end
+
+// Asks over the current screen (or over the game, opening the overlay).
+static void KPAsk(NSString *heading, NSString *message, NSArray<NSString *> *choices, NSInteger primary,
+                  NSInteger destructive, void (^done)(NSInteger choice)) {
+  KPDialogScreen *dialog = [[KPDialogScreen alloc] initWithFrame:NSZeroRect];
+  dialog.heading = heading;
+  dialog.message = message;
+  dialog.choices = choices;
+  dialog.primary = primary;
+  dialog.destructive = destructive;
+  dialog.done = done;
+  dialog.solid = NO;
+  [KPOverlay() present:dialog];
+}
+
+#pragma mark Menus
+
+// A short Wii-style menu over the current screen: a card with a heading and a column of big
+// choices, each with an icon. A picks, B closes it.
+struct KPMenuItem {
+  NSString *__strong title;
+  NSString *__strong detail;
+  int glyph;  // a KPUIGlyph, or -1
+  BOOL enabled;
+  void (^__strong run)(void);
+};
+
+@interface KPMenuScreen : KPScreen
+@property(nonatomic, copy) NSString *heading, *message;
+@property(nonatomic) unsigned stripe;
+- (void)add:(NSString *)title detail:(NSString *)detail glyph:(int)glyph enabled:(BOOL)enabled run:(void (^)(void))run;
+@end
+
+static void KPDrawGlyphIndex(CGContextRef c, int glyph, CGRect rect, unsigned ink);  // KartPadUIGlyphs.inc.mm
+
+@implementation KPMenuScreen {
+  std::vector<KPMenuItem> _items;
+}
+- (void)add:(NSString *)title detail:(NSString *)detail glyph:(int)glyph enabled:(BOOL)enabled run:(void (^)(void))run {
+  _items.push_back({title, detail, glyph, enabled, [run copy]});
+}
+- (CGRect)card {
+  const CGRect s = self.safe;
+  const CGFloat rowHeight = 76, height = 120 + (self.message.length ? 40 : 0) + rowHeight * _items.size() + 24;
+  return CGRectMake(s.origin.x + 340, std::round(s.origin.y + (720 - height) / 2), 600, height);
+}
+- (void)build {
+  __weak KPMenuScreen *weakSelf = self;
+  for (size_t i = 0; i < _items.size(); ++i) {
+    KPUIButton *button = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
+      KPMenuScreen *menu = weakSelf;
+      if (menu == nil || i >= menu->_items.size()) return;
+      const KPMenuItem &item = menu->_items[i];
+      KPButtonFace(c, r, KPStyle::Plain, NO, state.enabled, state.pressed, state.focused);
+      const CGFloat dy = state.pressed ? 2 : 0, x = item.glyph >= 0 ? r.origin.x + 66 : r.origin.x + 24;
+      if (item.glyph >= 0)
+        KPDrawGlyphIndex(c, item.glyph, CGRectMake(r.origin.x + 20, CGRectGetMidY(r) - 17 + dy, 32, 32), KPP->accentBottom);
+      if (item.detail.length) {
+        KPTextWeight(item.title, CGRectMake(x, r.origin.y + 9 + dy, r.size.width - x + r.origin.x - 16, 28), 21, KPP->text,
+                     NSFontWeightSemibold, NSTextAlignmentLeft);
+        KPTextWeight(item.detail, CGRectMake(x, r.origin.y + 36 + dy, r.size.width - x + r.origin.x - 16, 22), 15,
+                     KPP->secondaryText, NSFontWeightRegular, NSTextAlignmentLeft);
+      } else {
+        KPTextWeight(item.title, CGRectMake(x, CGRectGetMidY(r) - 15 + dy, r.size.width - x + r.origin.x - 16, 30), 21,
+                     KPP->text, NSFontWeightSemibold, NSTextAlignmentLeft);
+      }
+    } action:^{
+      KPMenuScreen *menu = weakSelf;
+      if (menu == nil || i >= menu->_items.size()) return;
+      void (^run)(void) = menu->_items[i].run;
+      [KPOverlay() pop];
+      if (run) run();
+    }];
+    button.tag2 = (NSInteger)i;
+    button.enabled = _items[i].enabled;
+    button.label = _items[i].title;
+    button.sound = KPUISound::Confirm;
+  }
+}
+- (void)layoutDesign {
+  const CGRect card = self.card;
+  const CGFloat top = card.origin.y + 96 + (self.message.length ? 40 : 0);
+  for (NSView *view in self.subviews)
+    if ([view isKindOfClass:KPUIButton.class]) {
+      KPUIButton *button = (KPUIButton *)view;
+      [self place:button at:CGRectMake(card.origin.x + 28, top + button.tag2 * 76, card.size.width - 56, 66)];
+    }
+}
+- (void)willAppear { KPUIPlay(KPUISound::Dialog); }
+- (void)drawDesign:(CGContextRef)c size:(CGSize)size {
+  KPFill(c, CGRectMake(0, 0, size.width, size.height), 0x000000, 0, 0.35);
+  const CGRect card = self.card;
+  CGContextSaveGState(c);
+  CGContextSetShadowWithColor(c, CGSizeMake(0, 10), 30, [NSColor colorWithWhite:0 alpha:0.35].CGColor);
+  KPFill(c, card, KPP->panel, 28);
+  CGContextRestoreGState(c);
+  KPStroke(c, card, KPP->panelStroke, 1.5, 28);
+  KPFill(c, CGRectMake(card.origin.x, card.origin.y + 26, 6, 46), self.stripe ?: KPP->accentBottom, 3);
+  KPTextWeight(self.heading, CGRectMake(card.origin.x + 34, card.origin.y + 28, card.size.width - 68, 44), 29, KPP->text,
+               NSFontWeightBold, NSTextAlignmentLeft);
+  if (self.message.length)
+    KPTextWeight(self.message, CGRectMake(card.origin.x + 34, card.origin.y + 80, card.size.width - 68, 50), 18,
+                 KPP->secondaryText, NSFontWeightRegular, NSTextAlignmentLeft);
+}
+@end

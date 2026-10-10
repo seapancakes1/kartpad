@@ -76,9 +76,13 @@
   }
   [self refreshPadShortcuts];
 }
-// VSync and full-display fullscreen as KartPad started, read when Settings is first built (only
-// Settings changes them).
-static bool KPLaunchVsync,KPLaunchNotch;
+// VSync and full-display fullscreen as KartPad started, read when Settings (this panel or the HOME
+// one) is first built; only Settings changes them.
+static bool KPLaunchVsync,KPLaunchNotch,KPLaunchDisplayRead;
+static void KPReadLaunchDisplaySettings() {
+  if(KPLaunchDisplayRead)return;
+  KPLaunchDisplayRead=true;KPLaunchVsync=RuntimeConfigFile::LoadConfigFile().vsync.value_or(false);KPLaunchNotch=KPFullscreenAcrossNotch();
+}
 static NSArray<NSNumber *> *KPPadShortcutHolds() { return @[@0.5,@1,@2,@3]; }
 // "View for 1 second"
 static NSString *KPPadShortcutPhrase(int kind) {
@@ -219,7 +223,7 @@ static NSArray<NSNumber *> *KPVibrationStrengths() { return @[@0,@0.25,@0.5,@1];
 - (void)showSettings:(id)sender {
   (void)sender;
   if(!self.settingsPanel) {
-    KPLaunchVsync=RuntimeConfigFile::LoadConfigFile().vsync.value_or(false);KPLaunchNotch=KPFullscreenAcrossNotch();
+    KPReadLaunchDisplaySettings();
     CGFloat height=std::min<CGFloat>(810,NSScreen.mainScreen.visibleFrame.size.height-70);
     self.settingsPanel=[[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,820,height)
       styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable

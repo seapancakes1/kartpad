@@ -31,6 +31,8 @@ static void KPPadBeginCapture(void (^)(uint64_t)){}
 static void KPPadCancelCapture(){}
 @interface TestControllers : NSObject <NSWindowDelegate>
 @property(nonatomic,strong) NSView *content;
+// The Controllers tab starts the controller ring on the player choice.
+@property(nonatomic,strong) NSPopUpButton *player;
 @end
 @implementation TestControllers
 - (void)cancelCapture{}

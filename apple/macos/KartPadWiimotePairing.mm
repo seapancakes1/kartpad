@@ -36,7 +36,11 @@ NSString *const KartPadExperimentalWiimoteDefaultsKey =
 @interface KartPadWiimotePairController : NSObject
     <IOBluetoothDeviceInquiryDelegate, IOBluetoothDevicePairDelegate,
      NSWindowDelegate>
+// Set for pairing from KartPad's own screen, which shows the status itself.
+@property(nonatomic, copy) void (^statusHandler)(NSString *message, BOOL busy);
 - (void)show;
+- (void)beginPairing;
+- (void)cancelPairingWork;
 - (void)deviceMatched:(id)object;
 - (void)inputConfirmed;
 @end
@@ -130,6 +134,7 @@ void InputReport(void *context, IOReturn result, void *sender,
 }
 
 - (void)setStatus:(NSString *)status spinning:(BOOL)spinning {
+  if (self.statusHandler) self.statusHandler(status, spinning);
   _status.stringValue = status;
   _progress.hidden = !spinning;
   if (spinning) [_progress startAnimation:nil];
@@ -317,7 +322,7 @@ void InputReport(void *context, IOReturn result, void *sender,
   SDL_free(ids);
   if (found != nil) {
     [self setStatus:[NSString stringWithFormat:
-        @"Connected as %@. Attach the Nunchuk, then choose the Wii Remote + Nunchuk preset in Controller Settings.",
+        @"Connected as %@. Attach the Nunchuk any time.",
         found] spinning:NO];
   } else {
     [self setStatus:@"Pairing completed. Press A on the Wii Remote; KartPad will finish connecting through SDL."
@@ -412,4 +417,20 @@ void KartPadApplyExperimentalWiimotePreference(void) {
   const BOOL enabled = [NSUserDefaults.standardUserDefaults
       boolForKey:KartPadExperimentalWiimoteDefaultsKey];
   SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_WII, enabled ? "1" : "0");
+}
+
+void KartPadBeginWiimotePairing(void (^status)(NSString *message, BOOL busy)) {
+  if (gKartPadWiimotePairController == nil) {
+    gKartPadWiimotePairController = [KartPadWiimotePairController new];
+  }
+  [NSUserDefaults.standardUserDefaults setBool:YES forKey:KartPadExperimentalWiimoteDefaultsKey];
+  KartPadApplyExperimentalWiimotePreference();
+  gKartPadWiimotePairController.statusHandler = status;
+  [gKartPadWiimotePairController beginPairing];
+}
+
+void KartPadCancelWiimotePairing(void) {
+  if (gKartPadWiimotePairController.statusHandler == nil) return;
+  gKartPadWiimotePairController.statusHandler = nil;
+  [gKartPadWiimotePairController cancelPairingWork];
 }

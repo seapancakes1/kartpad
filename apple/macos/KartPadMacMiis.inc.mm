@@ -4,6 +4,19 @@
 // holding the Miis buttons on a controller open it, the Mii editor opens above it, and closing it
 // returns the keyboard to the game.
 
+// Automated checks (KARTPAD_BACKGROUND=1) leave the focus where it is: KartPad never comes forward.
+static BOOL KPUIBackgroundAutomation() {
+  static const BOOL background = [NSProcessInfo.processInfo.environment[@"KARTPAD_BACKGROUND"] isEqual:@"1"];
+  return background;
+}
+
+// KartPad's screens over the game (KartPadOverlay.inc.mm): HOME, Controllers, Settings and the rest.
+static bool KPOverlayActive();
+static bool KPOverlayTakesPads();
+static void KPOverlayPadPress(KartPadMiiPadButton button, BOOL down);
+static void KPHomeTick();
+static void KPOverlayGameTick();
+
 static NSWindow *KPGameWindow() {
   // The SDL game window has no window controller; the Mii editor has one.
   for (NSWindow *window in NSApp.windows) {
@@ -32,6 +45,7 @@ static void KPFocusGameWindowAtLaunch() {
   done = true;
   NSWindow *key = NSApp.keyWindow;
   if (key != nil && key != game) return;
+  if (KPUIBackgroundAutomation()) return;
   // The game loop can run inside a guest fiber; AppKit takes over on the next turn.
   dispatch_async(dispatch_get_main_queue(), ^{
     [NSApp activateIgnoringOtherApps:YES];
@@ -134,25 +148,61 @@ static NSTimeInterval KPMiiPadRepeatAt;
 // Controllers listening for a binding, or Settings for shortcut buttons, read the pads themselves:
 // those presses, and anything still held after, don't move around the window.
 static bool KPMiiPadQuiet;
+// The controller behind the latest press, so a screen can tell who pressed (Controllers lets a pad
+// that isn't playing join with it).
+static SDL_JoystickID KPPadLastPresser;
 static constexpr uint32_t KPMiiPadDirections =
     1u << KartPadMiiPadUp | 1u << KartPadMiiPadDown | 1u << KartPadMiiPadLeft | 1u << KartPadMiiPadRight;
 static bool KPPadCapturing();
 
 // The Settings panel is the Controllers panel too.
-static bool KPPadWindowsVisible() { return KartPadMiiWindowsVisible() || KPControllers().panel.visible; }
+static bool KPPadWindowsVisible() { return KartPadMiiWindowsVisible() || KPControllers().panel.visible || KPOverlayActive(); }
 static bool KPMiiPadOwnsInput() { return KPMiiPadOwned || KPPadWindowsVisible(); }
 
-// Every connected pad counts. The bottom and right face buttons are the game's confirm and back.
-// pressedBy is the pad that pressed something since the last read (0 if none did).
+// Confirm and back are the buttons a pad plays the game's A and B with (so a remapped pad, or a Wii
+// U Pro, confirms with its own A). A Wii Remote's A is SDL's east button and B (the trigger) south.
+static void KPPadConfirmBack(SDL_Gamepad *pad, SDL_GamepadButton *confirm, SDL_GamepadButton *back) {
+  *confirm = SDL_GAMEPAD_BUTTON_SOUTH;
+  *back = SDL_GAMEPAD_BUTTON_EAST;
+  const char *name = SDL_GetGamepadName(pad);
+  if (name != nullptr && strncmp(name, "Nintendo Wii Remote", 19) == 0) {
+    *confirm = SDL_GAMEPAD_BUTTON_EAST;
+    *back = SDL_GAMEPAD_BUTTON_SOUTH;
+    return;
+  }
+  for (int port = 0; port < 4; ++port) {
+    const int index = PADGetIndexForPort(port);
+    if (index < 0 || PADGetSDLGamepadForIndex(index) != pad) continue;
+    unsigned count = 0;
+    PADButtonMapping *mappings = PADGetButtonMappings(port, &count);
+    for (unsigned i = 0; mappings && i < count; ++i) {
+      if (mappings[i].nativeButton >= SDL_GAMEPAD_BUTTON_COUNT) continue;
+      if (mappings[i].padButton == PAD_BUTTON_A) *confirm = (SDL_GamepadButton)mappings[i].nativeButton;
+      if (mappings[i].padButton == PAD_BUTTON_B) *back = (SDL_GamepadButton)mappings[i].nativeButton;
+    }
+    if (*confirm == *back) {
+      *confirm = SDL_GAMEPAD_BUTTON_SOUTH;
+      *back = SDL_GAMEPAD_BUTTON_EAST;
+    }
+    return;
+  }
+}
+
+// Every connected pad counts, Wii Remotes included. pressedBy is the pad that pressed something since
+// the last read (0 if none did).
 static uint32_t KPMiiPadRead(bool *anyHeld, SDL_JoystickID *pressedBy) {
   static NSMutableDictionary<NSNumber *, NSNumber *> *before = [NSMutableDictionary dictionary];
   NSMutableDictionary<NSNumber *, NSNumber *> *now = [NSMutableDictionary dictionary];
   uint32_t held = 0;
   *anyHeld = false;
   *pressedBy = 0;
-  for (unsigned i = 0; i < PADCount(); ++i) {
-    SDL_Gamepad *pad = PADGetSDLGamepadForIndex(i);
+  int padCount = 0;
+  SDL_JoystickID *padIDs = SDL_GetGamepads(&padCount);
+  for (int i = 0; i < padCount; ++i) {
+    SDL_Gamepad *pad = SDL_GetGamepadFromID(padIDs[i]);
     if (pad == nullptr) continue;
+    SDL_GamepadButton confirm, back;
+    KPPadConfirmBack(pad, &confirm, &back);
     uint32_t mine = 0;
     auto down = [&](SDL_GamepadButton button) { return SDL_GetGamepadButton(pad, button); };
     auto set = [&](KartPadMiiPadButton button, bool on) { if (on) mine |= 1u << button; };
@@ -167,10 +217,11 @@ static uint32_t KPMiiPadRead(bool *anyHeld, SDL_JoystickID *pressedBy) {
     set(KartPadMiiPadDown, down(SDL_GAMEPAD_BUTTON_DPAD_DOWN) || (tilted && !horizontal && y > 0));
     set(KartPadMiiPadLeft, down(SDL_GAMEPAD_BUTTON_DPAD_LEFT) || (tilted && horizontal && x < 0));
     set(KartPadMiiPadRight, down(SDL_GAMEPAD_BUTTON_DPAD_RIGHT) || (tilted && horizontal && x > 0));
-    set(KartPadMiiPadConfirm, down(SDL_GAMEPAD_BUTTON_SOUTH));
-    set(KartPadMiiPadBack, down(SDL_GAMEPAD_BUTTON_EAST));
-    set(KartPadMiiPadUndo, down(SDL_GAMEPAD_BUTTON_WEST));
-    set(KartPadMiiPadRedo, down(SDL_GAMEPAD_BUTTON_NORTH));
+    set(KartPadMiiPadConfirm, down(confirm));
+    set(KartPadMiiPadBack, down(back));
+    auto other = [&](SDL_GamepadButton button) { return button != confirm && button != back && down(button); };
+    set(KartPadMiiPadUndo, other(SDL_GAMEPAD_BUTTON_WEST));
+    set(KartPadMiiPadRedo, other(SDL_GAMEPAD_BUTTON_NORTH));
     set(KartPadMiiPadPreviousTab, down(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER));
     set(KartPadMiiPadNextTab, down(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER));
     set(KartPadMiiPadStart, down(SDL_GAMEPAD_BUTTON_START));
@@ -179,6 +230,7 @@ static uint32_t KPMiiPadRead(bool *anyHeld, SDL_JoystickID *pressedBy) {
     if (mine & ~before[identifier].unsignedIntValue) *pressedBy = identifier.unsignedIntValue;
     now[identifier] = @(mine);
   }
+  SDL_free(padIDs);
   [before setDictionary:now];
   return held;
 }
@@ -188,14 +240,21 @@ static uint32_t KPMiiPadRead(bool *anyHeld, SDL_JoystickID *pressedBy) {
 static void KPMiiPadSend(KartPadMiiPadButton button, BOOL down) {
   NSTimer *timer = [NSTimer timerWithTimeInterval:0 repeats:NO block:^(NSTimer *t) {
     (void)t;
-    @autoreleasepool { KartPadMiiPadPress(button, down); }
+    @autoreleasepool {
+      if (KPOverlayTakesPads()) KPOverlayPadPress(button, down);
+      else KartPadMiiPadPress(button, down);
+    }
   }];
   [NSRunLoop.mainRunLoop addTimer:timer forMode:NSRunLoopCommonModes];
 }
 
 static void KPMiiPadPoll() {
   const NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
-  if (now - KPGameLoopTime > 0.1) SDL_UpdateGamepads();
+  if (now - KPGameLoopTime > 0.1) {
+    SDL_UpdateGamepads();
+    // The game loop isn't calling in (an alert's loop, a stall): HOME still answers.
+    KPHomeTick();
+  }
   const bool visible = KPPadWindowsVisible();
   bool anyHeld = false;
   SDL_JoystickID pressedBy = 0;
@@ -216,6 +275,7 @@ static void KPMiiPadPoll() {
     KPMiiPadRepeatAt = now + 0.11;
   }
   KPMiiPadHeld = held;
+  if (pressedBy) KPPadLastPresser = pressedBy;
   // Settings → Controllers shows the controller in use, so it can choose its own player.
   if (listening && pressedBy && KPControllers().panel.keyWindow) [KPControllers() followPad:pressedBy];
   if (visible) {
@@ -244,13 +304,15 @@ static void KPMiiPadTick() {
   KPMiiPadPoll();
 }
 
-// Holding buttons on any controller opens the Miis window or Settings, so both work without a
-// keyboard or mouse. Settings → Controllers chooses the buttons for each (any held together) and how
+// Holding buttons on any controller opens the Miis window or HOME, so both work without a keyboard
+// or mouse, and HOME works on pads whose own HOME / Guide button macOS keeps or that have none (a
+// GameCube pad). Settings → Controllers chooses the buttons for each (any held together) and how
 // long to hold them. Miis default to View (Select, Share, −) for a second, which the game doesn't
-// use; Settings to View + Menu, whose Menu pauses a race on the way. When one shortcut's buttons
-// include the other's, holding them all opens the larger one (Settings on a tie). Neither opens
-// while a window the pads drive is open, KartPad is in the background, or Controllers is listening
-// for a binding; and after opening, not again until its buttons are let go.
+// use; HOME to View + Menu, whose Menu pauses a race on the way. When one shortcut's buttons include
+// the other's, holding them all opens the larger one (HOME on a tie). Neither opens while a window
+// the pads drive is open, KartPad is in the background, or Controllers is listening for a binding;
+// and after opening, not again until its buttons are let go. (The second kind keeps its old
+// "Settings" name and defaults keys, so a player's chosen buttons carry over.)
 enum KPPadShortcutKind { KPPadShortcutMiis, KPPadShortcutSettings, KPPadShortcutCount };
 struct KPPadShortcut {
   __unsafe_unretained NSString *enabledKey, *buttonsKey, *holdKey, *opens;
@@ -262,14 +324,14 @@ static KPPadShortcut KPPadShortcuts[KPPadShortcutCount] = {
   {@"KartPadMiisControllerShortcut", @"KartPadMiisControllerButtons", @"KartPadMiisControllerHold", @"Miis",
    1ull << SDL_GAMEPAD_BUTTON_BACK, 0, false},
   {@"KartPadSettingsControllerShortcut", @"KartPadSettingsControllerButtons", @"KartPadSettingsControllerHold",
-   @"Settings", 1ull << SDL_GAMEPAD_BUTTON_BACK | 1ull << SDL_GAMEPAD_BUTTON_START, 0, false},
+   @"HOME", 1ull << SDL_GAMEPAD_BUTTON_BACK | 1ull << SDL_GAMEPAD_BUTTON_START, 0, false},
 };
 // Choosing the buttons in Settings: whatever is held together before everything is let go.
 static void (^KPPadCapture)(uint64_t buttons);
 static uint64_t KPPadCaptured;
 static bool KPPadCaptureArmed;
 static void KPOpenMiisFromController();  // KartPadMacShell.mm
-static void KPOpenSettingsFromController();  // KartPadMacShell.mm
+static void KPOpenHomeFromController();  // KartPadHomeScreen.inc.mm
 
 static bool KPPadShortcutEnabled(int kind) {
   id value = [NSUserDefaults.standardUserDefaults objectForKey:KPPadShortcuts[kind].enabledKey];
@@ -373,15 +435,14 @@ static void KPPadShortcutsTick() {
     if (now - shortcut.since < KPPadShortcutHold(kind)) continue;
     shortcut.latched = true;
     shortcut.since = 0;
-    AppendSessionLine(kind == KPPadShortcutMiis ? @"miis=opened-from-controller" : @"settings=opened-from-controller");
+    AppendSessionLine(kind == KPPadShortcutMiis ? @"miis=opened-from-controller" : @"home=opened-from-controller");
     // The game loop can run inside a guest fiber; AppKit opens the window on the next turn.
     dispatch_async(dispatch_get_main_queue(), ^{
       if (kind == KPPadShortcutMiis) {
         KPOpenMiisFromController();
         KartPadMiiPadShowFocus();
       } else {
-        KPOpenSettingsFromController();
-        KartPadSettingsPadShowFocus();
+        KPOpenHomeFromController();
       }
     });
     return;
@@ -395,6 +456,8 @@ extern "C" void KartPadControllersTick() {
     [KPControllers() tick];
     KPMiiPadTick();
     KPPadShortcutsTick();
+    KPHomeTick();
+    KPOverlayGameTick();
   }
 }
 // The runtime keeps pad and keyboard input from the game (and the pointer visible) while this is

@@ -537,7 +537,11 @@ static bool KPBackgroundPauseEnabled() {
 }
 
 #include "KartPadControllers.inc.mm"
+#include "KartPadControllerRoster.inc.mm"
 #include "KartPadMacMiis.inc.mm"
+// A KartPad screen over the game from the menus and shortcuts (KartPadHomeScreen.inc.mm): "home",
+// "settings", "controllers", "miis" or "pair-wii". NO when there's no game window to show it in.
+static bool KPShowScreen(NSString *which);
 
 @interface KartPadMacShellController : NSObject <NSTabViewDelegate, NSMenuDelegate>
 @property(nonatomic, strong) NSPanel *settingsPanel;
@@ -764,6 +768,7 @@ static bool KPBackgroundPauseEnabled() {
 
 - (void)showMiis:(id)sender {
   (void)sender;
+  if (KPShowScreen(@"miis")) return;
   [self.miis show];
 }
 
@@ -876,6 +881,7 @@ static bool KPBackgroundPauseEnabled() {
 
 - (void)pairWiimote:(id)sender {
   (void)sender;
+  if (KPShowScreen(@"pair-wii")) return;
   [NSUserDefaults.standardUserDefaults setBool:YES
       forKey:KartPadExperimentalWiimoteDefaultsKey];
   KartPadApplyExperimentalWiimotePreference();
@@ -884,6 +890,7 @@ static bool KPBackgroundPauseEnabled() {
 
 - (void)showControllerSettings:(id)sender {
   (void)sender;
+  if (KPShowScreen(@"controllers")) return;
   [self showSettings:sender];
   [self.settingsTabs selectTabViewItemWithIdentifier:@"Controllers"];
 }
@@ -1139,7 +1146,54 @@ static KartPadMacShellController *Controller() {
 }
 
 static void KPOpenMiisFromController() { [Controller() showMiis:nil]; }
-static void KPOpenSettingsFromController() { [Controller() showSettings:nil]; }
+
+#include "KartPadOverlay.inc.mm"
+#include "KartPadUIGlyphs.inc.mm"
+#include "KartPadControllerArt.inc.mm"
+#include "KartPadHomeScreen.inc.mm"
+#include "KartPadRetroDownload.inc.mm"
+#include "KartPadControllersScreen.inc.mm"
+#include "KartPadSettingsScreen.inc.mm"
+#include "KartPadMiisScreen.inc.mm"
+#include "KartPadCurtain.inc.mm"
+#include "KartPadSetup.inc.mm"
+
+static bool KPShowScreen(NSString *which) {
+  if (KPGameWindow() == nil) return false;
+  if ([which isEqualToString:@"home"]) {
+    if (KPOverlay().active) [KPOverlay() closeAll];
+    else KPOpenHome();
+    return true;
+  }
+  if (KartPadGameStarting()) return false;
+  // Under HOME, so B comes back there.
+  if (!KPOverlay().active) KPOpenHome();
+  if (!KPOverlay().active) return false;
+  if ([which isEqualToString:@"settings"]) [KPOverlay() present:KPMakeSettingsScreen()];
+  else if ([which isEqualToString:@"controllers"]) [KPOverlay() present:(KPScreen *)KPMakeControllersScreen(-1)];
+  else if ([which isEqualToString:@"miis"]) [KPOverlay() present:KPMakeMiisScreen()];
+  else if ([which isEqualToString:@"pair-wii"]) {
+    KPScreen *connect = KPMakeConnectScreen();
+    [KPOverlay() present:connect];
+    [(KPConnectScreen *)connect chooseKind:KPPairKind::WiiRemote];
+  }
+  return true;
+}
+
+// Settings and HOME from the menus: KartPad's screens over the game, or the classic Settings window
+// before the game window exists.
+@implementation KartPadMacShellController (Screens)
+- (void)openSettings:(id)sender {
+  if (KPShowScreen(@"settings")) return;
+  [self showSettings:sender];
+}
+- (void)openHome:(id)sender {
+  (void)sender;
+  KPShowScreen(@"home");
+}
+@end
+
+#include "KartPadQA.inc.mm"
 
 // The runtime holds the game still while this is true (WaitWhileBackgroundPaused). That includes
 // KartPad hidden and its window minimized (as exclusive fullscreen is on losing the focus), which
@@ -1177,7 +1231,11 @@ extern "C" void KartPadBackgroundPauseChanged(bool paused) {
 extern "C" void KartPadOpenSettingsFromShortcut() {
   // SDL event handling can run inside a guest fiber. Open AppKit UI on the
   // next native run-loop turn rather than re-entering the event pump here.
-  dispatch_async(dispatch_get_main_queue(), ^{ [Controller() showSettings:nil]; });
+  dispatch_async(dispatch_get_main_queue(), ^{
+    // The runtime and the key monitor both hear the shortcut; Settings opens once.
+    if ([KPOverlay().top isKindOfClass:KPSettingsScreen.class]) return;
+    [Controller() openSettings:nil];
+  });
 }
 
 static void InstallSettingsShortcutMonitor() {
@@ -1201,6 +1259,12 @@ static void InstallSettingsShortcutMonitor() {
         if ((functionKey && !(modifiers & (NSEventModifierFlagControl | NSEventModifierFlagOption | NSEventModifierFlagCommand))) ||
             commandComma) {
           KartPadOpenSettingsFromShortcut();
+          return nil;
+        }
+        // Escape opens HOME over the game (on a screen it goes back; the screen's own monitor has it).
+        if (event.keyCode == kVK_Escape && !event.isARepeat && !KPOverlayActive() && event.window == KPGameWindow() &&
+            !(modifiers & (NSEventModifierFlagControl | NSEventModifierFlagOption | NSEventModifierFlagCommand))) {
+          dispatch_async(dispatch_get_main_queue(), ^{ KPShowScreen(@"home"); });
           return nil;
         }
         return event;
@@ -1247,7 +1311,7 @@ static void InstallMenu() {
 
     NSMenuItem *settings = [[NSMenuItem alloc]
         initWithTitle:@"Settings…"
-               action:@selector(showSettings:)
+               action:@selector(openSettings:)
         keyEquivalent:@","];
     settings.target = Controller();
     [appMenu addItem:settings];
@@ -1292,7 +1356,7 @@ static void InstallMenu() {
     if ([item.title hasPrefix:@"Settings"] ||
         [item.title hasPrefix:@"Preferences"]) {
       item.target = Controller();
-      item.action = @selector(showSettings:);
+      item.action = @selector(openSettings:);
       item.enabled = YES;
     } else if (item.action == @selector(terminate:)) {
       item.target = Controller();
@@ -1327,6 +1391,12 @@ static void InstallMenu() {
   gameMenuItem.tag = kKartPadMenuTag;
   NSMenu *gameMenu = [[NSMenu alloc] initWithTitle:@"Game"];
   gameMenu.delegate = Controller();
+  // HOME: everything players need, over the game (Escape, or HOME on a controller).
+  NSMenuItem *home = [[NSMenuItem alloc] initWithTitle:@"HOME" action:@selector(openHome:) keyEquivalent:@"\033"];
+  home.keyEquivalentModifierMask = 0;
+  home.target = Controller();
+  [gameMenu addItem:home];
+  [gameMenu addItem:NSMenuItem.separatorItem];
   NSMenuItem *restart = [[NSMenuItem alloc]
       initWithTitle:@"Restart KartPad to Apply Changes" action:@selector(restartKartPad:) keyEquivalent:@""];
   restart.target = Controller();
@@ -1356,7 +1426,7 @@ static void InstallMenu() {
   [gameMenu addItem:NSMenuItem.separatorItem];
 #endif
   NSMenuItem *settings = [[NSMenuItem alloc]
-      initWithTitle:@"Game Settings…" action:@selector(showSettings:)
+      initWithTitle:@"Game Settings…" action:@selector(openSettings:)
       keyEquivalent:@""];
   settings.target = Controller();
   [gameMenu addItem:settings];
@@ -1490,6 +1560,7 @@ void KartPadMacShellInstall(void) {
     [NSApplication sharedApplication];
     InstallSettingsShortcutMonitor();
     InstallMenu();
+    KPStartQA();
 #if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)
     KPStartLocalUpdates();
 #endif
@@ -1497,6 +1568,14 @@ void KartPadMacShellInstall(void) {
 }
 
 bool KartPadMacShellPrepareGameData(void) {
+  // A restart's curtain (KartPadCurtain.inc.mm) is this app started to hold a card over the window.
+  if (NSString *curtain = NSProcessInfo.processInfo.environment[KPCurtainVariable]; curtain.length) {
+    unsetenv(KPCurtainVariable.UTF8String);
+    if ([NSFileManager.defaultManager fileExistsAtPath:curtain]) {
+      @autoreleasepool { KPRunCurtain(curtain); }
+      return false;
+    }
+  }
 #if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)
   // Activation completes before any game files are opened. The helper relaunches
   // the replacement (or, after repeated failed launches, the previous) app after
@@ -1513,6 +1592,7 @@ bool KartPadMacShellPrepareGameData(void) {
       NSLog(@"[KartPad] pending Mii changes were not applied: %@",
             miiError.localizedDescription);
       const BOOL discardable = KartPadCanDiscardPendingMiiChanges();
+      KPCurtainDone();
       NSAlert *failure = [NSAlert new];
       failure.messageText = @"Pending Mii Changes Couldn’t Be Applied";
       failure.informativeText = miiError.localizedDescription ?: @"Restart KartPad to retry. Backups and pending changes have been retained.";
@@ -1619,6 +1699,19 @@ bool KartPadMacShellPrepareGameData(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
       [NSApp activateIgnoringOtherApps:YES];
     });
+    KPCurtainDone();
+    // KartPad's guided setup, which a controller can finish. (KartPadClassicSetup keeps the plain
+    // question and folder picker below.)
+    if (![NSUserDefaults.standardUserDefaults boolForKey:@"KartPadClassicSetup"]) {
+      NSString *profile = KPRunSetup(configured.length > 0);
+      finishFirstRunMenu();
+      if (profile == nil) return false;
+#if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)
+      [NSUserDefaults.standardUserDefaults setObject:profile forKey:kKartPadRuntimeProfileDefaultsKey];
+      setenv("KARTPAD_RUNTIME_PROFILE", profile.UTF8String, 1);
+#endif
+      return true;
+    }
     for (;;) {
       NSAlert *required = [NSAlert new];
       required.messageText = @"Game Data Required";
