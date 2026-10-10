@@ -153,7 +153,19 @@ struct KPUIState {
 @property(nonatomic) BOOL keyboardInput;
 // Setup, before there's a game window: the screens go in this window instead.
 @property(nonatomic, weak) NSWindow *hostWindow;
+// Where the pointer rested when a screen opened or the controller or keyboard last moved the focus:
+// hovering takes the focus again only once the mouse moves away from there.
+@property(nonatomic) NSPoint pointerAnchor;
+@property(nonatomic) BOOL pointerAnchored;
+// The last move by direction: from where, to where, which way, and the column (or row) a run of moves
+// keeps to, so pressing back the other way returns and up-down runs don't drift sideways.
+@property(nonatomic, weak) KPUIButton *movedFrom, *movedTo;
+@property(nonatomic) int movedDx, movedDy;
+@property(nonatomic) CGFloat movedColumn;
 + (instancetype)shared;
+- (void)anchorPointer;
+- (void)pointerUsed;
+- (BOOL)pointerMoved;
 - (BOOL)active;
 - (KPScreen *)top;
 - (void)present:(KPScreen *)screen;
@@ -266,18 +278,22 @@ static bool KPOverlayWantsKeys() {
         owner:self userInfo:nil];
   [self addTrackingArea:_tracking];
 }
-// The pointer is the Wii pointer: what it rests on takes the focus.
+// The pointer is the Wii pointer: what it rests on takes the focus, once it has really moved. A
+// pointer left resting where a screen opens (or the controller moved the focus) doesn't take it back.
 - (void)mouseEntered:(NSEvent *)event {
   (void)event;
-  if (self.enabled && self.screen == KPOverlay().top) [KPOverlay() focus:self sound:YES];
+  if (self.enabled && self.screen == KPOverlay().top && [KPOverlay() pointerMoved]) [KPOverlay() focus:self sound:YES];
 }
 - (void)mouseMoved:(NSEvent *)event {
   (void)event;
-  if (self.enabled && !self.focused && self.screen == KPOverlay().top) [KPOverlay() focus:self sound:NO];
+  if (self.enabled && !self.focused && self.screen == KPOverlay().top && [KPOverlay() pointerMoved])
+    [KPOverlay() focus:self sound:NO];
 }
 - (void)mouseDown:(NSEvent *)event {
   (void)event;
   if (!self.enabled) return;
+  [KPOverlay() pointerUsed];
+  if (self.screen == KPOverlay().top) [KPOverlay() focus:self sound:NO];
   _inside = YES;
   self.pressed = YES;
 }
@@ -342,13 +358,15 @@ static void KPUIWobble(NSView *view) {
   }
   return self;
 }
-// Screens catch every click, so nothing reaches the game under them.
+// Screens catch every click, so nothing reaches the game under them. The controls are asked directly:
+// KPUIView's own hitTest turns the mouse away, which a screen must not inherit.
 - (NSView *)hitTest:(NSPoint)point {
   if (self.hidden) return nil;
-  NSView *hit = [super hitTest:point];
-  if (hit != nil) return hit;
-  NSPoint local = [self convertPoint:point fromView:self.superview];
-  return NSPointInRect(local, self.bounds) ? self : nil;
+  const NSPoint local = [self convertPoint:point fromView:self.superview];
+  if (!NSPointInRect(local, self.bounds)) return nil;
+  for (NSView *child in self.subviews.reverseObjectEnumerator)
+    if (NSView *hit = [child hitTest:local]) return hit;
+  return self;
 }
 - (void)mouseDown:(NSEvent *)event { (void)event; }
 - (void)rightMouseDown:(NSEvent *)event { (void)event; }
@@ -483,40 +501,50 @@ static void KPUIWobble(NSView *view) {
 
 #pragma mark Navigation
 
-// The control the pressed direction leads to, in design points (dy positive downwards): one straight
-// ahead first (overlapping sideways), then one more ahead than aside, then anything further that way;
-// the nearest wins, distance ahead weighing more than sideways offset.
-static KPUIButton *KPUINearest(NSArray<KPUIButton *> *candidates, KPUIButton *from, int dx, int dy) {
+// The control the pressed direction leads to, as TV menus choose it (dy positive downwards). Only what
+// lies that way counts (clearly: a neighbour a few points out of line isn't "above"), and left and
+// right stay on their row. One in line (overlapping sideways) beats one off to the side, unless,
+// going up or down, the one to the side lies wholly nearer; otherwise the nearest wins, distance
+// ahead weighing more than sideways offset. `across` is the sideways position measured from (the column a run of
+// moves up or down started in), CGFLOAT_MAX for the middle of `from` (not NAN: the build assumes
+// fast math, which takes every number to be one).
+static KPUIButton *KPUINearest(NSArray<KPUIButton *> *candidates, KPUIButton *from, int dx, int dy,
+                               CGFloat across = CGFLOAT_MAX) {
   struct Span { CGFloat lo, hi; };
+  struct Option { KPUIButton *view; bool beam, ahead; CGFloat gap, far, score; };
   auto frame = [](NSView *view) { return [view convertRect:((KPUIButton *)view).bounds toView:nil]; };
   // Window coordinates run upwards.
   auto along = [&](NSRect r) -> Span {
     return dx > 0 ? Span{NSMinX(r), NSMaxX(r)} : dx < 0 ? Span{-NSMaxX(r), -NSMinX(r)}
          : dy > 0 ? Span{-NSMaxY(r), -NSMinY(r)} : Span{NSMinY(r), NSMaxY(r)};
   };
-  auto across = [&](NSRect r) -> Span { return dx ? Span{NSMinY(r), NSMaxY(r)} : Span{NSMinX(r), NSMaxX(r)}; };
+  auto aside = [&](NSRect r) -> Span { return dx ? Span{NSMinY(r), NSMaxY(r)} : Span{NSMinX(r), NSMaxX(r)}; };
   const NSRect here = frame(from);
-  const Span a = along(here), p = across(here);
-  KPUIButton *best = nil;
-  int bestRank = INT_MAX;
-  CGFloat bestScore = CGFLOAT_MAX;
+  const Span a = along(here), p = aside(here);
+  const CGFloat middle = across == CGFLOAT_MAX ? (p.lo + p.hi) / 2 : across;
+  auto beamBeats = [&](const Option &x, const Option &y) {
+    if (y.beam || !x.beam) return false;
+    if (!y.ahead || dx != 0) return true;
+    return x.gap < y.far;
+  };
+  bool found = false;
+  Option best{};
   for (KPUIButton *view in candidates) {
     if (view == from) continue;
     const NSRect there = frame(view);
-    const Span b = along(there), q = across(there);
-    if (!((a.lo < b.lo || a.hi <= b.lo) && a.hi < b.hi)) continue;
-    const CGFloat gap = std::max(CGFloat(0), b.lo - a.hi), overlap = std::min(p.hi, q.hi) - std::max(p.lo, q.lo),
-                  side = std::max(CGFloat(0), -overlap);
-    const int rank = overlap > 0 ? 0 : gap >= side ? 1 : 2;
-    if (rank == 2 && b.lo < a.hi) continue;
-    const CGFloat offset = (q.lo + q.hi - p.lo - p.hi) / 2, score = 13 * gap * gap + offset * offset;
-    if (rank < bestRank || (rank == bestRank && score < bestScore)) {
-      bestRank = rank;
-      bestScore = score;
-      best = view;
+    const Span b = along(there), q = aside(there);
+    const CGFloat slack = 0.2 * std::min(a.hi - a.lo, b.hi - b.lo);
+    if (!((a.lo + slack < b.lo || a.hi <= b.lo) && a.hi + slack < b.hi)) continue;
+    const bool beam = std::min(p.hi, q.hi) - std::max(p.lo, q.lo) > 0;
+    if (dx != 0 && !beam) continue;
+    const CGFloat gap = std::max(CGFloat(0), b.lo - a.hi), offset = (q.lo + q.hi) / 2 - middle;
+    const Option option{view, beam, b.lo >= a.hi, gap, std::max(CGFloat(1), b.hi - a.hi), 13 * gap * gap + offset * offset};
+    if (!found || beamBeats(option, best) || (!beamBeats(best, option) && option.score < best.score)) {
+      best = option;
+      found = true;
     }
   }
-  return best;
+  return found ? best.view : nil;
 }
 
 @implementation KPOverlayController
@@ -551,6 +579,19 @@ static KPUIButton *KPUINearest(NSArray<KPUIButton *> *candidates, KPUIButton *fr
 
 - (BOOL)active { return self.stack.count > 0; }
 - (KPScreen *)top { return self.stack.lastObject; }
+
+- (void)anchorPointer {
+  self.pointerAnchor = NSEvent.mouseLocation;
+  self.pointerAnchored = YES;
+}
+- (void)pointerUsed { self.pointerAnchored = NO; }
+- (BOOL)pointerMoved {
+  if (!self.pointerAnchored) return YES;
+  const NSPoint now = NSEvent.mouseLocation, then = self.pointerAnchor;
+  if (std::hypot(now.x - then.x, now.y - then.y) < 4) return NO;
+  self.pointerAnchored = NO;
+  return YES;
+}
 
 // Into the game window, above SDL's Metal view (which SDL can re-create), once that window exists.
 - (BOOL)attach {
@@ -606,6 +647,8 @@ static KPUIButton *KPUINearest(NSArray<KPUIButton *> *candidates, KPUIButton *fr
   screen.frame = self.host.bounds;
   screen.scale = self.scale;
   [self.stack addObject:screen];
+  [self anchorPointer];
+  self.movedTo = nil;
   [self.host addSubview:screen positioned:NSWindowAbove relativeTo:self.scrim];
   [screen relayout];
   [screen willAppear];
@@ -653,6 +696,8 @@ static KPUIButton *KPUINearest(NSArray<KPUIButton *> *candidates, KPUIButton *fr
   }
   [self removeScreen:leaving];
   KPUIPlay(KPUISound::Close);
+  [self anchorPointer];
+  self.movedTo = nil;
   KPScreen *back = self.top;
   back.hidden = NO;
   [back relayout];
@@ -695,6 +740,7 @@ static KPUIButton *KPUINearest(NSArray<KPUIButton *> *candidates, KPUIButton *fr
   [self removeKeyMonitor];
   [self.ticker invalidate];
   self.ticker = nil;
+  [self layoutToasts:YES];
 }
 
 - (void)focus:(KPUIButton *)button sound:(BOOL)sound {
@@ -716,14 +762,28 @@ static KPUIButton *KPUINearest(NSArray<KPUIButton *> *candidates, KPUIButton *fr
     return;
   }
   if (dx && focus.adjust && focus.adjust(dx)) return;
-  KPUIButton *next = KPUINearest(controls, focus, dx, dy);
-  if (next) [self focus:next sound:YES];
+  // Straight back the way it came returns to where it was. A run of moves up or down keeps to the
+  // column it started in (sideways, to its row), so passing a wide control doesn't change columns.
+  const BOOL continuing = focus == self.movedTo;
+  KPUIButton *next = nil;
+  if (continuing && dx == -self.movedDx && dy == -self.movedDy && [controls containsObject:self.movedFrom]) next = self.movedFrom;
+  const NSRect here = [focus convertRect:focus.bounds toView:nil];
+  const CGFloat column = continuing && (dx != 0) == (self.movedDx != 0) ? self.movedColumn : dx ? NSMidY(here) : NSMidX(here);
+  if (next == nil) next = KPUINearest(controls, focus, dx, dy, column);
+  if (next == nil) return;
+  self.movedFrom = focus;
+  self.movedTo = next;
+  self.movedDx = dx;
+  self.movedDy = dy;
+  self.movedColumn = column;
+  [self focus:next sound:YES];
 }
 
 - (void)padPress:(KartPadMiiPadButton)button down:(BOOL)down {
   KPScreen *screen = self.top;
   if (screen == nil) return;
   KPPadHideCursor();
+  [self anchorPointer];
   if (!down) {
     // A acts on release, on what it went down on.
     if (button != KartPadMiiPadConfirm) return;
@@ -763,6 +823,7 @@ static KPUIButton *KPUINearest(NSArray<KPUIButton *> *candidates, KPUIButton *fr
   if (modifiers & (NSEventModifierFlagCommand | NSEventModifierFlagControl)) return NO;
   if (event.window != self.host.window) return NO;
   self.keyboardInput = YES;
+  [self anchorPointer];
   if ([self.top takesKey:event]) return YES;
   // A hosted screen with its own keyboard handling (the Mii browser) gets the keys as they are.
   if (self.top.forwardsPads) return NO;
@@ -838,8 +899,8 @@ static KPUIButton *KPUINearest(NSArray<KPUIButton *> *candidates, KPUIButton *fr
   [NSRunLoop.mainRunLoop addTimer:self.ticker forMode:NSRunLoopCommonModes];
 }
 
-// Toasts stack down from the top right, in front of the game and any screen, and never take the
-// focus or a click.
+// Toasts stack down from the top right, in front of the game and any screen (below its header, so
+// they don't cover its buttons), and never take the focus or a click.
 - (void)toast:(NSString *)heading detail:(NSString *)detail stripe:(unsigned)stripe
          icon:(void (^)(CGContextRef c, CGRect r))icon image:(NSImage *)image {
   [self toast:heading detail:detail stripe:stripe icon:icon image:image seconds:3.4];
@@ -889,7 +950,7 @@ static KPUIButton *KPUINearest(NSArray<KPUIButton *> *candidates, KPUIButton *fr
 
 - (void)layoutToasts:(BOOL)animated {
   const CGFloat s = self.scale, width = 420, height = 92;
-  CGFloat y = 18;
+  CGFloat y = self.active ? std::round((self.stage.height - KPUIDesignHeight) / 2) + 112 : 18;
   for (KPToastView *toast in self.toasts.reverseObjectEnumerator) {
     const NSRect frame = NSMakeRect(std::round((self.stage.width - width - 18) * s), std::round(y * s),
                                     std::round(width * s), std::round(height * s));
@@ -1030,7 +1091,7 @@ static void KPDrawGlyphIndex(CGContextRef c, int glyph, CGRect rect, unsigned in
 }
 - (CGRect)card {
   const CGRect s = self.safe;
-  const CGFloat rowHeight = 76, height = 120 + (self.message.length ? 40 : 0) + rowHeight * _items.size() + 24;
+  const CGFloat rowHeight = 76, height = 96 + (self.message.length ? 40 : 0) + rowHeight * _items.size() + 18;
   return CGRectMake(s.origin.x + 340, std::round(s.origin.y + (720 - height) / 2), 600, height);
 }
 - (void)build {

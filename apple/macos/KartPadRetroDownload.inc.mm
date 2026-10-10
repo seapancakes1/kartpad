@@ -329,7 +329,8 @@ static NSString *KPRetroFolder() {
 }
 @end
 
-// Its progress, on a card with Keep Playing (it carries on) and Cancel.
+// Its progress, on a card. Before it starts (or after it failed) Download leads, with Not Now beside
+// it; while it runs, Keep Playing (it carries on) and Cancel.
 @interface KPRetroDownloadScreen : KPScreen
 @property(nonatomic, strong) KPUIButton *keep, *cancel, *retry;
 @end
@@ -340,8 +341,10 @@ static NSString *KPRetroFolder() {
   __weak KPRetroDownloadScreen *weakSelf = self;
   self.keep = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
     KPRetroDownload *download = KPRetroDownload.shared;
-    KPDrawPill(c, r, state, KPStyle::Primary, download.busy ? KPUIGlyph::Play : KPUIGlyph::Check,
-               download.stage == KPRetroReady ? @"Done" : download.busy ? @"Keep Playing" : @"Close");
+    const BOOL waiting = !download.busy && download.stage != KPRetroReady;
+    KPDrawPill(c, r, state, waiting ? KPStyle::Plain : KPStyle::Primary,
+               download.busy ? KPUIGlyph::Play : waiting ? KPUIGlyph::Close : KPUIGlyph::Check,
+               download.stage == KPRetroReady ? @"Done" : download.busy ? @"Keep Playing" : @"Not Now");
   } action:^{ [KPOverlay() pop]; }];
   self.cancel = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
     KPDrawPill(c, r, state, KPStyle::Plain, KPUIGlyph::Close, @"Cancel Download");
@@ -351,7 +354,7 @@ static NSString *KPRetroFolder() {
   }];
   self.retry = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
     const BOOL first = KPRetroDownload.shared.stage == KPRetroIdle;
-    KPDrawPill(c, r, state, KPStyle::Plain, first ? KPUIGlyph::Play : KPUIGlyph::Restart, first ? @"Download" : @"Try Again");
+    KPDrawPill(c, r, state, KPStyle::Primary, first ? KPUIGlyph::Play : KPUIGlyph::Restart, first ? @"Download" : @"Try Again");
   } action:^{
     [KPRetroDownload.shared start];
     [weakSelf layoutDesign];
@@ -360,13 +363,18 @@ static NSString *KPRetroFolder() {
 - (void)layoutDesign {
   const CGRect s = self.safe;
   KPRetroDownload *download = KPRetroDownload.shared;
+  const BOOL waiting = !download.busy && download.stage != KPRetroReady;
+  const BOOL changed = self.retry.hidden == waiting;
   self.cancel.hidden = !download.busy;
-  self.retry.hidden = download.busy || download.stage == KPRetroReady;
-  [self place:self.keep at:CGRectMake(s.origin.x + 330, s.origin.y + 520, 290, 70)];
-  [self place:self.cancel at:CGRectMake(s.origin.x + 660, s.origin.y + 520, 290, 70)];
-  [self place:self.retry at:CGRectMake(s.origin.x + 660, s.origin.y + 520, 290, 70)];
+  self.retry.hidden = !waiting;
+  // The main choice on the left: Download (or Try Again) while waiting, otherwise Keep Playing.
+  const CGRect left = CGRectMake(s.origin.x + 330, s.origin.y + 520, 290, 70), right = CGRectOffset(left, 330, 0);
+  [self place:self.retry at:left];
+  [self place:self.keep at:waiting ? right : left];
+  [self place:self.cancel at:right];
+  if (changed && self.focus.hidden) [KPOverlay() focus:[self initialFocus] sound:NO];
 }
-- (KPUIButton *)initialFocus { return self.keep; }
+- (KPUIButton *)initialFocus { return self.retry.hidden ? self.keep : self.retry; }
 - (void)tick {
   [self layoutDesign];
   self.needsDisplay = YES;
@@ -376,20 +384,20 @@ static NSString *KPRetroFolder() {
   const CGRect s = self.safe;
   KPRetroDownload *download = KPRetroDownload.shared;
   KPTextWeight(@"Retro Rewind", CGRectMake(s.origin.x + 56, s.origin.y + 26, 600, 50), 36, KPP->text, NSFontWeightBold, NSTextAlignmentLeft);
-  KPTextWeight([NSString stringWithFormat:@"Version %@ · more than 200 extra tracks", @KARTPAD_RR_VERSION],
+  KPTextWeight([NSString stringWithFormat:@"Version %@ · 200+ extra tracks", @KARTPAD_RR_VERSION],
                CGRectMake(s.origin.x + 58, s.origin.y + 78, 760, 26), 18, KPP->secondaryText, NSFontWeightMedium, NSTextAlignmentLeft);
   const CGRect card = CGRectMake(s.origin.x + 240, s.origin.y + 170, 800, 300);
   KPCard(c, card, 26);
   NSString *title = @"", *detail = @"";
   switch (download.stage) {
-    case KPRetroIdle: title = @"Not downloaded"; detail = @"About 2 GB. It keeps downloading while you play."; break;
+    case KPRetroIdle: title = @"Get Retro Rewind"; detail = @"About 2 GB. You can play while it downloads."; break;
     case KPRetroDownloading:
       title = @"Downloading…";
       detail = download.done > 0 ? [NSString stringWithFormat:@"%@ of %@", KPBytesText(download.done), KPBytesText(download.total)]
                                  : @"Starting…";
       break;
-    case KPRetroVerifying: title = @"Checking the download…"; detail = @"Making sure it's exactly the pack this KartPad plays."; break;
-    case KPRetroInstalling: title = @"Installing…"; detail = @"Unpacking and checking the files."; break;
+    case KPRetroVerifying: title = @"Checking the download…"; detail = @"Making sure it's the right pack."; break;
+    case KPRetroInstalling: title = @"Installing…"; detail = @"Unpacking the files."; break;
     case KPRetroReady: title = @"Retro Rewind is ready"; detail = @"Switch to it from HOME."; break;
     case KPRetroFailed: title = @"It didn't finish"; detail = download.problem ?: @"Try again."; break;
   }

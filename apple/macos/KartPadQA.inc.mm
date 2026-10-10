@@ -4,6 +4,7 @@
 // it with KARTPAD_MUTED=1 KARTPAD_BACKGROUND=1 so it stays silent and never takes the focus.
 //   home | close | screen settings|controllers|miis|pair-wii | pad up|down|left|right|a|b|x|y|lb|rb|start
 //   shot NAME | resize W H | fullscreen | appearance light|dark|system | restart | quit | wait SECONDS
+//   focus LABEL | click LABEL | where | navmap | roster | vpad add|press|release|remove
 // Included by KartPadMacShell.mm at the end.
 
 #import <objc/objc-exception.h>
@@ -143,7 +144,7 @@ static void KPQARun(NSString *line) {
   } else if ([command isEqualToString:@"hint"]) {
     KPShowHomeHint();
   }
-  else if ([command isEqualToString:@"restart"]) KPRestartWithCurtain(@"Applying your changes", @"KartPad is restarting.");
+  else if ([command isEqualToString:@"restart"]) KPRestartWithCurtain(@"Restarting", @"");
   else if ([command isEqualToString:@"quit"]) [Controller() quitKartPad:nil];
   else if ([command isEqualToString:@"resize"] && words.count >= 3) {
     NSWindow *game = KPGameWindow();
@@ -159,6 +160,87 @@ static void KPQARun(NSString *line) {
     NSString *label = [line substringFromIndex:MIN(line.length, (NSUInteger)6)];
     for (KPUIButton *button in KPOverlay().top.focusables)
       if ([button.label isEqualToString:label]) [KPOverlay() focus:button sound:NO];
+  } else if ([command isEqualToString:@"sdldelegate"]) {
+    // SDL's app delegate, and whether it has had its first activation (KPFocusGameWindowAtLaunch).
+    NSObject *delegate = (NSObject *)NSApp.delegate;
+    id seen = nil;
+    @try { seen = [delegate valueForKey:@"seenFirstActivate"]; } @catch (NSException *exception) { seen = exception.reason; }
+    KPQALog([NSString stringWithFormat:@"sdldelegate %@ seenFirstActivate=%@ app=%@", delegate.class, seen, NSApp.class]);
+  } else if ([command isEqualToString:@"where"]) {
+    KPUIButton *focus = KPOverlay().top.focus;
+    KPQALog([NSString stringWithFormat:@"where %@ focus=%@", NSStringFromClass(KPOverlay().top.class),
+             focus.label.length ? focus.label : focus ? [NSString stringWithFormat:@"#%ld", (long)focus.tag2] : @"-"]);
+  } else if ([command isEqualToString:@"vpad"]) {
+    // Virtual controllers (SDL's own), so choosing controllers by pressing can be checked without any:
+    // vpad add | vpad press N BUTTON | vpad release N BUTTON | vpad remove N
+    static NSMutableArray<NSNumber *> *pads = [NSMutableArray array];
+    NSDictionary<NSString *, NSNumber *> *buttons = @{
+      @"a": @(SDL_GAMEPAD_BUTTON_SOUTH), @"b": @(SDL_GAMEPAD_BUTTON_EAST), @"x": @(SDL_GAMEPAD_BUTTON_WEST),
+      @"y": @(SDL_GAMEPAD_BUTTON_NORTH), @"start": @(SDL_GAMEPAD_BUTTON_START), @"up": @(SDL_GAMEPAD_BUTTON_DPAD_UP),
+      @"down": @(SDL_GAMEPAD_BUTTON_DPAD_DOWN), @"left": @(SDL_GAMEPAD_BUTTON_DPAD_LEFT), @"right": @(SDL_GAMEPAD_BUTTON_DPAD_RIGHT)};
+    if ([argument isEqualToString:@"add"]) {
+      SDL_VirtualJoystickDesc desc;
+      SDL_INIT_INTERFACE(&desc);
+      desc.type = SDL_JOYSTICK_TYPE_GAMEPAD;
+      desc.naxes = SDL_GAMEPAD_AXIS_COUNT;
+      desc.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
+      desc.name = "KartPad QA Pad";
+      const SDL_JoystickID id = SDL_AttachVirtualJoystick(&desc);
+      if (id) {
+        [pads addObject:@(id)];
+        SDL_OpenJoystick(id);
+      }
+      KPQALog([NSString stringWithFormat:@"vpad %lu id=%u gamepad=%d %s", (unsigned long)pads.count - 1, (unsigned)id, SDL_IsGamepad(id),
+               id ? "" : SDL_GetError()]);
+    } else if (words.count >= 3 && words[2].integerValue < (NSInteger)pads.count) {
+      const SDL_JoystickID id = pads[words[2].integerValue].unsignedIntValue;
+      if ([argument isEqualToString:@"remove"]) {
+        SDL_DetachVirtualJoystick(id);
+      } else if (words.count >= 4 && buttons[words[3].lowercaseString]) {
+        SDL_SetJoystickVirtualButton(SDL_GetJoystickFromID(id), buttons[words[3].lowercaseString].intValue,
+                                     [argument isEqualToString:@"press"]);
+      }
+    }
+  } else if ([command isEqualToString:@"navmap"]) {
+    // Where each direction leads from every control (by layout; a screen's own handling and controls
+    // that change in place with left and right are noted, not followed).
+    KPScreen *screen = KPOverlay().top;
+    NSArray<KPUIButton *> *controls = screen.focusables;
+    auto name = [](KPUIButton *b) -> NSString * {
+      return b == nil ? @"-" : b.label.length ? b.label : [NSString stringWithFormat:@"#%ld", (long)b.tag2];
+    };
+    NSMutableString *text = [NSMutableString stringWithFormat:@"navmap %@ focus=%@", NSStringFromClass(screen.class), name(screen.focus)];
+    for (KPUIButton *b in controls) {
+      const NSRect r = [screen convertRect:b.bounds fromView:b];
+      const CGFloat s = screen.scale;
+      [text appendFormat:@"\n  %@ [%.0f,%.0f %.0fx%.0f]%@  U:%@ D:%@ L:%@ R:%@", name(b), r.origin.x / s - screen.safe.origin.x,
+                         r.origin.y / s - screen.safe.origin.y, r.size.width / s, r.size.height / s, b.adjust ? @" (adjusts)" : @"",
+                         name(KPUINearest(controls, b, 0, -1)), name(KPUINearest(controls, b, 0, 1)), name(KPUINearest(controls, b, -1, 0)),
+                         name(KPUINearest(controls, b, 1, 0))];
+    }
+    KPQALog(text);
+  } else if ([command isEqualToString:@"click"]) {
+    // A mouse click on a control by its label: what the window's hit test finds there, then the click.
+    NSString *label = [line substringFromIndex:MIN(line.length, (NSUInteger)6)];
+    KPUIButton *target = nil;
+    for (KPUIButton *button in KPOverlay().top.focusables)
+      if ([button.label isEqualToString:label]) target = button;
+    NSWindow *window = KPOverlay().host.window;
+    if (target == nil || window == nil) {
+      KPQALog([NSString stringWithFormat:@"click %@: no such control", label]);
+      return;
+    }
+    const NSPoint point = [target convertPoint:NSMakePoint(NSMidX(target.bounds), NSMidY(target.bounds)) toView:nil];
+    NSView *frame = window.contentView.superview ?: window.contentView;
+    NSView *hit = [frame hitTest:point];
+    KPQALog([NSString stringWithFormat:@"click %@: hit %@%@", label, NSStringFromClass(hit.class), hit == target ? @" (the control)" : @""]);
+    for (NSEventType type : {NSEventTypeLeftMouseDown, NSEventTypeLeftMouseUp}) {
+      NSEvent *event = [NSEvent mouseEventWithType:type location:point modifierFlags:0 timestamp:NSProcessInfo.processInfo.systemUptime
+                                      windowNumber:window.windowNumber context:nil eventNumber:0 clickCount:1
+                                          pressure:type == NSEventTypeLeftMouseDown ? 1 : 0];
+      if (type == NSEventTypeLeftMouseDown) [hit mouseDown:event];
+      else [hit mouseUp:event];
+    }
   }
 }
 

@@ -17,7 +17,7 @@
   self.browser.done = ^{
     if (KPOverlay().top == weakSelf) [KPOverlay() pop];
   };
-  self.browser.restart = ^{ KPRestartWithCurtain(@"Applying your Mii changes", @"KartPad is restarting."); };
+  self.browser.restart = ^{ KPRestartWithCurtain(@"Applying your Mii changes", @""); };
   [self addSubview:self.browser.view];
 }
 // The browser lays itself out in points; giving it scaled bounds makes it lay out at the design

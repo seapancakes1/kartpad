@@ -34,10 +34,12 @@ static void KPDrawCurtainCard(CGContextRef c, CGSize size, NSString *heading, NS
     KPSetInk(c, KPPlayerColors[dot % 4]);
     CGContextFillEllipseInRect(c, r);
   }
-  KPTextWeight(heading, CGRectMake(card.origin.x + 30, card.origin.y + 132, card.size.width - 60, 46), 32, KPP->text,
-               NSFontWeightBold);
-  KPTextWeight(detail, CGRectMake(card.origin.x + 30, card.origin.y + 186, card.size.width - 60, 60), 20, KPP->secondaryText,
-               NSFontWeightMedium);
+  // The heading sits lower when there's no line under it.
+  KPTextWeight(heading, CGRectMake(card.origin.x + 30, card.origin.y + (detail.length ? 132 : 150), card.size.width - 60, 46), 32,
+               KPP->text, NSFontWeightBold);
+  if (detail.length)
+    KPTextWeight(detail, CGRectMake(card.origin.x + 30, card.origin.y + 186, card.size.width - 60, 60), 20, KPP->secondaryText,
+                 NSFontWeightMedium);
   CGContextRestoreGState(c);
 }
 

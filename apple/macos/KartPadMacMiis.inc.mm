@@ -43,6 +43,18 @@ static void KPFocusGameWindowAtLaunch() {
   NSWindow *game = KPGameWindow();
   if (done || game == nil) return;
   done = true;
+  // SDL's app delegate ignores the first "became active" it hears (so a window created minimized
+  // stays so), then restores a minimized full-screen window on each one after. KartPad was active
+  // before SDL arrived (KartPadMacShellPrepareGameData), so that first one has been had already;
+  // otherwise coming back to an exclusive full-screen game once would leave it minimized.
+  NSObject *delegate = (NSObject *)NSApp.delegate;
+  if ([NSStringFromClass(delegate.class) isEqualToString:@"SDL3AppDelegate"]) {
+    @try {
+      [delegate setValue:@YES forKey:@"seenFirstActivate"];
+    } @catch (NSException *exception) {
+      NSLog(@"[KartPad] SDL's activation flag wasn't found: %@", exception.reason);
+    }
+  }
   NSWindow *key = NSApp.keyWindow;
   if (key != nil && key != game) return;
   if (KPUIBackgroundAutomation()) return;
@@ -151,6 +163,9 @@ static bool KPMiiPadQuiet;
 // The controller behind the latest press, so a screen can tell who pressed (Controllers lets a pad
 // that isn't playing join with it).
 static SDL_JoystickID KPPadLastPresser;
+// A screen reading each controller's presses itself (Controllers, while players press A on the
+// controller they want): the reader stays out of the way, as for a binding.
+static bool KPPadListening;
 static constexpr uint32_t KPMiiPadDirections =
     1u << KartPadMiiPadUp | 1u << KartPadMiiPadDown | 1u << KartPadMiiPadLeft | 1u << KartPadMiiPadRight;
 static bool KPPadCapturing();
@@ -262,7 +277,7 @@ static void KPMiiPadPoll() {
   bool anyHeld = false;
   SDL_JoystickID pressedBy = 0;
   const uint32_t held = KPMiiPadRead(&anyHeld, &pressedBy);
-  if (KPControllers().capture >= 0 || KPPadCapturing()) KPMiiPadQuiet = true;
+  if (KPControllers().capture >= 0 || KPPadCapturing() || KPPadListening) KPMiiPadQuiet = true;
   else if (!anyHeld) KPMiiPadQuiet = false;
   // Buttons already down when a window opens aren't presses for it, and don't repeat.
   const bool listening = KPMiiPadOwned && visible && !KPMiiPadQuiet;

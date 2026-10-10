@@ -163,7 +163,7 @@ static void KPSetupSearch(void (^progress)(NSString *place), void (^found)(KPSet
     case KPSetupFind: {
       [self action:@"Look for my game" detail:@"In Downloads, Desktop, Documents and connected drives" glyph:KPUIGlyph::Find primary:YES
                run:^{ [weakSelf search]; }];
-      [self action:@"I'll choose the folder" detail:@"Pick it in a Finder window (needs a mouse)" glyph:KPUIGlyph::Window primary:NO
+      [self action:@"I'll choose the folder" detail:@"In a Finder window. Needs a mouse." glyph:KPUIGlyph::Window primary:NO
                run:^{ [weakSelf chooseFolder]; }];
       [self action:@"Back" detail:nil glyph:KPUIGlyph::Back primary:NO run:^{ [weakSelf showStep:KPSetupWelcome]; }];
       break;
@@ -176,7 +176,7 @@ static void KPSetupSearch(void (^progress)(NSString *place), void (^found)(KPSet
         if (candidate.problem || shown >= 3) continue;
         ++shown;
         NSString *path = candidate.path;
-        [self action:@"Found it! Use this one" detail:KPFriendlyPath(path) glyph:KPUIGlyph::Check primary:shown == 1 run:^{
+        [self action:@"Use this one" detail:KPFriendlyPath(path) glyph:KPUIGlyph::Check primary:shown == 1 run:^{
           [weakSelf useGame:path];
         }];
       }
@@ -196,7 +196,7 @@ static void KPSetupSearch(void (^progress)(NSString *place), void (^found)(KPSet
       }
 #if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)
       if (shown == 0 && KPRetroDownload.shared.available)
-        [self action:@"Download Retro Rewind" detail:@"About 2 GB. It keeps going while you play." glyph:KPUIGlyph::Plus primary:YES run:^{
+        [self action:@"Download Retro Rewind" detail:@"About 2 GB. Play while it downloads." glyph:KPUIGlyph::Plus primary:YES run:^{
           [KPRetroDownload.shared start];
           KPUIPlay(KPUISound::Saved);
           [weakSelf showStep:KPSetupReady];
@@ -234,7 +234,7 @@ static void KPSetupSearch(void (^progress)(NSString *place), void (^found)(KPSet
   const CGRect s = self.safe;
   NSArray<KPUIButton *> *big = [self.actions filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(KPUIButton *b, NSDictionary *x) {
     (void)x;
-    return [b.label hasPrefix:@"Found"] || [b.label hasPrefix:@"Look for"] || [b.label hasPrefix:@"I'll"] || [b.label hasPrefix:@"Use this"] ||
+    return [b.label hasPrefix:@"Use this one"] || [b.label hasPrefix:@"Look for"] || [b.label hasPrefix:@"I'll"] || [b.label hasPrefix:@"Use this"] ||
            [b.label hasPrefix:@"Download"];
   }]];
   CGFloat y = s.origin.y + (self.step == KPSetupFound || self.step == KPSetupRetro ? 300 : 330);
@@ -292,7 +292,7 @@ static void KPSetupSearch(void (^progress)(NSString *place), void (^found)(KPSet
 
 - (void)useGame:(NSString *)root {
   if (!WriteGameDataRoot(root)) {
-    self.message = @"KartPad couldn't save that choice. Check that its settings file can be written.";
+    self.message = @"KartPad couldn't save that: its settings file can't be written.";
     KPUIPlay(KPUISound::Reject);
     self.needsDisplay = YES;
     return;
@@ -374,8 +374,8 @@ static void KPSetupSearch(void (^progress)(NSString *place), void (^found)(KPSet
       break;
     case KPSetupFind:
       heading = @"Where's your Mario Kart Wii?";
-      line = @"KartPad needs your own game files: the extracted DATA folder (PadMint calls it \"KartPad game data\"). "
-             @"Your Mac may ask if KartPad can look in your folders. Choose Allow.";
+      line = @"KartPad plays your own copy: the extracted DATA folder (PadMint names it \"KartPad game data\"). "
+             @"If your Mac asks whether KartPad can look in your folders, choose Allow.";
       break;
     case KPSetupSearching:
       heading = @"Looking for your game…";
@@ -388,7 +388,7 @@ static void KPSetupSearch(void (^progress)(NSString *place), void (^found)(KPSet
       KPSetupCandidate *bad = nil;
       for (KPSetupCandidate *candidate in self.games)
         if (candidate.problem) bad = candidate;
-      line = good ? @"This is your Mario Kart Wii. Use it to carry on."
+      line = good ? @""
            : bad ? [NSString stringWithFormat:@"A copy in %@ won't work: %@", KPFriendlyPath(bad.path), bad.problem]
                  : @"Choose the folder yourself, or plug in the drive it's on and look again.";
       break;
@@ -396,14 +396,13 @@ static void KPSetupSearch(void (^progress)(NSString *place), void (^found)(KPSet
     case KPSetupRetro:
       heading = @"Retro Rewind too?";
 #if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)
-      line = self.retros.count ? @"KartPad found Retro Rewind on this Mac: more than 200 extra tracks."
-                               : [NSString stringWithFormat:@"Retro Rewind adds more than 200 tracks. If you have its %@ RetroRewind6 folder, "
-                                  @"choose it; you can add it later from HOME › Settings › Game.", @KARTPAD_RR_VERSION];
+      line = self.retros.count ? @"It's on this Mac: 200+ extra tracks."
+                               : @"200+ extra tracks. You can also add it later in HOME › Settings › Game.";
 #endif
       break;
     case KPSetupReady:
       heading = @"You're ready to race!";
-      line = @"Press HOME on your controller (or esc on the keyboard) any time for Controllers, Miis and Settings.";
+      line = @"Press HOME (or esc) any time for Controllers, Miis and Settings.";
       break;
   }
   const CGFloat top = iconRect.origin.y + iconSize + 22;
@@ -419,7 +418,7 @@ static void KPSetupSearch(void (^progress)(NSString *place), void (^found)(KPSet
   }
   if (self.message.length)
     KPTextWeight(self.message, CGRectMake(s.origin.x + 200, s.origin.y + 650, 880, 30), 17, 0xd0342c, NSFontWeightSemibold);
-  KPTextWeight(@"Ⓐ Choose    Ⓑ Back    Mouse and keyboard work too", CGRectMake(s.origin.x + 52, s.origin.y + 680, 1176, 24), 15,
+  KPTextWeight(@"Ⓐ Choose    Ⓑ Back", CGRectMake(s.origin.x + 52, s.origin.y + 680, 1176, 24), 15,
                KPP->secondaryText, NSFontWeightMedium, NSTextAlignmentRight);
 }
 @end

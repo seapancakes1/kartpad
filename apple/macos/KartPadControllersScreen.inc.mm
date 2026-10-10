@@ -2,8 +2,11 @@
 // colours, each with its Mii, a live drawing of the controller (it lights up as you press) and its
 // battery; the controllers that aren't playing wait in a tray below. Press anything on a controller
 // and its card bounces, so "which one is mine?" answers itself. A controller that isn't playing joins
-// with A. X picks a card up to move it to another player, Y makes a controller buzz and flash. Each
-// card's menu sets up buttons, chooses a Mii or takes the controller out.
+// with A, and Y makes a controller buzz and flash.
+// Players change controllers by pressing on the controller they want, the way consoles do it:
+// "Change controller" on a card (or A on an empty one) waits for A on the controller that should be
+// that player; Player Order has everyone press A in turn, the first press becoming Player 1. Each
+// card's menu also sets up buttons, chooses a Mii or takes the controller out.
 // Also here: button setup (KPRemapScreen), choosing a Mii (KPMiiPickerScreen) and connecting a new
 // controller (KPConnectScreen). Included by KartPadMacShell.mm after KartPadHomeScreen.inc.mm.
 
@@ -18,16 +21,29 @@ static KPPadDevice *KPPresser() {
   return [KPControllerRoster.shared deviceWithIdentifier:[NSString stringWithFormat:@"sdl:%u", KPPadLastPresser]];
 }
 
-static NSString *KPPlayerName(int slot) { return [NSString stringWithFormat:@"Player %d", slot + 1]; }
+// Choosing controllers by pressing on them: one player at a time, or everyone in order.
+typedef NS_ENUM(NSInteger, KPControllersMode) { KPControllersBrowsing, KPControllersAssigning, KPControllersOrdering };
+// The presses those listen for, from each controller.
+enum : unsigned { KPPressConfirm = 1, KPPressBack = 2, KPPressStart = 4 };
 
 @interface KPControllersScreen : KPScreen <KPRosterListener>
 @property(nonatomic) int focusSlot;
+// Opened from an empty player on HOME: straight to choosing its controller.
+@property(nonatomic) BOOL assignOnOpen;
 @property(nonatomic, strong) NSMutableArray<KPUIButton *> *cards, *chips;
-@property(nonatomic, strong) KPUIButton *connect, *done;
+@property(nonatomic, strong) KPUIButton *order, *connect, *done;
+// While controllers are being chosen by pressing: Use Keyboard (one player), Done (everyone), Cancel.
+@property(nonatomic, strong) KPUIButton *useKeyboard, *finish, *cancel;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *seenInput;
-// The controller picked up to move (X), and where its card is now.
-@property(nonatomic, strong) KPPadDevice *grabbed;
+@property(nonatomic) KPControllersMode mode;
+@property(nonatomic) int target;                                  // assigning: the player choosing a controller
+@property(nonatomic, strong) NSMutableArray<KPPadDevice *> *ordered;  // ordering: who has pressed, in order
+@property(nonatomic, strong) NSDictionary<NSString *, NSNumber *> *before;  // ordering: who played as whom, for Cancel
+@property(nonatomic, strong) id keyboardPin;                      // ordering: the keyboard's setting, for Cancel
+@property(nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *held;  // each controller's A, B and Start
+@property(nonatomic) NSTimeInterval lastPress, finishAt;
 @property(nonatomic) CGFloat pulse;
+- (void)device:(KPPadDevice *)device pressed:(unsigned)press;
 @end
 
 @implementation KPControllersScreen
@@ -37,15 +53,37 @@ static NSString *KPPlayerName(int slot) { return [NSString stringWithFormat:@"Pl
   self.title = @"Controllers";
   self.seenInput = [NSMutableDictionary dictionary];
   __weak KPControllersScreen *weakSelf = self;
+  self.order = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
+    KPDrawPill(c, r, state, KPStyle::Plain, KPUIGlyph::Swap, @"Player Order");
+  } action:^{ [weakSelf beginOrdering]; }];
+  self.order.label = @"Player Order";
   self.connect = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
-    KPDrawPill(c, r, state, KPStyle::Primary, KPUIGlyph::Plus, @"Connect a Controller");
+    KPDrawPill(c, r, state, KPStyle::Plain, KPUIGlyph::Plus, @"Connect");
   } action:^{ [KPOverlay() present:KPMakeConnectScreen()]; }];
   self.connect.label = @"Connect a controller";
   self.done = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
-    KPDrawPill(c, r, state, KPStyle::Plain, KPUIGlyph::Check, @"Done");
+    KPDrawPill(c, r, state, KPStyle::Primary, KPUIGlyph::Check, @"Done");
   } action:^{ [KPOverlay() pop]; }];
   self.done.label = @"Done";
   self.done.sound = KPUISound::Close;
+  self.useKeyboard = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
+    KPDrawPill(c, r, state, KPStyle::Plain, KPUIGlyph::Keyboard, @"Use Keyboard");
+  } action:^{
+    KPControllersScreen *screen = weakSelf;
+    [screen device:[KPControllerRoster.shared deviceWithIdentifier:@"keyboard"] pressed:KPPressConfirm];
+  }];
+  self.useKeyboard.label = @"Use Keyboard";
+  self.useKeyboard.sound = KPUISound::Count;
+  self.finish = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
+    KPDrawPill(c, r, state, KPStyle::Primary, KPUIGlyph::Check, @"Done");
+  } action:^{ [weakSelf endOrdering:YES]; }];
+  self.finish.label = @"Finish";
+  self.finish.sound = KPUISound::Count;
+  self.cancel = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
+    KPDrawPill(c, r, state, KPStyle::Plain, KPUIGlyph::Close, @"Cancel");
+  } action:^{ [weakSelf cancelChoosing]; }];
+  self.cancel.label = @"Cancel";
+  self.cancel.sound = KPUISound::Count;
   self.cards = [NSMutableArray array];
   for (int slot = 0; slot < KPPlayerCount; ++slot) {
     KPUIButton *card = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
@@ -66,8 +104,25 @@ static NSString *KPPlayerName(int slot) { return [NSString stringWithFormat:@"Pl
 
 - (void)layoutDesign {
   const CGRect s = self.safe;
-  [self place:self.done at:CGRectMake(CGRectGetMaxX(s) - 56 - 150, s.origin.y + 30, 150, 60)];
-  [self place:self.connect at:CGRectMake(CGRectGetMaxX(s) - 56 - 150 - 18 - 330, s.origin.y + 30, 330, 60)];
+  const BOOL browsing = self.mode == KPControllersBrowsing;
+  // The buttons along the top: what the screen does, or (choosing by pressing) how to stop.
+  self.order.hidden = self.connect.hidden = self.done.hidden = !browsing;
+  self.useKeyboard.hidden = self.mode != KPControllersAssigning ||
+                            [KPControllerRoster.shared deviceInSlot:self.target].isKeyboard;
+  self.finish.hidden = self.mode != KPControllersOrdering;
+  self.cancel.hidden = browsing;
+  const CGFloat right = CGRectGetMaxX(s) - 56, y = s.origin.y + 30;
+  [self place:self.done at:CGRectMake(right - 150, y, 150, 60)];
+  [self place:self.connect at:CGRectMake(right - 150 - 16 - 200, y, 200, 60)];
+  [self place:self.order at:CGRectMake(right - 150 - 16 - 200 - 16 - 250, y, 250, 60)];
+  [self place:self.cancel at:CGRectMake(right - 170, y, 170, 60)];
+  [self place:self.useKeyboard at:CGRectMake(right - 170 - 16 - 250, y, 250, 60)];
+  [self place:self.finish at:CGRectMake(right - 170 - 16 - 170, y, 170, 60)];
+  // While choosing by pressing, the cards and tray only show what's happening.
+  for (KPUIButton *card in self.cards) card.enabled = browsing;
+  NSInteger pads = 0;
+  for (KPPadDevice *device in KPControllerRoster.shared.devices) pads += !device.isKeyboard;
+  self.order.enabled = pads > 0;
   const CGFloat width = 278, gap = 20, x0 = s.origin.x + (1280 - (4 * width + 3 * gap)) / 2;
   for (KPUIButton *card in self.cards)
     [self place:card at:CGRectMake(x0 + card.tag2 * (width + gap), s.origin.y + 120, width, 396)];
@@ -100,12 +155,15 @@ static NSString *KPPlayerName(int slot) { return [NSString stringWithFormat:@"Pl
     chip.tagObject = resting[i];
     chip.label = [NSString stringWithFormat:@"%@, not playing", resting[i].name];
     chip.hidden = i >= 4;
+    chip.enabled = self.mode == KPControllersBrowsing;
     [self place:chip at:CGRectMake(x0 + i * (width + gap), s.origin.y + 568, width, 76)];
     chip.needsDisplay = YES;
   }
 }
 
 - (KPUIButton *)initialFocus {
+  if (self.mode == KPControllersAssigning) return self.useKeyboard.hidden ? self.cancel : self.useKeyboard;
+  if (self.mode == KPControllersOrdering) return self.finish;
   if (self.focusSlot >= 0 && self.focusSlot < KPPlayerCount) return self.cards[self.focusSlot];
   KPPadDevice *presser = KPControllerRoster.shared.lastActive;
   if (presser.slot >= 0) return self.cards[presser.slot];
@@ -114,7 +172,8 @@ static NSString *KPPlayerName(int slot) { return [NSString stringWithFormat:@"Pl
 
 - (void)willDisappear {
   KPControllerRoster.shared.quiet = NO;
-  if (self.grabbed) self.grabbed = nil;
+  if (self.mode == KPControllersOrdering) [self endOrdering:NO];
+  else if (self.mode == KPControllersAssigning) [self stopChoosing];
 }
 
 - (void)willAppear {
@@ -122,8 +181,15 @@ static NSString *KPPlayerName(int slot) { return [NSString stringWithFormat:@"Pl
   [KPControllerRoster.shared.listeners addObject:self];
 }
 
+- (void)didAppear {
+  if (!self.assignOnOpen) return;
+  self.assignOnOpen = NO;
+  if (self.focusSlot >= 0 && self.focusSlot < KPPlayerCount && ![KPControllerRoster.shared deviceInSlot:self.focusSlot])
+    [self beginAssigning:self.focusSlot];
+}
+
 - (void)rosterChanged {
-  [self layoutChips];
+  [self layoutDesign];
   for (KPUIButton *card in self.cards) card.needsDisplay = YES;
 }
 
@@ -135,12 +201,14 @@ static NSString *KPPlayerName(int slot) { return [NSString stringWithFormat:@"Pl
   for (KPPadDevice *device in roster.devices) {
     NSNumber *seen = self.seenInput[device.identifier];
     if (device.lastInput > 0 && (seen == nil || seen.doubleValue < device.lastInput)) {
-      if (seen != nil) [self bounce:device];
+      if (seen != nil && self.mode == KPControllersBrowsing) [self bounce:device];
       self.seenInput[device.identifier] = @(device.lastInput);
     }
   }
+  if (self.mode != KPControllersBrowsing) [self listen];
   for (KPUIButton *card in self.cards) card.needsDisplay = YES;
   for (KPUIButton *chip in self.chips) chip.needsDisplay = YES;
+  self.needsDisplay = YES;
 }
 
 - (KPUIButton *)viewFor:(KPPadDevice *)device {
@@ -152,7 +220,7 @@ static NSString *KPPlayerName(int slot) { return [NSString stringWithFormat:@"Pl
 
 - (void)bounce:(KPPadDevice *)device {
   KPUIButton *view = [self viewFor:device];
-  if (view == nil || device == self.grabbed) return;
+  if (view == nil) return;
   [view springTo:1.06];
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
     [view springTo:view.focused ? view.focusScale : 1];
@@ -172,38 +240,170 @@ static NSString *KPPlayerName(int slot) { return [NSString stringWithFormat:@"Pl
   });
 }
 
+#pragma mark Choosing by pressing
+
+- (void)startListening {
+  KPPadListening = true;
+  self.held = nil;
+  self.lastPress = NSProcessInfo.processInfo.systemUptime;
+  self.finishAt = 0;
+  [self listen];  // what's held now isn't a press
+  [self layoutDesign];
+  [KPOverlay() focus:[self initialFocus] sound:NO];
+  self.needsDisplay = YES;
+}
+
+- (void)stopChoosing {
+  self.mode = KPControllersBrowsing;
+  KPPadListening = false;
+  [self layoutDesign];
+  self.needsDisplay = YES;
+}
+
+// One player: the next controller to press A becomes theirs.
+- (void)beginAssigning:(int)slot {
+  self.mode = KPControllersAssigning;
+  self.target = slot;
+  KPUIPlay(KPUISound::Open);
+  [self startListening];
+}
+
+// Everyone: each controller to press A takes the next player, from Player 1.
+- (void)beginOrdering {
+  KPControllerRoster *roster = KPControllerRoster.shared;
+  NSMutableDictionary *before = [NSMutableDictionary dictionary];
+  for (KPPadDevice *device in roster.devices) before[device.identifier] = @(device.slot);
+  self.before = before;
+  self.keyboardPin = [NSUserDefaults.standardUserDefaults objectForKey:KPKeyboardPlayerKey];
+  self.ordered = [NSMutableArray array];
+  self.mode = KPControllersOrdering;
+  KPUIPlay(KPUISound::Open);
+  [self startListening];
+}
+
+// Done: the order stands, and controllers that didn't press stop playing (the keyboard keeps its
+// setting). Cancelled: everyone goes back where they were.
+- (void)endOrdering:(BOOL)keep {
+  if (self.mode != KPControllersOrdering) return;
+  KPControllerRoster *roster = KPControllerRoster.shared;
+  if (keep && self.ordered.count) {
+    for (KPPadDevice *device in roster.devices.copy)
+      if (!device.isKeyboard && device.slot >= 0 && ![self.ordered containsObject:device]) [roster move:device toSlot:-1];
+    KPUIPlay(KPUISound::Saved);
+  } else {
+    for (KPPadDevice *device in roster.devices.copy) {
+      NSNumber *slot = self.before[device.identifier];
+      if (slot != nil && slot.intValue != device.slot) [roster move:device toSlot:slot.intValue];
+    }
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    if (self.keyboardPin) [defaults setObject:self.keyboardPin forKey:KPKeyboardPlayerKey];
+    else [defaults removeObjectForKey:KPKeyboardPlayerKey];
+    [roster refresh];
+    KPUIPlay(KPUISound::Close);
+  }
+  const int focus = self.ordered.count ? self.ordered.firstObject.slot : 0;
+  self.ordered = nil;
+  [self stopChoosing];
+  [KPOverlay() focus:self.cards[std::clamp(focus, 0, KPPlayerCount - 1)] sound:NO];
+}
+
+- (void)cancelChoosing {
+  if (self.mode == KPControllersOrdering) {
+    [self endOrdering:NO];
+    return;
+  }
+  const int slot = self.target;
+  [self stopChoosing];
+  KPUIPlay(KPUISound::Close);
+  [KPOverlay() focus:self.cards[slot] sound:NO];
+}
+
+// Each controller's A, B and Start, read here (the shared reader keeps quiet meanwhile, so these
+// presses don't also move the focus). Two players pressing at once both count.
+- (void)listen {
+  const BOOL first = self.held == nil;
+  NSMutableDictionary<NSNumber *, NSNumber *> *now = [NSMutableDictionary dictionary];
+  NSMutableArray<NSArray *> *presses = [NSMutableArray array];
+  int count = 0;
+  SDL_JoystickID *ids = SDL_GetGamepads(&count);
+  for (int i = 0; i < count; ++i) {
+    SDL_Gamepad *pad = SDL_GetGamepadFromID(ids[i]);
+    if (pad == nullptr) continue;
+    SDL_GamepadButton confirm, back;
+    KPPadConfirmBack(pad, &confirm, &back);
+    const unsigned down = (SDL_GetGamepadButton(pad, confirm) ? KPPressConfirm : 0) | (SDL_GetGamepadButton(pad, back) ? KPPressBack : 0) |
+                          (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_START) ? KPPressStart : 0);
+    now[@(ids[i])] = @(down);
+    NSNumber *was = self.held[@(ids[i])];
+    if (first || was == nil) continue;  // already down when listening began, or just connected
+    const unsigned pressed = down & ~was.unsignedIntValue;
+    if (pressed) [presses addObject:@[@(ids[i]), @(pressed)]];
+  }
+  SDL_free(ids);
+  self.held = now;
+  for (NSArray *press in presses) {
+    if (self.mode == KPControllersBrowsing) break;
+    KPPadDevice *device = [KPControllerRoster.shared deviceWithIdentifier:[NSString stringWithFormat:@"sdl:%@", press[0]]];
+    if (device) [self device:device pressed:[press[1] unsignedIntValue]];
+  }
+  if (first) return;
+  const NSTimeInterval time = NSProcessInfo.processInfo.systemUptime;
+  if (self.mode == KPControllersOrdering && self.finishAt > 0 && time >= self.finishAt) [self endOrdering:YES];
+  else if (self.mode == KPControllersAssigning && time - self.lastPress > 20) [self cancelChoosing];
+  else if (self.mode == KPControllersOrdering && time - self.lastPress > 60) [self endOrdering:self.ordered.count > 0];
+}
+
+// A press from one controller while choosing (the keyboard comes through Use Keyboard).
+- (void)device:(KPPadDevice *)device pressed:(unsigned)press {
+  KPControllerRoster *roster = KPControllerRoster.shared;
+  if (device == nil || self.mode == KPControllersBrowsing) return;
+  self.lastPress = NSProcessInfo.processInfo.systemUptime;
+  if (press & KPPressBack) {
+    [self cancelChoosing];
+    return;
+  }
+  if (self.mode == KPControllersAssigning) {
+    if (!(press & KPPressConfirm)) return;
+    const int slot = self.target;
+    [roster move:device toSlot:slot];
+    [self stopChoosing];
+    [KPOverlay() focus:self.cards[slot] sound:NO];
+    [self celebrate:device];
+    return;
+  }
+  if (press & KPPressStart) {
+    [self endOrdering:YES];
+    return;
+  }
+  if (!(press & KPPressConfirm) || self.finishAt > 0) return;
+  if ([self.ordered containsObject:device]) {
+    KPUIWobble([self viewFor:device]);
+    KPUIPlay(KPUISound::Same);
+    return;
+  }
+  const int slot = (int)self.ordered.count;
+  [self.ordered addObject:device];
+  [roster move:device toSlot:slot];
+  [self celebrate:device];
+  // Everyone's in (every connected controller, or four players): a moment to see it, then done.
+  NSInteger pads = 0;
+  for (KPPadDevice *each in roster.devices) pads += !each.isKeyboard;
+  if (self.ordered.count >= std::min<NSInteger>(pads, KPPlayerCount))
+    self.finishAt = NSProcessInfo.processInfo.systemUptime + 1.1;
+}
+
 #pragma mark Input
 
 - (BOOL)handle:(KartPadMiiPadButton)button {
   KPControllerRoster *roster = KPControllerRoster.shared;
-  KPUIButton *focus = self.focus;
-  // Moving a card: left and right carry it to the next player; A or B puts it down.
-  if (self.grabbed) {
-    if (button == KartPadMiiPadLeft || button == KartPadMiiPadRight) {
-      const int from = self.grabbed.slot, to = from + (button == KartPadMiiPadLeft ? -1 : 1);
-      if (to < 0 || to >= KPPlayerCount) {
-        KPUIPlay(KPUISound::Reject);
-        return YES;
-      }
-      [roster move:self.grabbed toSlot:to];
-      KPUIPlay(button == KartPadMiiPadLeft ? KPUISound::Left : KPUISound::Right);
-      [KPOverlay() focus:self.cards[to] sound:NO];
-      [self.cards[to] springTo:1.07];
-      for (KPUIButton *card in self.cards) card.needsDisplay = YES;
+  if (self.mode != KPControllersBrowsing) {
+    if (button == KartPadMiiPadBack) {
+      [self cancelChoosing];
       return YES;
     }
-    if (button == KartPadMiiPadConfirm || button == KartPadMiiPadBack || button == KartPadMiiPadUndo) {
-      KPPadDevice *dropped = self.grabbed;
-      self.grabbed = nil;
-      KPUIPlay(KPUISound::Saved);
-      KPUIButton *card = dropped.slot >= 0 ? self.cards[dropped.slot] : nil;
-      [card springTo:card.focusScale];
-      [roster identify:dropped];
-      for (KPUIButton *each in self.cards) each.needsDisplay = YES;
-      return YES;
-    }
-    return YES;
+    return button == KartPadMiiPadUndo || button == KartPadMiiPadRedo;
   }
+  KPUIButton *focus = self.focus;
   // A controller that isn't playing joins with A: on the focused empty card, else the first free one.
   if (button == KartPadMiiPadConfirm) {
     KPPadDevice *presser = KPPresser();
@@ -213,7 +413,7 @@ static NSString *KPPlayerName(int slot) { return [NSString stringWithFormat:@"Pl
         if (![roster deviceInSlot:i]) slot = i;
       if (slot < 0) {
         KPUIPlay(KPUISound::Reject);
-        [KPOverlay() toast:@"All four players have a controller" detail:@"Take one out first, from its card." stripe:0
+        [KPOverlay() toast:@"All four players have a controller" detail:@"Use Change controller on a card to swap." stripe:0
                       icon:^(CGContextRef c, CGRect r) { KPDrawGlyph(c, KPUIGlyph::Pad, r, KPP->secondaryText); } image:nil];
         return YES;
       }
@@ -224,14 +424,7 @@ static NSString *KPPlayerName(int slot) { return [NSString stringWithFormat:@"Pl
     }
   }
   KPPadDevice *device = [self.cards containsObject:focus] ? [roster deviceInSlot:(int)focus.tag2] : focus.tagObject;
-  if (button == KartPadMiiPadUndo && device && device.slot >= 0) {  // X: pick the card up
-    self.grabbed = device;
-    KPUIPlay(KPUISound::Press);
-    [self.cards[device.slot] springTo:1.07];
-    for (KPUIButton *card in self.cards) card.needsDisplay = YES;
-    return YES;
-  }
-  if (button == KartPadMiiPadRedo && device) {  // Y: find it
+  if (button == KartPadMiiPadRedo && device && !device.isKeyboard) {  // Y: find it
     [roster identify:device];
     KPUIPlay(KPUISound::Confirm);
     KPUIWobble([self viewFor:device]);
@@ -243,53 +436,36 @@ static NSString *KPPlayerName(int slot) { return [NSString stringWithFormat:@"Pl
 #pragma mark Menus
 
 - (void)openCard:(int)slot {
+  if (self.mode != KPControllersBrowsing) return;
   KPControllerRoster *roster = KPControllerRoster.shared;
   KPPadDevice *device = [roster deviceInSlot:slot];
+  // An empty player takes whichever controller presses A next.
+  if (device == nil) {
+    [self beginAssigning:slot];
+    return;
+  }
   KPMenuScreen *menu = [[KPMenuScreen alloc] initWithFrame:NSZeroRect];
   menu.stripe = KPPlayerColors[slot];
   __weak KPControllersScreen *weakSelf = self;
-  if (device == nil) {
-    menu.heading = [NSString stringWithFormat:@"Who plays as %@?", KPPlayerName(slot)];
-    menu.message = @"Or press A on the controller you want to use.";
-    for (KPPadDevice *resting in roster.devices) {
-      if (resting.slot >= 0) continue;
-      [menu add:[NSString stringWithFormat:@"Use %@", resting.name] detail:nil
-          glyph:(int)(resting.isKeyboard ? KPUIGlyph::Keyboard : resting.family == KPFamilyWiiRemote ? KPUIGlyph::WiiRemote : KPUIGlyph::Pad)
-        enabled:YES run:^{
-          [roster move:resting toSlot:slot];
-          [weakSelf celebrate:resting];
-        }];
-    }
-    [menu add:@"Connect a new controller" detail:@"Pair one with this Mac" glyph:(int)KPUIGlyph::Bluetooth enabled:YES
-          run:^{ [KPOverlay() present:KPMakeConnectScreen()]; }];
-  } else {
-    NSDictionary *mii = [roster miiRecordFor:device];
-    menu.heading = [NSString stringWithFormat:@"%@ · %@", KPPlayerName(slot), mii[@"name"] ?: device.name];
-    if (!device.isKeyboard)
-      [menu add:@"Find it" detail:@"It buzzes and its light flashes" glyph:(int)KPUIGlyph::Find enabled:YES run:^{
-        [roster identify:device];
-        KPUIWobble([weakSelf viewFor:device]);
-      }];
-    [menu add:@"Set up buttons" detail:@"Choose what each button does" glyph:(int)KPUIGlyph::Buttons enabled:YES
-          run:^{ KPSetUpButtons(device); }];
-    [menu add:mii ? @"Change Mii" : @"Choose a Mii" detail:@"Shows who's holding it" glyph:(int)KPUIGlyph::Mii enabled:YES
-          run:^{ KPChooseMii(device); }];
-    [menu add:@"Move to another player" detail:@"Or pick the card up with X" glyph:(int)KPUIGlyph::Move enabled:YES run:^{
-      KPControllersScreen *screen = weakSelf;
-      screen.grabbed = device;
-      [screen.cards[device.slot] springTo:1.07];
-      for (KPUIButton *card in screen.cards) card.needsDisplay = YES;
+  NSDictionary *mii = [roster miiRecordFor:device];
+  menu.heading = [NSString stringWithFormat:@"%@ · %@", KPPlayerName(slot), mii[@"name"] ?: device.name];
+  [menu add:@"Change controller" detail:nil glyph:(int)KPUIGlyph::Swap enabled:YES run:^{ [weakSelf beginAssigning:slot]; }];
+  [menu add:@"Set up buttons" detail:nil glyph:(int)KPUIGlyph::Buttons enabled:YES run:^{ KPSetUpButtons(device); }];
+  [menu add:mii ? @"Change Mii" : @"Choose a Mii" detail:nil glyph:(int)KPUIGlyph::Mii enabled:YES run:^{ KPChooseMii(device); }];
+  if (!device.isKeyboard)
+    [menu add:@"Find it" detail:@"It buzzes and flashes" glyph:(int)KPUIGlyph::Find enabled:YES run:^{
+      [roster identify:device];
+      KPUIWobble([weakSelf viewFor:device]);
     }];
-    [menu add:@"Stop playing" detail:@"It waits in Not Playing" glyph:(int)KPUIGlyph::Close enabled:YES run:^{
-      [roster move:device toSlot:-1];
-      KPUIPlay(KPUISound::PagePrevious);
-    }];
-  }
+  [menu add:@"Stop playing" detail:nil glyph:(int)KPUIGlyph::Close enabled:YES run:^{
+    [roster move:device toSlot:-1];
+    KPUIPlay(KPUISound::PagePrevious);
+  }];
   [KPOverlay() present:menu];
 }
 
 - (void)openChip:(NSUInteger)index {
-  if (index >= self.chips.count) return;
+  if (index >= self.chips.count || self.mode != KPControllersBrowsing) return;
   KPPadDevice *device = self.chips[index].tagObject;
   if (device == nil) return;
   KPControllerRoster *roster = KPControllerRoster.shared;
@@ -298,8 +474,8 @@ static NSString *KPPlayerName(int slot) { return [NSString stringWithFormat:@"Pl
   __weak KPControllersScreen *weakSelf = self;
   for (int slot = 0; slot < KPPlayerCount; ++slot) {
     KPPadDevice *occupant = [roster deviceInSlot:slot];
-    NSString *detail = occupant ? [NSString stringWithFormat:@"%@ stops playing", occupant.name] : @"Free";
-    [menu add:[NSString stringWithFormat:@"As %@", KPPlayerName(slot)] detail:detail glyph:-1 enabled:YES run:^{
+    NSString *detail = occupant ? [NSString stringWithFormat:@"Instead of %@", occupant.name] : nil;
+    [menu add:KPPlayerName(slot) detail:detail glyph:-1 enabled:YES run:^{
       [roster move:device toSlot:slot];
       KPControllersScreen *screen = weakSelf;
       [KPOverlay() focus:screen.cards[slot] sound:NO];
@@ -307,14 +483,14 @@ static NSString *KPPlayerName(int slot) { return [NSString stringWithFormat:@"Pl
     }];
   }
   if (!device.isKeyboard)
-    [menu add:@"Find it" detail:@"It buzzes and its light flashes" glyph:(int)KPUIGlyph::Find enabled:YES
+    [menu add:@"Find it" detail:@"It buzzes and flashes" glyph:(int)KPUIGlyph::Find enabled:YES
           run:^{ [roster identify:device]; }];
   [KPOverlay() present:menu];
 }
 
 - (void)back {
-  if (self.grabbed) {
-    [self handle:KartPadMiiPadBack];
+  if (self.mode != KPControllersBrowsing) {
+    [self cancelChoosing];
     return;
   }
   [super back];
@@ -327,30 +503,86 @@ static NSString *KPPlayerName(int slot) { return [NSString stringWithFormat:@"Pl
   const CGRect s = self.safe;
   KPTextWeight(@"Controllers", CGRectMake(s.origin.x + 56, s.origin.y + 26, 600, 50), 38, KPP->text, NSFontWeightBold,
                NSTextAlignmentLeft);
-  NSString *subtitle = self.grabbed
-      ? [NSString stringWithFormat:@"Moving %@ — ◀ ▶ to choose a player, A to put it down", self.grabbed.name]
-      : @"Press any button on a controller to see which one it is.";
-  KPTextWeight(subtitle, CGRectMake(s.origin.x + 58, s.origin.y + 78, 760, 26), 18, self.grabbed ? KPP->accentBottom : KPP->secondaryText,
-               NSFontWeightMedium, NSTextAlignmentLeft);
+  NSString *subtitle = @"Press any button to see which card is yours.", *hint = @"Ⓐ Options    Ⓨ Find    Ⓑ Back";
+  unsigned ink = KPP->secondaryText;
+  if (self.mode == KPControllersAssigning) {
+    subtitle = [NSString stringWithFormat:@"Press Ⓐ on the controller for %@.", KPPlayerName(self.target)];
+    hint = @"Ⓑ Cancel";
+    ink = KPP->accentBottom;
+  } else if (self.mode == KPControllersOrdering) {
+    const NSUInteger next = self.ordered.count;
+    subtitle = next == 0 ? @"Everyone press Ⓐ in turn. The first is Player 1."
+             : next < (NSUInteger)KPPlayerCount && self.finishAt == 0 ? [NSString stringWithFormat:@"Next: %@", KPPlayerName((int)next)]
+                                                                   : @"Everyone's in!";
+    hint = @"Start when everyone's in    Ⓑ Cancel";
+    ink = KPP->accentBottom;
+  }
+  KPTextWeight(subtitle, CGRectMake(s.origin.x + 58, s.origin.y + 78, 640, 26), 18, ink, NSFontWeightMedium, NSTextAlignmentLeft);
   NSInteger resting = 0;
   for (KPPadDevice *device in KPControllerRoster.shared.devices)
     if (device.slot < 0) ++resting;
-  KPTextWeight(resting ? @"Not playing" : @"Not playing — every connected controller has a player",
-               CGRectMake(s.origin.x + 58, s.origin.y + 536, 800, 26), 18, KPP->secondaryText, NSFontWeightSemibold,
-               NSTextAlignmentLeft);
-  NSString *hint = @"Ⓐ Options    Ⓧ Move    Ⓨ Find    Ⓑ Back";
+  if (resting)
+    KPTextWeight(@"Not playing", CGRectMake(s.origin.x + 58, s.origin.y + 536, 800, 26), 18, KPP->secondaryText, NSFontWeightSemibold,
+                 NSTextAlignmentLeft);
   KPTextWeight(hint, CGRectMake(s.origin.x + 56, s.origin.y + 670, 1168, 26), 16, KPP->secondaryText, NSFontWeightMedium,
                NSTextAlignmentRight);
-  KPTextWeight(@"Miis here help you tell controllers apart. Pick racers and licenses in the game.",
-               CGRectMake(s.origin.x + 58, s.origin.y + 670, 760, 26), 15, KPP->secondaryText, NSFontWeightRegular,
-               NSTextAlignmentLeft);
+}
+
+// A player waiting for a controller while choosing by pressing: the one being chosen pulses.
+- (void)drawWaiting:(int)slot context:(CGContextRef)c in:(CGRect)r next:(BOOL)next {
+  const unsigned color = KPPlayerColors[slot];
+  KPFill(c, r, KPP->panel, 20, next ? 0.95 : 0.5);
+  CGContextSaveGState(c);
+  const CGFloat dash[] = {9, 7};
+  CGContextSetLineDash(c, 0, dash, 2);
+  KPStroke(c, CGRectInset(r, 1, 1), next ? color : KPP->buttonStroke, next ? 3 : 2.2, 19);
+  CGContextRestoreGState(c);
+  CGContextSaveGState(c);
+  CGPathRef clip = CGPathCreateWithRoundedRect(r, 20, 20, nullptr);
+  CGContextAddPath(c, clip);
+  CGContextClip(c);
+  CGPathRelease(clip);
+  KPGradientFill(c, CGRectMake(r.origin.x, r.origin.y, r.size.width, 58), 0, color, KPPlayerDarkColors[slot]);
+  if (!next) KPFill(c, CGRectMake(r.origin.x, r.origin.y, r.size.width, 58), KPP->panel, 0, 0.55);
+  CGContextRestoreGState(c);
+  KPTextWeight(KPPlayerName(slot), CGRectMake(r.origin.x + 22, r.origin.y + 13, 200, 32), 24, next ? KPPlayerInk[slot] : KPP->secondaryText,
+               NSFontWeightHeavy, NSTextAlignmentLeft);
+  if (!next) return;
+  // A big A button, breathing.
+  const CGFloat size = 92 + 10 * self.pulse;
+  const CGRect button = CGRectMake(CGRectGetMidX(r) - size / 2, r.origin.y + 150 - size / 2 + 10, size, size);
+  KPSetInk(c, color, 0.25 + 0.2 * self.pulse);
+  CGContextFillEllipseInRect(c, CGRectInset(button, -14, -14));
+  KPSetInk(c, color);
+  CGContextFillEllipseInRect(c, button);
+  KPTextWeight(@"A", CGRectMake(button.origin.x, CGRectGetMidY(button) - size * 0.33, size, size * 0.66), size * 0.5, KPPlayerInk[slot],
+               NSFontWeightHeavy);
+  KPTextWeight(@"Press Ⓐ", CGRectMake(r.origin.x + 10, r.origin.y + 236, r.size.width - 20, 32), 24, KPP->text, NSFontWeightBold);
+  KPTextWeight(@"on the controller for this player", CGRectMake(r.origin.x + 26, r.origin.y + 272, r.size.width - 52, 50), 16,
+               KPP->secondaryText, NSFontWeightRegular);
 }
 
 - (void)drawCard:(int)slot context:(CGContextRef)c in:(CGRect)r state:(KPUIState)state {
   KPControllerRoster *roster = KPControllerRoster.shared;
   KPPadDevice *device = [roster deviceInSlot:slot];
+  // Choosing by pressing: the player being chosen waits for A; while ordering, so do those after.
+  if (self.mode == KPControllersAssigning && slot == self.target) {
+    [self drawWaiting:slot context:c in:r next:YES];
+    return;
+  }
+  if (self.mode == KPControllersOrdering && slot >= (int)self.ordered.count) {
+    [self drawWaiting:slot context:c in:r next:slot == (int)self.ordered.count && self.finishAt == 0];
+    return;
+  }
+  // The others step back meanwhile.
+  CGContextSaveGState(c);
+  if (self.mode == KPControllersAssigning) CGContextSetAlpha(c, 0.45);
+  [self drawPlayer:slot device:device context:c in:r state:state];
+  CGContextRestoreGState(c);
+}
+
+- (void)drawPlayer:(int)slot device:(KPPadDevice *)device context:(CGContextRef)c in:(CGRect)r state:(KPUIState)state {
   const unsigned color = KPPlayerColors[slot];
-  const BOOL grabbed = device != nil && device == self.grabbed;
   const CGFloat dy = state.pressed ? 2 : 0;
   if (device == nil) {
     KPFill(c, r, KPP->panel, 20, 0.6);
@@ -360,13 +592,7 @@ static NSString *KPPlayerName(int slot) { return [NSString stringWithFormat:@"Pl
     KPStroke(c, CGRectInset(r, 1, 1), KPP->buttonStroke, 2.2, 19);
     CGContextRestoreGState(c);
   } else {
-    if (grabbed) {
-      CGContextSaveGState(c);
-      CGContextSetShadowWithColor(c, CGSizeMake(0, 14), 26, [NSColor colorWithWhite:0 alpha:0.35].CGColor);
-      KPFill(c, r, KPP->panel, 20);
-      CGContextRestoreGState(c);
-    }
-    KPButtonFace(c, r, KPStyle::Card, NO, YES, state.pressed, state.focused && !grabbed);
+    KPButtonFace(c, r, KPStyle::Card, NO, YES, state.pressed, state.focused);
   }
   // The player's colour cap, with the number and the controller's lights.
   const CGRect face = CGRectMake(r.origin.x, r.origin.y + dy, r.size.width, r.size.height - 3);
@@ -389,18 +615,19 @@ static NSString *KPPlayerName(int slot) { return [NSString stringWithFormat:@"Pl
     KPDrawGlyph(c, KPUIGlyph::Plus, CGRectMake(CGRectGetMidX(r) - 34, r.origin.y + 112 + dy, 68, 68), KPP->buttonStroke);
     KPTextWeight(@"No controller", CGRectMake(r.origin.x + 10, r.origin.y + 206 + dy, r.size.width - 20, 30), 22, KPP->secondaryText,
                  NSFontWeightSemibold);
-    KPTextWeight(@"Press A on a controller that isn't playing, or choose one here.",
-                 CGRectMake(r.origin.x + 26, r.origin.y + 242 + dy, r.size.width - 52, 70), 16, KPP->secondaryText,
-                 NSFontWeightRegular);
+    KPTextWeight(@"Press Ⓐ to join", CGRectMake(r.origin.x + 26, r.origin.y + 242 + dy, r.size.width - 52, 30), 16,
+                 KPP->secondaryText, NSFontWeightRegular);
     return;
   }
   // Mii.
+  KPControllerRoster *roster = KPControllerRoster.shared;
   NSDictionary *mii = [roster miiRecordFor:device];
   NSImage *portrait = KPPortraitFor(device, self.cards[slot]);
   const CGRect well = CGRectMake(CGRectGetMidX(r) - 58, r.origin.y + 72 + dy, 116, 116);
   KPDrawMiiWell(c, well, portrait, color, NO);
-  KPTextWeight(mii[@"name"] ?: @"No Mii yet", CGRectMake(r.origin.x + 12, r.origin.y + 194 + dy, r.size.width - 24, 30), 21,
-               mii ? KPP->text : KPP->secondaryText, NSFontWeightSemibold);
+  if (mii[@"name"])
+    KPTextWeight(mii[@"name"], CGRectMake(r.origin.x + 12, r.origin.y + 194 + dy, r.size.width - 24, 30), 21, KPP->text,
+                 NSFontWeightSemibold);
   // The controller, live.
   KPArtState art = KPArtStateFor(device, color);
   KPDrawControllerArt(c, CGRectMake(r.origin.x + 20, r.origin.y + 232 + dy, r.size.width - 40, 116), device.family, art,
@@ -408,16 +635,6 @@ static NSString *KPPlayerName(int slot) { return [NSString stringWithFormat:@"Pl
   KPTextWeight(device.name, CGRectMake(r.origin.x + 20, r.origin.y + 356 + dy, r.size.width - 80, 24), 16, KPP->secondaryText,
                NSFontWeightMedium, NSTextAlignmentLeft);
   KPDrawBattery(c, CGRectMake(CGRectGetMaxX(r) - 56, r.origin.y + 354 + dy, 34, 26), device);
-  if (grabbed) {
-    // Arrows either side while it's being moved.
-    CGContextSaveGState(c);
-    CGContextSetAlpha(c, 0.55 + 0.45 * self.pulse);
-    if (slot > 0) KPDrawGlyph(c, KPUIGlyph::Back, CGRectMake(r.origin.x - 6, CGRectGetMidY(r) - 22, 44, 44), KPP->accentBottom);
-    if (slot < KPPlayerCount - 1)
-      KPDrawGlyph(c, KPUIGlyph::Chevron, CGRectMake(CGRectGetMaxX(r) - 38, CGRectGetMidY(r) - 22, 44, 44), KPP->accentBottom);
-    CGContextRestoreGState(c);
-    KPStroke(c, CGRectInset(r, -4, -4), KPP->accentTop, 4, 24);
-  }
 }
 
 - (void)drawChip:(NSUInteger)index context:(CGContextRef)c in:(CGRect)r state:(KPUIState)state {
@@ -430,7 +647,7 @@ static NSString *KPPlayerName(int slot) { return [NSString stringWithFormat:@"Pl
   KPDrawControllerArt(c, CGRectMake(r.origin.x + 10, r.origin.y + 8 + dy, 92, r.size.height - 19), device.family, art, device.systemName);
   KPTextWeight(device.name, CGRectMake(r.origin.x + 110, r.origin.y + 12 + dy, r.size.width - 120, 26), 18, KPP->text,
                NSFontWeightSemibold, NSTextAlignmentLeft);
-  KPTextWeight(device.isKeyboard ? @"Drives menus" : @"Press A to join", CGRectMake(r.origin.x + 110, r.origin.y + 40 + dy, r.size.width - 150, 22),
+  KPTextWeight(device.isKeyboard ? @"Menus only" : @"Press Ⓐ to join", CGRectMake(r.origin.x + 110, r.origin.y + 40 + dy, r.size.width - 150, 22),
                15, KPP->secondaryText, NSFontWeightRegular, NSTextAlignmentLeft);
   KPDrawBattery(c, CGRectMake(CGRectGetMaxX(r) - 44, r.origin.y + 38 + dy, 30, 24), device);
 }
@@ -440,6 +657,13 @@ static NSString *KPPlayerName(int slot) { return [NSString stringWithFormat:@"Pl
 static KPControllersScreen *KPMakeControllersScreen(int focusSlot) {
   KPControllersScreen *screen = [[KPControllersScreen alloc] initWithFrame:NSZeroRect];
   screen.focusSlot = focusSlot;
+  return screen;
+}
+
+// From HOME's players: an empty player opens straight to choosing its controller.
+static KPScreen *KPMakeControllersScreenFor(int slot) {
+  KPControllersScreen *screen = KPMakeControllersScreen(slot);
+  screen.assignOnOpen = YES;
   return screen;
 }
 
@@ -543,7 +767,7 @@ static const SDL_Scancode KPDefaultKeys[12] = {
     [self.rows addObject:row];
   }
   self.reset = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
-    KPDrawPill(c, r, state, KPStyle::Plain, KPUIGlyph::Restart, @"Reset to Default");
+    KPDrawPill(c, r, state, KPStyle::Plain, KPUIGlyph::Restart, @"Reset");
   } action:^{ [weakSelf askToReset]; }];
   self.done = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
     KPDrawPill(c, r, state, KPStyle::Primary, KPUIGlyph::Check, @"Done");
@@ -583,7 +807,7 @@ static const SDL_Scancode KPDefaultKeys[12] = {
 - (void)listen:(NSInteger)action alternate:(BOOL)alternate {
   if (self.port < 0) {
     KPUIPlay(KPUISound::Reject);
-    self.status = @"Give this controller a player first (on its card).";
+    self.status = @"Give this controller a player first.";
     self.needsDisplay = YES;
     return;
   }
@@ -617,12 +841,12 @@ static const SDL_Scancode KPDefaultKeys[12] = {
   self.art.needsDisplay = YES;
   if (self.capturing < 0 || self.device.isKeyboard) return;
   if (NSProcessInfo.processInfo.systemUptime - self.captureStarted > 8) {
-    [self stopListening:@"Nothing pressed, so nothing changed." sound:KPUISound::Close];
+    [self stopListening:@"Nothing changed." sound:KPUISound::Close];
     return;
   }
   SDL_Gamepad *pad = self.device.gamepad;
   if (pad == nullptr) {
-    [self stopListening:@"The controller went away." sound:KPUISound::Reject];
+    [self stopListening:@"The controller disconnected." sound:KPUISound::Reject];
     return;
   }
   // Wait for everything to be let go, then take the next button or trigger.
@@ -684,7 +908,7 @@ static const SDL_Scancode KPDefaultKeys[12] = {
 
 - (void)askToReset {
   KPPadDevice *device = self.device;
-  KPAsk(@"Reset the buttons?", [NSString stringWithFormat:@"%@ goes back to the buttons it started with.", device.name],
+  KPAsk(@"Reset the buttons?", [NSString stringWithFormat:@"%@ goes back to its standard buttons.", device.name],
         @[@"Reset", @"Cancel"], 1, 0, ^(NSInteger choice) {
           if (choice != 0 || device.slot < 0) return;
           if (device.isKeyboard) {
@@ -695,7 +919,7 @@ static const SDL_Scancode KPDefaultKeys[12] = {
             [KPControllers() reset:nil];
             [KPControllers() save:nil];
           }
-          self.status = @"Back to the default buttons.";
+          self.status = @"Back to the standard buttons.";
           KPUIPlay(KPUISound::PagePrevious);
           for (KPUIButton *row in self.rows) row.needsDisplay = YES;
         });
@@ -728,11 +952,11 @@ static const SDL_Scancode KPDefaultKeys[12] = {
   unsigned ink = KPP->secondaryText;
   if (self.capturing >= 0) {
     const NSInteger left = std::max<NSInteger>(0, 8 - (NSInteger)(NSProcessInfo.processInfo.systemUptime - self.captureStarted));
-    line = [NSString stringWithFormat:@"Press the %@ you want for %@  (%ld)", device.isKeyboard ? @"key" : @"button",
+    line = [NSString stringWithFormat:@"Press a %@ for %@  (%ld)", device.isKeyboard ? @"key" : @"button",
             KPActionTitles()[self.capturing], (long)left];
     ink = KPP->accentBottom;
   } else {
-    line = self.status ?: (device.isKeyboard ? @"Ⓐ Change the key    Ⓑ Back" : @"Ⓐ Change    Ⓧ Add a second button    Ⓑ Back");
+    line = self.status ?: (device.isKeyboard ? @"Ⓐ Change    Ⓑ Back" : @"Ⓐ Change    Ⓧ Add a second button    Ⓑ Back");
   }
   KPTextWeight(line, CGRectMake(s.origin.x + 690, s.origin.y + 500, 540, 56), 20, ink, NSFontWeightSemibold);
   if (device.isKeyboard)
@@ -844,14 +1068,14 @@ static constexpr NSInteger KPMiiPickerColumns = 6, KPMiiPickerRows = 3;
   [super drawDesign:c size:size];
   const CGRect s = self.safe;
   KPTextWeight(@"Choose a Mii", CGRectMake(s.origin.x + 56, s.origin.y + 26, 600, 50), 36, KPP->text, NSFontWeightBold, NSTextAlignmentLeft);
-  NSString *who = self.device.slot >= 0 ? [NSString stringWithFormat:@"For %@ · %@", KPPlayerName(self.device.slot), self.device.name]
-                                        : [NSString stringWithFormat:@"For %@", self.device.name];
+  NSString *who = self.device.slot >= 0 ? [NSString stringWithFormat:@"%@ · %@", KPPlayerName(self.device.slot), self.device.name]
+                                        : self.device.name;
   KPTextWeight(who, CGRectMake(s.origin.x + 58, s.origin.y + 76, 700, 26), 18, KPP->secondaryText, NSFontWeightMedium, NSTextAlignmentLeft);
   if (self.pages > 1)
-    KPTextWeight([NSString stringWithFormat:@"Page %ld of %ld    LB / RB to turn", (long)self.page + 1, (long)self.pages],
+    KPTextWeight([NSString stringWithFormat:@"Page %ld of %ld    LB / RB Turn", (long)self.page + 1, (long)self.pages],
                  CGRectMake(s.origin.x + 56, s.origin.y + 670, 1168, 26), 16, KPP->secondaryText, NSFontWeightMedium, NSTextAlignmentRight);
   if (!self.records.count)
-    KPTextWeight(@"There are no Miis yet. Make one in HOME › Miis.", CGRectMake(s.origin.x + 56, s.origin.y + 320, 1168, 30), 20,
+    KPTextWeight(@"No Miis yet. Make one in HOME › Miis.", CGRectMake(s.origin.x + 56, s.origin.y + 320, 1168, 30), 20,
                  KPP->secondaryText, NSFontWeightMedium);
 }
 @end
@@ -904,15 +1128,15 @@ static KPPadFamily KPPairFamily(KPPairKind kind) {
 static NSString *KPPairSteps(KPPairKind kind) {
   switch (kind) {
     case KPPairKind::Xbox:
-      return @"1. Turn the controller on.\n2. Hold the small pair button on its top edge until the Xbox button flashes quickly.\n3. In Bluetooth settings, click Connect next to Xbox Wireless Controller.";
+      return @"1. Turn the controller on.\n2. Hold the pair button on its top edge until the Xbox button flashes fast.\n3. In Bluetooth settings, click Connect next to it.";
     case KPPairKind::PlayStation:
-      return @"1. Hold the Share (or Create) button and the PS button together until the light flashes.\n2. In Bluetooth settings, click Connect next to the controller.";
+      return @"1. Hold Share (or Create) and the PS button until the light flashes.\n2. In Bluetooth settings, click Connect next to it.";
     case KPPairKind::Switch:
-      return @"1. Hold the small sync button on the top edge (on a Joy\u2011Con, its rail) until the lights run back and forth.\n2. In Bluetooth settings, click Connect next to it.";
+      return @"1. Hold the sync button on the top edge (on a Joy\u2011Con, the rail) until the lights run.\n2. In Bluetooth settings, click Connect next to it.";
     case KPPairKind::WiiRemote:
-      return @"1. Open the battery cover and press the small red SYNC button.\n2. KartPad finds it and pairs it — no settings needed.\n3. Attach the Nunchuk any time.";
+      return @"1. Open the battery cover and press the red SYNC button.\n2. KartPad pairs it by itself.";
     case KPPairKind::Other:
-      return @"1. Put the controller in pairing mode (usually: hold its pair button for a few seconds).\n2. In Bluetooth settings, click Connect next to it.\nA USB controller just needs plugging in.";
+      return @"1. Put it in pairing mode (usually: hold its pair button).\n2. In Bluetooth settings, click Connect next to it.\nUSB controllers just plug in.";
   }
   return @"";
 }
@@ -967,7 +1191,7 @@ static NSString *KPPairSteps(KPPairKind kind) {
   NSMutableSet *ids = [NSMutableSet set];
   for (KPPadDevice *device in KPControllerRoster.shared.devices) [ids addObject:device.identifier];
   self.before = ids;
-  self.status = kind == KPPairKind::WiiRemote ? @"Getting Bluetooth ready…" : @"Waiting for the controller to connect…";
+  self.status = kind == KPPairKind::WiiRemote ? @"Getting Bluetooth ready…" : @"Waiting for the controller…";
   [self layoutDesign];
   [KPOverlay() focus:self.primary sound:NO];
   self.needsDisplay = YES;
@@ -995,7 +1219,7 @@ static NSString *KPPairSteps(KPPairKind kind) {
     [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"x-apple.systempreferences:com.apple.preferences.Bluetooth"]];
   // Background events, so KartPad notices the controller while Settings is in front.
   SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
-  self.status = @"Waiting for the controller to connect… KartPad comes back by itself.";
+  self.status = @"Waiting for the controller… KartPad comes back by itself.";
   self.needsDisplay = YES;
 }
 - (void)rosterChanged {
@@ -1011,7 +1235,7 @@ static NSString *KPPairSteps(KPPairKind kind) {
           [roster move:device toSlot:slot];
           break;
         }
-    self.status = device.slot >= 0 ? [NSString stringWithFormat:@"%@ connected — it's %@!", device.name, KPPlayerName(device.slot)]
+    self.status = device.slot >= 0 ? [NSString stringWithFormat:@"Connected as %@!", KPPlayerName(device.slot)]
                                    : [NSString stringWithFormat:@"%@ connected!", device.name];
     self.busy = NO;
     [roster identify:device];
@@ -1055,7 +1279,7 @@ static NSString *KPPairSteps(KPPairKind kind) {
   if (self.choosing) {
     KPTextWeight(@"Which kind is it?", CGRectMake(s.origin.x + 58, s.origin.y + 78, 760, 26), 18, KPP->secondaryText,
                  NSFontWeightMedium, NSTextAlignmentLeft);
-    KPTextWeight(@"Controllers you've connected before come back on their own: just turn them on.",
+    KPTextWeight(@"Connected one before? Just turn it on.",
                  CGRectMake(s.origin.x + 56, s.origin.y + 460, 1168, 30), 18, KPP->secondaryText, NSFontWeightRegular);
     return;
   }

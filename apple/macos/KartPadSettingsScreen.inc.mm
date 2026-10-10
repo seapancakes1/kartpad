@@ -1,6 +1,7 @@
 // Settings, as a screen over the game: five plain-word categories down the side (Picture, Sound,
 // Controls, Game, Advanced) and big rows a controller can work. Left and right change a row in place
-// (a switch, a choice, a level), A presses it, LB and RB change category. Every row writes the same
+// (a switch, a choice, a level), A presses it, LB and RB change category, and B goes from the rows
+// back to the categories before it leaves. Every row writes the same
 // Config.toml keys and user defaults as the classic Settings window (KartPadMacSettings.inc.mm),
 // which stays one row away under Advanced. A change that needs a restart says so on its row, and
 // HOME offers the restart. Included by KartPadMacShell.mm after KartPadControllersScreen.inc.mm.
@@ -35,7 +36,7 @@ static KPSettingRow *KPRow(NSString *title, NSString *detail, KPRowKind kind) {
 static bool KPWriteConfig(const char *section, const char *key, const std::string &value, bool reload = true) {
   if (!RuntimeConfigFile::WriteSetting(section, key, value)) {
     KPUIPlay(KPUISound::Reject);
-    [KPOverlay() toast:@"That setting couldn't be saved" detail:@"Check that KartPad's Config.toml can be written." stripe:0
+    [KPOverlay() toast:@"That setting couldn't be saved" detail:@"KartPad's Config.toml can't be written." stripe:0
                   icon:^(CGContextRef c, CGRect r) { KPDrawGlyph(c, KPUIGlyph::Gear, r, 0xd0342c); } image:nil];
     return false;
   }
@@ -148,6 +149,11 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
 - (BOOL)handle:(KartPadMiiPadButton)button {
   KPUIButton *focus = self.focus;
   const BOOL onRow = [self.rowButtons containsObject:focus], onTab = [self.tabs containsObject:focus];
+  if (onRow && button == KartPadMiiPadBack) {
+    KPUIPlay(KPUISound::Close);
+    [KPOverlay() focus:self.tabs[self.category] sound:NO];
+    return YES;
+  }
   if (button == KartPadMiiPadNextTab || button == KartPadMiiPadPreviousTab) {
     const NSInteger next = std::clamp<NSInteger>(self.category + (button == KartPadMiiPadNextTab ? 1 : -1), 0, (NSInteger)self.tabs.count - 1);
     if (next == self.category) {
@@ -177,7 +183,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
     [KPOverlay() focus:self.rowButtons[next - self.first] sound:YES];
     return YES;
   }
-  // From a tab, Right goes to its rows; from a row, Left (when it can't change it) goes back to the tab.
+  // From a tab, Right goes to its rows; from a row that has nothing to change, Left goes back to the tab.
   if (onTab && button == KartPadMiiPadRight) {
     if (focus.tag2 != self.category) [self showCategory:focus.tag2 focusRows:NO];
     [KPOverlay() focus:self.rowButtons.firstObject sound:YES];
@@ -195,7 +201,8 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
   }
   if (onRow && button == KartPadMiiPadLeft) {
     KPSettingRow *row = [self rowAt:focus.tag2];
-    if (row.kind == KPRowAction || ![self adjust:focus.tag2 by:-1]) [KPOverlay() focus:self.tabs[self.category] sound:YES];
+    if (row.kind == KPRowAction) [KPOverlay() focus:self.tabs[self.category] sound:YES];
+    else [self adjust:focus.tag2 by:-1];
     return YES;
   }
   if (focus == self.done && button == KartPadMiiPadDown) {
@@ -220,7 +227,10 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
   switch (row.kind) {
     case KPRowSwitch: {
       const BOOL on = row.on(), want = direction > 0;
-      if (on == want) return NO;
+      if (on == want) {
+        KPUIPlay(KPUISound::Same);
+        return YES;
+      }
       row.setOn(want);
       KPUIPlay(want ? KPUISound::Confirm : KPUISound::Same);
       break;
@@ -379,7 +389,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
   // Picture.
   NSMutableArray *picture = [NSMutableArray array];
   {
-    KPSettingRow *row = KPRow(@"Full screen", @"Or the window you can resize. ⌃⌘F works too.", KPRowSwitch);
+    KPSettingRow *row = KPRow(@"Full screen", @"Shortcut: ⌃⌘F", KPRowSwitch);
     row.on = ^BOOL { return aurora_get_display_mode() != AURORA_DISPLAY_MODE_WINDOWED; };
     row.setOn = ^(BOOL on) {
       if (on != (aurora_get_display_mode() != AURORA_DISPLAY_MODE_WINDOWED)) [Controller() toggleGameFullScreen:nil];
@@ -387,7 +397,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
     [picture addObject:row];
   }
   {
-    KPSettingRow *row = KPRow(@"Picture quality", @"Higher is sharper and works your Mac harder.", KPRowChoice);
+    KPSettingRow *row = KPRow(@"Picture quality", @"Higher is sharper but works your Mac harder.", KPRowChoice);
     NSArray<NSNumber *> *values = @[@0, @1, @1.5, @2, @3, @4, @6, @8];
     row.choices = @[@"Auto", @"Standard · 1×", @"1.5×", @"High · 2×", @"Very high · 3×", @"Ultra · 4×", @"6×", @"8×"];
     row.index = ^NSInteger {
@@ -408,7 +418,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
   [picture addObject:boolRow(@"Sharper picture", @"Skips the Wii's soft copy filter.", "video", "disable_copy_filter", true,
                              ^bool(const RuntimeUserConfig &c) { return c.disableCopyFilter.value_or(true); }, false, true)];
   {
-    KPSettingRow *row = KPRow(@"Glow effects", @"The game's bloom. Changes at the next course or menu.", KPRowSwitch);
+    KPSettingRow *row = KPRow(@"Glow effects", @"The game's bloom. Applies at the next course or menu.", KPRowSwitch);
     row.on = ^BOOL { return (config().disabledPostProcessingPaths.value_or(0) & 0x10u) == 0; };
     row.setOn = ^(BOOL on) {
       uint32_t mask = config().disabledPostProcessingPaths.value_or(0);
@@ -417,10 +427,10 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
     };
     [picture addObject:row];
   }
-  [picture addObject:boolRow(@"Show frame rate", @"A small counter in the corner.", "video", "show_fps", true,
+  [picture addObject:boolRow(@"Show frame rate", nil, "video", "show_fps", true,
                              ^bool(const RuntimeUserConfig &c) { return c.showFps.value_or(true); }, false, true)];
   {
-    KPSettingRow *row = KPRow(@"Smoother motion", @"Experimental. May show small glitches; limits quality to 4×.", KPRowChoice);
+    KPSettingRow *row = KPRow(@"Smoother motion", @"Experimental. Caps picture quality at 4×.", KPRowChoice);
     NSArray<NSNumber *> *values = @[@0, @120, @180];
     row.choices = @[@"Off · 60 fps", @"120 fps", @"180 fps"];
     row.index = ^NSInteger {
@@ -453,7 +463,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
 
   // Sound.
   NSMutableArray *sound = [NSMutableArray array];
-  [sound addObject:boolRow(@"Sound", @"Everything the game plays.", "audio", "muted", false,
+  [sound addObject:boolRow(@"Sound", nil, "audio", "muted", false,
                            ^bool(const RuntimeUserConfig &c) { return c.audioMuted.value_or(false); }, true, true)];
   [sound addObject:levelRow(@"Overall volume", "volume", ^float(const RuntimeUserConfig &c) { return c.audioVolume.value_or(1); })];
   [sound addObject:levelRow(@"Music", "music_volume", ^float(const RuntimeUserConfig &c) { return c.audioMusicVolume.value_or(1); })];
@@ -463,7 +473,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
   [sound addObject:levelRow(@"Character voices", "voices_volume",
                             ^float(const RuntimeUserConfig &c) { return c.audioVoicesVolume.value_or(1); })];
   {
-    KPSettingRow *row = KPRow(@"KartPad menu sounds", @"The clicks and chimes in HOME and these screens.", KPRowSwitch);
+    KPSettingRow *row = KPRow(@"KartPad menu sounds", @"The clicks and chimes in HOME and here.", KPRowSwitch);
     row.on = ^BOOL { return KartPadUISoundsEnabled(); };
     row.setOn = ^(BOOL on) {
       KartPadUISetSoundsEnabled(on);
@@ -475,7 +485,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
   // Controls.
   NSMutableArray *controls = [NSMutableArray array];
   {
-    KPSettingRow *row = KPRow(@"Controllers", @"Players, buttons, Miis and connecting.", KPRowAction);
+    KPSettingRow *row = KPRow(@"Controllers", nil, KPRowAction);
     row.run = ^{ [KPOverlay() present:(KPScreen *)KPMakeControllersScreen(-1)]; };
     row.value = ^NSString * {
       NSInteger playing = 0;
@@ -486,7 +496,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
     [controls addObject:row];
   }
   {
-    KPSettingRow *row = KPRow(@"Vibration", @"For controllers that can buzz.", KPRowChoice);
+    KPSettingRow *row = KPRow(@"Vibration", nil, KPRowChoice);
     row.choices = @[@"Off", @"Light", @"Medium", @"Strong"];
     row.index = ^NSInteger {
       const RuntimeUserConfig c = config();
@@ -501,7 +511,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
     [controls addObject:row];
   }
   {
-    KPSettingRow *row = KPRow(@"Test vibration", @"Every controller that can vibrate buzzes once.", KPRowAction);
+    KPSettingRow *row = KPRow(@"Test vibration", nil, KPRowAction);
     row.run = ^{
       const RuntimeUserConfig c = config();
       const auto level = static_cast<Uint16>(std::lround(std::clamp(c.rumbleStrength.value_or(0.5f), 0.0f, 1.0f) * 65535.0f));
@@ -519,14 +529,14 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
   for (int kind : {KPPadShortcutSettings, KPPadShortcutMiis}) {
     KPSettingRow *row = KPRow(kind == KPPadShortcutSettings ? @"Open HOME by holding buttons" : @"Open Miis by holding buttons",
                               nil, KPRowSwitch);
-    row.detail = [NSString stringWithFormat:@"Hold %@. For controllers without a HOME button.", KPPadShortcutPhrase(kind)];
+    row.detail = [NSString stringWithFormat:@"Hold %@. For controllers without HOME.", KPPadShortcutPhrase(kind)];
     if (kind == KPPadShortcutMiis) row.detail = [NSString stringWithFormat:@"Hold %@.", KPPadShortcutPhrase(kind)];
     row.on = ^BOOL { return KPPadShortcutEnabled(kind); };
     row.setOn = ^(BOOL on) { [NSUserDefaults.standardUserDefaults setBool:on forKey:KPPadShortcuts[kind].enabledKey]; };
     [controls addObject:row];
   }
   {
-    KPSettingRow *row = KPRow(@"Keyboard plays as", @"First free: whichever player has no controller.", KPRowChoice);
+    KPSettingRow *row = KPRow(@"Keyboard plays as", @"First free: whichever player has no controller", KPRowChoice);
     row.choices = @[@"Nobody", @"First free", @"Player 1", @"Player 2", @"Player 3", @"Player 4"];
     row.index = ^NSInteger {
       id pinned = [NSUserDefaults.standardUserDefaults objectForKey:KPKeyboardPlayerKey];
@@ -551,7 +561,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
   NSMutableArray *game = [NSMutableArray array];
 #if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)
   {
-    KPSettingRow *row = KPRow(@"Start KartPad with", @"The game KartPad opens next time.", KPRowChoice);
+    KPSettingRow *row = KPRow(@"Start KartPad with", @"Next time KartPad opens", KPRowChoice);
     row.choices = @[@"Mario Kart Wii", @"Retro Rewind"];
     row.index = ^NSInteger {
       return [[NSUserDefaults.standardUserDefaults stringForKey:kKartPadRuntimeProfileDefaultsKey] isEqualToString:kKartPadRetroProfile] ? 1 : 0;
@@ -559,7 +569,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
     row.setIndex = ^(NSInteger index) {
       if (index == 1 && !KPRetroRewindReady()) {
         KPUIPlay(KPUISound::Reject);
-        [KPOverlay() toast:@"Retro Rewind isn't set up yet" detail:@"Choose its files below first." stripe:0
+        [KPOverlay() toast:@"Retro Rewind isn't set up yet" detail:@"Set up Retro Rewind files below first." stripe:0
                       icon:^(CGContextRef c, CGRect r) { KPDrawGlyph(c, KPUIGlyph::Swap, r, KPP->secondaryText); } image:nil];
         return;
       }
@@ -570,19 +580,19 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
   }
 #endif
   {
-    KPSettingRow *row = KPRow(@"Pause when you switch apps", @"The game waits while another app is in front.", KPRowSwitch);
+    KPSettingRow *row = KPRow(@"Pause when you switch apps", nil, KPRowSwitch);
     row.on = ^BOOL { return KPBackgroundPauseEnabled(); };
     row.setOn = ^(BOOL on) { [NSUserDefaults.standardUserDefaults setBool:on forKey:kKartPadBackgroundPauseDefaultsKey]; };
     [game addObject:row];
   }
   {
-    KPSettingRow *row = KPRow(@"Miis", @"Make, edit and choose the Miis your licenses use.", KPRowAction);
+    KPSettingRow *row = KPRow(@"Miis", nil, KPRowAction);
     row.run = ^{ [KPOverlay() present:KPMakeMiisScreen()]; };
     row.restart = ^BOOL { return KartPadHasPendingMiiChanges(); };
     [game addObject:row];
   }
   {
-    KPSettingRow *row = KPRow(@"Mario Kart Wii files", @"Your game's extracted DATA folder. Needs a mouse.", KPRowAction);
+    KPSettingRow *row = KPRow(@"Mario Kart Wii files", @"The extracted DATA folder. Needs a mouse.", KPRowAction);
     row.value = ^NSString * {
       NSError *error = nil;
       return ValidateExtractedRoot(ConfiguredGameDataRoot(), &error) == nil && error == nil ? @"Ready" : @"Needs attention";
@@ -596,8 +606,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
   }
 #if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)
   {
-    KPSettingRow *row = KPRow(@"Retro Rewind files", [NSString stringWithFormat:@"The RetroRewind6 folder for version %@. Needs a mouse.",
-                                                      @KARTPAD_RR_VERSION], KPRowAction);
+    KPSettingRow *row = KPRow(@"Retro Rewind files", [NSString stringWithFormat:@"Version %@", @KARTPAD_RR_VERSION], KPRowAction);
     row.value = ^NSString * {
       if (KPRetroRewindReady()) return [NSString stringWithFormat:@"Ready · %@", @KARTPAD_RR_VERSION];
       KPRetroDownload *download = KPRetroDownload.shared;
@@ -622,7 +631,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
   // Advanced.
   NSMutableArray *advanced = [NSMutableArray array];
   {
-    KPSettingRow *row = KPRow(@"Hide the mouse pointer", @"When the mouse hasn't moved for a while.", KPRowChoice);
+    KPSettingRow *row = KPRow(@"Hide the mouse pointer", @"When the mouse stops moving", KPRowChoice);
     NSArray<NSNumber *> *values = @[@0, @3, @5, @10];
     row.choices = @[@"Never", @"After 3 s", @"After 5 s", @"After 10 s"];
     row.index = ^NSInteger {
@@ -632,11 +641,11 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
     row.setIndex = ^(NSInteger index) { KPWriteConfig("video", "cursor_auto_hide_seconds", std::to_string(values[index].intValue)); };
     [advanced addObject:row];
   }
-  [advanced addObject:boolRow(@"Skip effects still loading", @"Less stutter the first time a course appears.", "video",
+  [advanced addObject:boolRow(@"Skip effects still loading", @"Less stutter the first time a course loads.", "video",
                               "skip_unready_pipelines", true,
                               ^bool(const RuntimeUserConfig &c) { return c.skipUnreadyPipelines.value_or(true); }, false, true)];
   {
-    KPSettingRow *row = KPRow(@"VSync", @"Experimental. Applies when KartPad restarts.", KPRowSwitch);
+    KPSettingRow *row = KPRow(@"VSync", @"Experimental. Applies after a restart.", KPRowSwitch);
     row.on = ^BOOL { return config().vsync.value_or(false); };
     row.setOn = ^(BOOL on) {
       if (!KPWriteConfig("video", "vsync", on ? "true" : "false", false)) return;
@@ -646,7 +655,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
     [advanced addObject:row];
   }
   {
-    KPSettingRow *row = KPRow(@"Use the area around the camera", @"Full screen across the notch. Applies when KartPad restarts.", KPRowSwitch);
+    KPSettingRow *row = KPRow(@"Use the area around the camera", @"Full screen across the notch. Applies after a restart.", KPRowSwitch);
     row.on = ^BOOL { return KPFullscreenAcrossNotch(); };
     row.setOn = ^(BOOL on) {
       if (!KPWriteConfig("video", "fullscreen_across_notch", on ? "true" : "false", false)) return;
@@ -669,14 +678,14 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
     return row;
   };
 #if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)
-  [advanced addObject:legacy(@"Use a Retro Rewind folder", @"One you already have, instead of downloading.", @selector(chooseRetroRewindData:))];
+  [advanced addObject:legacy(@"Use a Retro Rewind folder", @"One you already have, instead of downloading", @selector(chooseRetroRewindData:))];
 #endif
-  [advanced addObject:legacy(@"Private Wii server", @"For online play on a server you choose.", @selector(showPrivateServer:))];
-  [advanced addObject:legacy(@"Controller compatibility tools", @"Map controllers the Mac doesn't recognise.", @selector(showControllerCompatibility:))];
-  [advanced addObject:legacy(@"Save a diagnostics report", @"A file to attach when you report a problem.", @selector(saveDiagnostics:))];
-  [advanced addObject:legacy(@"Report a problem", @"Opens the project's issue pages in your browser.", @selector(reportProblem:))];
-  [advanced addObject:legacy(@"Show KartPad's files", @"Settings, saves and logs in Finder.", @selector(showApplicationSupport:))];
-  [advanced addObject:legacy(@"Classic settings window", @"Every setting in one window, for mouse and keyboard.", @selector(showSettings:))];
+  [advanced addObject:legacy(@"Private Wii server", @"Play online on a server you choose", @selector(showPrivateServer:))];
+  [advanced addObject:legacy(@"Controller compatibility tools", @"For controllers the Mac doesn't recognise", @selector(showControllerCompatibility:))];
+  [advanced addObject:legacy(@"Save a diagnostics report", @"A file to attach to a problem report", @selector(saveDiagnostics:))];
+  [advanced addObject:legacy(@"Report a problem", @"Opens in your browser", @selector(reportProblem:))];
+  [advanced addObject:legacy(@"Show KartPad's files", @"Settings, saves and logs, in Finder", @selector(showApplicationSupport:))];
+  [advanced addObject:legacy(@"Classic settings window", @"Every setting in one window, for mouse and keyboard", @selector(showSettings:))];
 
   self.rows = @[picture, sound, controls, game, advanced];
 }

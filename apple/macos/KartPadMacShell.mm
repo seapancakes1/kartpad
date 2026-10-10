@@ -1380,6 +1380,18 @@ static void InstallMenu() {
   }
 #endif
 
+  // SDL makes a Window menu only when it creates the app itself; KartPad creates the app first (to
+  // take the focus at launch), so it makes its own: Minimize, Zoom and the window list.
+  if (NSApp.windowsMenu == nil) {
+    NSMenu *windowMenu = [[NSMenu alloc] initWithTitle:@"Window"];
+    [windowMenu addItemWithTitle:@"Minimize" action:@selector(performMiniaturize:) keyEquivalent:@"m"];
+    [windowMenu addItemWithTitle:@"Zoom" action:@selector(performZoom:) keyEquivalent:@""];
+    NSMenuItem *windowItem = [[NSMenuItem alloc] initWithTitle:@"Window" action:nil keyEquivalent:@""];
+    windowItem.submenu = windowMenu;
+    [mainMenu addItem:windowItem];
+    NSApp.windowsMenu = windowMenu;
+  }
+
   NSInteger productMenuIndex = mainMenu.numberOfItems;
   for (NSInteger index = 0; index < mainMenu.numberOfItems; ++index) {
     if ([[mainMenu itemAtIndex:index].title isEqualToString:@"Window"]) {
@@ -1577,6 +1589,14 @@ bool KartPadMacShellPrepareGameData(void) {
       return false;
     }
   }
+  // Opened from the Dock or Finder, KartPad finishes launching and takes the focus straight away,
+  // while macOS still hands it over. Left to the game window (after an update check and Retro
+  // Rewind's file checks), it can come too late: macOS no longer brings a starting app forward, and
+  // the game opens behind whatever was in front. Automated checks never take the focus.
+  NSApplication *launching = NSApplication.sharedApplication;
+  [launching setActivationPolicy:NSApplicationActivationPolicyRegular];
+  [launching finishLaunching];
+  if (!KPUIBackgroundAutomation()) [launching activate];
 #if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)
   // Activation completes before any game files are opened. The helper relaunches
   // the replacement (or, after repeated failed launches, the previous) app after
@@ -1680,9 +1700,6 @@ bool KartPadMacShellPrepareGameData(void) {
     }
 
     NSApplication *app = [NSApplication sharedApplication];
-    [app setActivationPolicy:NSApplicationActivationPolicyRegular];
-    [app finishLaunching];
-    [app activateIgnoringOtherApps:YES];
     NSMenu *temporaryMainMenu = nil;
     if (app.mainMenu == nil) {
       temporaryMainMenu = [NSMenu new];
@@ -1697,9 +1714,7 @@ bool KartPadMacShellPrepareGameData(void) {
         app.mainMenu = nil;
       }
     };
-    dispatch_async(dispatch_get_main_queue(), ^{
-      [NSApp activateIgnoringOtherApps:YES];
-    });
+    if (!KPUIBackgroundAutomation()) dispatch_async(dispatch_get_main_queue(), ^{ [NSApp activate]; });
     KPCurtainDone();
     // KartPad's guided setup, which a controller can finish. (KartPadClassicSetup keeps the plain
     // question and folder picker below.)
