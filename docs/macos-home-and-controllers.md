@@ -140,7 +140,8 @@ echo "shot home" >> /path/to/qa/commands.txt # /path/to/qa/home.png
 Commands: `home`, `close`, `screen settings|controllers|miis|pair-wii`,
 `pad up|down|left|right|a|b|x|y|lb|rb|start`, `focus LABEL`, `shot NAME`,
 `shotwindow NAME`, `resize W H`, `appearance light|dark|system`, `frames` (the
-presented-frame counter, to check the game holds still), `toast`, `hint`,
+presented-frame counter, to check the game holds still), `roster` (every
+controller's player and Aurora port), `toast`, `hint`,
 `editmii SLOT`, `closewindows`, `setupuse PATH`, `rrtest`, `rrstatus [screen]`,
 `restart`, `quit`, `wait SECONDS`. Every Objective-C exception is logged with
 its stack in `log.txt`. Use a portable copy (a `portable.txt` beside the app)
@@ -148,6 +149,15 @@ so checks never touch your own settings and saves. Start the program directly
 rather than with `open`: a copy opened by LaunchServices asks for its own
 permission to read Documents, and `screen pair-wii` (Wii Remote pairing) asks for
 Bluetooth.
+
+A run with `KARTPAD_BACKGROUND=1` never takes the background pause and never
+takes the focus. Real controllers don't drive its screens while it's in the
+background (only the `pad` command does), so a player using the same controller
+in another app doesn't steer the run. A portable copy keeps its own saves and
+Config.toml, but macOS preferences (`dev.kartpad.app`: the keyboard's player,
+the HOME hint count and the like) are shared with any other KartPad on the Mac.
+Export them first (`defaults export dev.kartpad.app before.plist`), and put back
+anything a run changed.
 
 ### Known limits
 
