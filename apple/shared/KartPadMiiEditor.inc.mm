@@ -185,10 +185,28 @@ static void KPDrawImage(KPMiiImage *image,CGRect rect){
     [image drawInRect:fit];
 #endif
 }
-// Head portraits (the Miis screen and Create Mii) render on the resource worker and are cached by the Mii's 74 bytes, so an
+// Head portraits (the Miis screen and Create Mii) render on the resource worker and are kept by the Mii's 74 bytes, so an
 // unchanged Mii renders once per session. Without the imported RFL archive, tiles fall back to a
 // silhouette in the Mii's favorite color.
-static NSCache<NSData*,KPMiiImage*> *KPMiiPortraits(){static NSCache *cache;static dispatch_once_t once;dispatch_once(&once,^{cache=[NSCache new];});return cache;}
+// Not an NSCache: once macOS reports memory pressure, which a running game brings on, an NSCache
+// evicts each portrait as it is stored, so the screens kept the silhouette. This keeps the most
+// recently used ones instead, enough for a full Mii database and Create Mii's faces. Main thread only.
+@interface KPMiiPortraitStore:NSObject
+- (KPMiiImage*)objectForKey:(NSData*)mii;
+- (void)setObject:(KPMiiImage*)image forKey:(NSData*)mii;
+@end
+@implementation KPMiiPortraitStore{NSMutableDictionary<NSData*,KPMiiImage*> *_images;NSMutableOrderedSet<NSData*> *_recent;}
+// 100 Miis, plus room for Create Mii's look-alikes and blank faces.
+static const NSUInteger KPMiiPortraitLimit=128;
+- (instancetype)init{if((self=[super init])){_images=[NSMutableDictionary dictionary];_recent=[NSMutableOrderedSet orderedSet];}return self;}
+- (void)touch:(NSData*)mii{[_recent removeObject:mii];[_recent addObject:mii];}
+- (KPMiiImage*)objectForKey:(NSData*)mii{KPMiiImage *image=_images[mii];if(image)[self touch:mii];return image;}
+- (void)setObject:(KPMiiImage*)image forKey:(NSData*)mii{
+    _images[mii]=image;[self touch:mii];
+    while(_recent.count>KPMiiPortraitLimit){[_images removeObjectForKey:_recent.firstObject];[_recent removeObjectAtIndex:0];}
+}
+@end
+static KPMiiPortraitStore *KPMiiPortraits(){static KPMiiPortraitStore *store;static dispatch_once_t once;dispatch_once(&once,^{store=[KPMiiPortraitStore new];});return store;}
 static NSString *KPMiiPortraitProblem;
 static NSMutableSet<NSData*> *KPMiiPortraitsRendering(){static NSMutableSet *set;static dispatch_once_t once;dispatch_once(&once,^{set=[NSMutableSet set];});return set;}
 static void KPMiiRequestPortrait(NSData *mii,void(^ready)(void)){
