@@ -35,6 +35,19 @@ KartPad needs the exact Retro Rewind version it was built for. If it says the
 data is unsupported, use the version it names; a newer pack needs a KartPad
 update.
 
+## HOME
+
+Press **HOME** on a controller (the Xbox button, the PS button, or HOME on a
+Pro Controller, Joy-Con or Wii Remote) or **esc** on the keyboard for KartPad's
+menus over the game. The game holds still underneath (online it keeps going).
+From HOME: carry on, switch between Mario Kart Wii and Retro Rewind, Miis,
+Controllers, volume, window or full screen, Settings and Quit. Controllers
+without a HOME button hold **View + Menu** for a second. Everything works with
+a controller, the keyboard or the mouse. See
+[KartPad on Mac: HOME, Controllers and Settings](macos-home-and-controllers.md).
+
+The first time KartPad opens it walks you through finding your game files.
+
 ## Menus and input
 
 - **Game** switches the game and opens display and audio settings. Changes
@@ -56,7 +69,7 @@ update.
   items, arrow keys for tricks, Space to pause and Tab for select.
 - The mouse works in KartPad's menus but doesn't drive; use the keyboard or a
   controller in races.
-- On a controller, hold **View + Menu** for a second to open Settings, or
+- On a controller, hold **View + Menu** for a second to open HOME, or
   **View** to open Miis. The D-pad moves around Settings, left and right change
   a choice or slider, A presses, LB and RB change tab, and B closes it.
   **Settings → Controllers → Controller shortcuts** changes the buttons or
@@ -70,9 +83,9 @@ caches in `~/Library/Caches/KartPad`. Replacing the app keeps both.
 
 ## Experimental Wii Remote and Nunchuk
 
-Turn on **Controls → Experimental Wii Remote + Nunchuk**, press the red
-**SYNC** button on the Wii Remote to pair, attach the Nunchuk, then choose
-**Wii Remote + Nunchuk (Experimental)** in Controller Settings. It works with an
+In **HOME → Controllers → Connect a Controller → Wii Remote** (or **Controls →
+Pair Wii Remote…**), press the red **SYNC** button on the Wii Remote to pair,
+then attach the Nunchuk. It works with an
 original `RVL-CNT-01` or Wii Remote Plus `RVL-CNT-01-TR`, without a
 DolphinBar. It uses private macOS Bluetooth interfaces and needs more hardware
 testing; reconnecting and long sessions may not work yet. A Classic Controller
