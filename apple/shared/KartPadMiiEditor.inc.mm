@@ -443,7 +443,7 @@ struct KPItem{KPAction action;CGRect rect;unsigned field=0;int value=0;NSString 
 @property(nonatomic,strong) KPMiiMetalPreview *preview;
 @property(nonatomic,strong) NSMutableDictionary<NSString*,KPMiiImage*> *thumbnails;
 @property(nonatomic,copy) NSString *previewMessage,*validationMessage;
-@property(nonatomic,strong) NSMutableArray *nameFields,*nameHints,*meters;
+@property(nonatomic,strong) NSMutableArray *nameFields,*nameHints;
 @property(nonatomic) NSUInteger validationField;
 @property(nonatomic,weak) id buildLabel;
 // The last adjustment press, so held repeats tick instead of replaying the step sound.
@@ -654,42 +654,6 @@ static NSView *KPPadNearest(NSArray<NSView*> *candidates,NSView *from,int dx,int
 - (void)accessibilityDecrement{[self step:-4];}
 #endif
 @end
-// Where an adjustment sits in its range, in the gauges' style: a recessed track with a Wii-blue
-// fill, a notch per step (every other step on long ranges) and a small handle. The two buttons
-// under it run from its left end to its right. They also carry the value for VoiceOver, so the
-// meter itself is decoration.
-#if TARGET_OS_OSX
-@interface KPMiiRangeMeter : NSView
-#else
-@interface KPMiiRangeMeter : UIView
-#endif
-@property(nonatomic,weak) KPMiiEditor *editor;
-@property(nonatomic) unsigned field;
-@end
-@implementation KPMiiRangeMeter
-#if TARGET_OS_OSX
-- (BOOL)isFlipped{return YES;}
-- (NSView*)hitTest:(NSPoint)point{return nil;}
-#else
-- (instancetype)initWithFrame:(CGRect)frame{if((self=[super initWithFrame:frame])){self.opaque=NO;self.backgroundColor=UIColor.clearColor;self.userInteractionEnabled=NO;self.isAccessibilityElement=NO;}return self;}
-#endif
-- (void)drawRect:(CGRect)rect{
-#if TARGET_OS_OSX
-    CGContextRef c=NSGraphicsContext.currentContext.CGContext;
-#else
-    CGContextRef c=UIGraphicsGetCurrentContext();
-#endif
-    KPUsePalette(self);auto f=kartpad::mii::AppearanceFields[self.field];unsigned span=std::max(1u,f.maximum-f.minimum);
-    unsigned value=std::clamp(kartpad::mii::Appearance::Decode(Bytes(self.editor.draft)).Get(self.field),f.minimum,f.maximum)-f.minimum;
-    CGRect t=CGRectMake(5,3,self.bounds.size.width-10,5);
-    KPFill(c,CGRectOffset(t,0,-1),KPP->ledge,2.5);KPFill(c,t,KPP->well,2.5);KPStroke(c,t,KPP->buttonStroke,1,2.5);
-    CGFloat x=t.origin.x+t.size.width*value/span;
-    if(x>t.origin.x+1.5)KPGradientFill(c,CGRectMake(t.origin.x+1,t.origin.y+1,x-t.origin.x-1,t.size.height-2),1.5,KPP->accentTop,KPP->accentBottom);
-    KPSetInk(c,KPP->buttonStroke);CGContextSetLineWidth(c,1);
-    for(unsigned i=0;i<=span;i+=span>12?2:1){CGFloat tx=t.origin.x+t.size.width*i/span;KPLine(c,tx,CGRectGetMaxY(t)+2,tx,CGRectGetMaxY(t)+4);}
-    CGRect handle=CGRectMake(x-4,.5,8,10);KPFill(c,CGRectOffset(handle,0,1),0x000000,3,.2);KPGradientFill(c,handle,3,0xffffff,0xe3e8eb);KPStroke(c,handle,KPP->buttonStroke,1,3);
-}
-@end
 // Preview idle animation (blink, smile, body loop, head sway). On unless the player turns it off.
 static NSString *const KPMiiPreviewAnimationKey=@"KartPadMiiPreviewAnimation";
 static BOOL KPMiiPreviewAnimation(){id value=[NSUserDefaults.standardUserDefaults objectForKey:KPMiiPreviewAnimationKey];return value?[value boolValue]:YES;}
@@ -745,7 +709,6 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
 #endif
     }
     auto a=kartpad::mii::Appearance::Decode(Bytes(self.editor.draft));BOOL sound=[KPMiiSounds shared].enabled;
-    for(id meter in self.editor.meters)KPRefresh(meter);
 #if TARGET_OS_OSX
     // The close button's dot marks unsaved changes, and the title names the Mii.
     if(NSWindow *window=self.editor.window){NSString *base=self.editor.slot!=NSNotFound?@"Edit Mii":self.editor.duplicating?@"Duplicate Mii":@"Create Mii",*name=KPMiiName(self.editor.draft,2);
@@ -758,7 +721,7 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
         if(item.action==KPAction::Save)item.enabled=[self.editor dirty];
         button.enabled=item.enabled;
         NSString *value=item.action==KPAction::Toggle?(KPToggleOn(item,a)?@"On":@"Off"):item.action==KPAction::Sound?(sound?@"On":@"Off"):(item.action==KPAction::Mode||item.action==KPAction::Section)&&item.selected?@"Selected":item.action==KPAction::Birthday&&item.field?KPBirthdayPart(a,item.field):nil;
-        // Adjustments say where they are in their range, as the meter above them shows.
+        // Adjustments say where they are in their range.
         if(item.action==KPAction::Adjust){auto f=kartpad::mii::AppearanceFields[item.field];value=[NSString stringWithFormat:@"%u of %u",a.Get(item.field)-f.minimum+1,f.maximum-f.minimum+1];}
 #if TARGET_OS_OSX
         if(item.action==KPAction::Sound)[button setAccessibilityValue:@(sound)];else [button setAccessibilityValue:value];
@@ -784,7 +747,7 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
 - (void)rebuild{
     if(!self.editor.draft)return;KPUsePalette(self);
     for(id view in self.subviews.copy)if(view!=self.editor.preview)[view removeFromSuperview];
-    _hoverIndex=NSNotFound;self.buttons=[NSMutableArray array];self.editor.nameFields=[NSMutableArray array];self.editor.nameHints=[NSMutableArray array];self.editor.meters=[NSMutableArray array];_items.clear();
+    _hoverIndex=NSNotFound;self.buttons=[NSMutableArray array];self.editor.nameFields=[NSMutableArray array];self.editor.nameHints=[NSMutableArray array];_items.clear();
     CGFloat w=self.bounds.size.width,h=self.bounds.size.height;BOOL compact=w<680;
     // Portrait phones stack the preview above the panel; short screens (landscape phones) put the
     // category tabs in the title row.
@@ -993,21 +956,20 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
                 CGFloat chipW=std::min(chipMax*1.25,(cw-(perRow-1)*6)/perRow),chipH=std::min(chipMax,chipW);
                 for(unsigned i=0;i<colors&&emit;i++)add(KPAction::Select,CGRectMake(sx+(i%perRow)*(chipW+6),sy+(i/perRow)*(chipH+6),chipW,chipH),@"Color",colorField,i);
                 return ((colors+perRow-1)/perRow)*(chipH+6)-6;};
-            // A column wide enough for the longest title puts each adjustment on one row (less, title over
-            // meter, more); a narrower one stacks the title and meter above the two buttons.
+            // A column wide enough for the longest title puts each adjustment on one row (less, title, more);
+            // a narrower one stacks the title above the two buttons.
             CGFloat oneRow=176;
             for(const auto &adjustment:adjustments){CGFloat size=TARGET_OS_OSX?12:14;oneRow=std::max(oneRow,std::ceil([adjustment.title sizeWithAttributes:@{NSFontAttributeName:[KPMiiFont systemFontOfSize:size weight:NSFontWeightSemibold]}].width)+108);}
             auto adjust=[&](CGFloat sx,CGFloat sy,CGFloat cw,BOOL emit)->CGFloat{
                 BOOL inline_=cw>=oneRow;CGFloat sy0=sy;
                 for(const auto &adjustment:adjustments){
-                    CGFloat lx=inline_?sx+52:sx+2,lw=inline_?cw-104:cw-4,ly=inline_?sy+3:sy;
+                    CGFloat lx=inline_?sx+52:sx+2,lw=inline_?cw-104:cw-4,ly=inline_?sy+13:sy;
                     if(emit){
                         [form addSubview:KPLabelView(adjustment.title,CGRectMake(lx-x,ly-y,lw,18),12,YES,YES)];
-                        KPMiiRangeMeter *meter=[[KPMiiRangeMeter alloc]initWithFrame:CGRectMake(lx-x,ly-y+(inline_?22:20),lw,12)];meter.editor=self.editor;meter.field=adjustment.field;[form addSubview:meter];[self.editor.meters addObject:meter];
                         if(inline_){add(KPAction::Adjust,CGRectMake(sx,sy,44,44),adjustment.less,adjustment.field,-1);add(KPAction::Adjust,CGRectMake(sx+cw-44,sy,44,44),adjustment.more,adjustment.field,1);}
-                        else{add(KPAction::Adjust,CGRectMake(sx,sy+36,(cw-6)/2,44),adjustment.less,adjustment.field,-1);add(KPAction::Adjust,CGRectMake(sx+(cw+6)/2,sy+36,(cw-6)/2,44),adjustment.more,adjustment.field,1);}
+                        else{add(KPAction::Adjust,CGRectMake(sx,sy+24,(cw-6)/2,44),adjustment.less,adjustment.field,-1);add(KPAction::Adjust,CGRectMake(sx+(cw+6)/2,sy+24,(cw-6)/2,44),adjustment.more,adjustment.field,1);}
                     }
-                    sy+=inline_?52:88;}
+                    sy+=inline_?52:76;}
                 return std::max(CGFloat(0),sy-sy0-8);};
             auto modeSwitch=[&](CGFloat sx,CGFloat sy,CGFloat cw){CGFloat half=(cw-4)/2;for(size_t i=0;i<modes.size();i++)add(KPAction::Mode,CGRectMake(sx+i*(half+4),sy,half,44),modes[i].second,modes[i].first,0,self.editor.feature==modes[i].first);};
             // Everything on one page: the grid, then a column of colors, switches and adjustments.
