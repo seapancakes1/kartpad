@@ -2,8 +2,9 @@
 
 KartPad's own screens on Mac work the way a console's do: they open inside the
 game window, look like the Mii editor (silver buttons, pinstripes, Wii-blue
-focus, the game's own menu sounds) and can be used with only a controller. They
-scale with the window, from a small window at a desk to full screen on a TV.
+focus, the game's own menu sounds) and can be used with only a controller. The
+mouse and keyboard work too: click a button, or use the arrows, Return and esc.
+They scale with the window, from a small window at a desk to full screen on a TV.
 
 ## For players
 
@@ -17,13 +18,14 @@ underneath (online the race keeps going, and HOME says so). HOME has:
   but its window shows a "Starting Retro Rewind" card the whole time, so it
   doesn't look like the app closed.
 - **Miis** and **Controllers**.
-- **Volume**: left and right change it, A mutes. **Window / Full Screen.**
-  The ⚙ button opens **Settings**. **Quit.**
-- **Restart to apply** when a change needs one (switching games, Mii changes,
-  new game files, display settings), with a list of what it will do.
+- **Volume** on a row of its own: left and right change it, A mutes.
+- Along the top: **Full Screen** (or **Window**), the ⚙ button for
+  **Settings**, **Quit**, and **Restart to apply** when a change needs one
+  (switching games, Mii changes, new game files, display settings).
 - **Players** along the bottom: each player's colour, Mii, controller and
   battery. X on a player makes their controller buzz and flash; A opens
-  Controllers on them.
+  Controllers on them, and on an empty player goes straight to "Press Ⓐ on the
+  controller for this player".
 
 **Controllers.** Four player cards in the game's player colours (1 yellow,
 2 blue, 3 red, 4 green), each showing its Mii and a drawing of the controller
@@ -31,12 +33,20 @@ that lights up as you press. Pressing anything on a controller bounces its card,
 so you can tell which one is yours.
 
 - A controller that isn't playing joins with **A**.
-- **X** picks a card up; left and right move it to another player (whoever is
-  there swaps); A puts it down.
+- Players change controllers by pressing on the one they want, as on a console:
+  - **Change controller** (A on a card, or A on an empty card): "Press Ⓐ on
+    the controller for Player 2". Whichever controller presses A takes that
+    player, and the one already there swaps to where it came from. B cancels,
+    and **Use Keyboard** puts the keyboard there.
+  - **Player Order**: everyone presses A in turn; the first press is Player 1,
+    the next Player 2, and so on. It finishes by itself once every controller
+    has pressed (or press Start); controllers that didn't press stop playing.
+    B cancels and puts everyone back.
 - **Y** makes it buzz and flash its light (in the player's colour on
   controllers with a colour light).
-- A on a card: Set up buttons, Choose a Mii, Move, Stop playing.
-- **Connect a Controller** explains pairing mode for each kind. Wii Remotes
+- A on a card: Change controller, Set up buttons, Choose a Mii, Find it, Stop
+  playing. A controller in the Not playing tray offers each player directly.
+- **Connect** explains pairing mode for each kind. Wii Remotes
   pair right there. Other controllers use the Mac's Bluetooth settings, which
   KartPad opens and watches: when the new controller turns up it celebrates and
   gives it the first free player.
@@ -48,11 +58,13 @@ so you can tell which one is yours.
   Controllers screen works as before.
 
 **Button setup.** The game's twelve actions in a list with the buttons they're
-on. A changes one ("Press the button you want for Accelerate"), X adds a second
-button, Reset to Default puts them back. Changes save by themselves.
+on. A changes one ("Press a button for Accelerate"), X adds a second button,
+Reset puts them back. Changes save by themselves.
 
 **Settings.** Picture, Sound, Controls, Game and Advanced, as big rows: left and
-right change a switch, choice or level in place, LB and RB change category.
+right change a switch, choice or level in place (they never jump out of a row),
+LB and RB change category, and B goes from the rows back to the categories,
+then out.
 Every setting from before is here, under plain names. Advanced keeps the
 technical tools (private server, controller compatibility, diagnostics, the
 classic Settings window).
@@ -114,7 +126,23 @@ button press.
   the game carries on.
 - **Pads** are read by the existing reader in `KartPadMacMiis.inc.mm`, which
   now covers Wii Remotes, uses each pad's own A/B as confirm and back, and
-  hands presses to the screen on top.
+  hands presses to the screen on top. While Controllers waits for a press on a
+  particular controller (Change controller, Player Order) it reads each pad's
+  A, B and Start itself and sets `KPPadListening`, which keeps the reader quiet.
+- **Moving the focus** (`KPUINearest`) follows TV menus: only controls clearly
+  that way count, left and right stay on their row, one in line beats one off
+  to the side, then the nearest wins. Pressing back the opposite way returns to
+  where the focus came from, and a run of moves up or down keeps to the column
+  it started in. A control with left/right of its own (a slider) takes them
+  instead.
+- **The mouse** is the Wii pointer: hovering moves the focus once the pointer
+  really moves (a pointer resting where a screen opens doesn't take it), and a
+  click presses. Screens hit-test their controls directly; `KPUIView` itself
+  ignores the mouse, so decoration never takes a click.
+- **Launching.** KartPad finishes launching and takes the focus as soon as it
+  starts (`KartPadMacShellPrepareGameData`), before the update check and Retro
+  Rewind's file checks. Left to the game window, macOS may no longer bring a
+  starting app forward.
 - **Restarts.** The game can't be torn down in-process, so
   `KPRestartWithCurtain` shows the card, starts the same app with
   `KARTPAD_CURTAIN` (no Dock icon) holding the card in a window at the same
@@ -138,7 +166,11 @@ echo "shot home" >> /path/to/qa/commands.txt # /path/to/qa/home.png
 ```
 
 Commands: `home`, `close`, `screen settings|controllers|miis|pair-wii`,
-`pad up|down|left|right|a|b|x|y|lb|rb|start`, `focus LABEL`, `shot NAME`,
+`pad up|down|left|right|a|b|x|y|lb|rb|start`, `focus LABEL`, `click LABEL` (a
+mouse click on a control: what the window's hit test finds, then the click),
+`where` (the focused control), `navmap` (where each direction leads from every
+control on the screen), `vpad add|press N BUTTON|release N BUTTON|remove N`
+(SDL virtual controllers, to check choosing controllers by pressing), `shot NAME`,
 `shotwindow NAME`, `resize W H`, `appearance light|dark|system`, `frames` (the
 presented-frame counter, to check the game holds still), `roster` (every
 controller's player and Aurora port), `toast`, `hint`,
@@ -168,6 +200,8 @@ anything a run changed.
   KartPad.
 - The game itself still restarts to switch games; the curtain covers the gap.
   The Dock icon disappears for that moment.
+- Taking the focus at launch can only be checked by opening KartPad from the
+  Dock or Finder; automated runs never take the focus.
 - Retro Rewind download needs the release header to pin the update archive too
   (local auto-update builds clear it; those builds leave Retro Rewind to the
   updater).
