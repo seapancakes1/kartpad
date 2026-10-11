@@ -1157,6 +1157,8 @@ static void KPOpenMiisFromController() { [Controller() showMiis:nil]; }
 #include "KartPadHomeScreen.inc.mm"
 #include "KartPadRetroDownload.inc.mm"
 #include "KartPadControllersScreen.inc.mm"
+#include "KartPadReconnect.inc.mm"
+#include "KartPadGhostsScreen.inc.mm"
 #include "KartPadSettingsScreen.inc.mm"
 #include "KartPadMiisScreen.inc.mm"
 #include "KartPadCurtain.inc.mm"
@@ -1176,6 +1178,7 @@ static bool KPShowScreen(NSString *which) {
   if ([which isEqualToString:@"settings"]) [KPOverlay() present:KPMakeSettingsScreen()];
   else if ([which isEqualToString:@"controllers"]) [KPOverlay() present:(KPScreen *)KPMakeControllersScreen(-1)];
   else if ([which isEqualToString:@"miis"]) [KPOverlay() present:KPMakeMiisScreen()];
+  else if ([which isEqualToString:@"ghosts"]) [KPOverlay() present:KPMakeGhostsScreen()];
   else if ([which isEqualToString:@"pair-wii"]) {
     KPScreen *connect = KPMakeConnectScreen();
     [KPOverlay() present:connect];
@@ -1198,6 +1201,12 @@ static bool KPShowScreen(NSString *which) {
 - (void)openHome:(id)sender {
   (void)sender;
   KPShowScreen(@"home");
+}
+- (void)openGhosts:(id)sender {
+  (void)sender;
+  if (KPShowScreen(@"ghosts")) return;
+  [self showSimpleAlert:@"Start the Game First"
+                message:@"Ghosts open once Mario Kart is running. Then choose Data → Time Trial Ghosts… again."];
 }
 - (void)addPhoneController:(id)sender {
   (void)sender;
@@ -1502,6 +1511,11 @@ static void InstallMenu() {
   retroData.target = Controller();
   [dataMenu addItem:retroData];
 #endif
+  [dataMenu addItem:NSMenuItem.separatorItem];
+  NSMenuItem *ghosts = [[NSMenuItem alloc]
+      initWithTitle:@"Time Trial Ghosts…" action:@selector(openGhosts:) keyEquivalent:@""];
+  ghosts.target = Controller();
+  [dataMenu addItem:ghosts];
   [dataMenu addItem:NSMenuItem.separatorItem];
   NSMenuItem *data = [[NSMenuItem alloc]
       initWithTitle:@"Show KartPad Data"

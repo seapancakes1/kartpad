@@ -43,7 +43,8 @@ BOOL KartPadCanDiscardPendingMiiChanges(void);
 BOOL KartPadDiscardPendingMiiChanges(NSError **error);
 
 
-// Original-course RKG exchange; imports use downloaded slots and preserve personal bests.
+// Original-course RKG exchange; imports use downloaded slots and preserve personal bests. Each ghost
+// has its name, data, course slot (0-31, in the game's order) and whether it's the downloaded one.
 NSArray<NSDictionary<NSString *, id> *> *KartPadOriginalGhosts(NSUInteger license, NSError **error);
 BOOL KartPadStageOriginalGhost(NSData *ghost, NSUInteger license, NSError **error);
 

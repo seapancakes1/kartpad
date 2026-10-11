@@ -5,7 +5,7 @@
 // New glyphs go at the end: some code stores them as ints.
 enum class KPUIGlyph {
   Home, Play, Swap, Mii, Pad, Gear, Power, Speaker, SpeakerOff, Window, FullScreen, Plus, Keyboard,
-  Restart, Find, Move, Close, Chevron, Back, WiiRemote, Bluetooth, Check, Buttons, Battery, Disc, Order, Search
+  Restart, Find, Move, Close, Chevron, Back, WiiRemote, Bluetooth, Check, Buttons, Battery, Disc, Order, Search, Ghost, Export
 };
 
 static void KPGlyphPath(CGContextRef c, CGPathRef path, bool fill) {
@@ -337,6 +337,37 @@ static void KPDrawGlyph(CGContextRef c, KPUIGlyph glyph, CGRect rect, unsigned i
       KPLine(c, 16, 9.5, 35, 9.5);
       KPLine(c, 16, 21, 35, 21);
       KPLine(c, 16, 32, 35, 32);
+      break;
+    }
+    case KPUIGlyph::Ghost: {
+      // A ghost with a wavy hem: Time Trial ghosts.
+      CGMutablePathRef p = CGPathCreateMutable();
+      CGPathMoveToPoint(p, nullptr, 8, 34);
+      CGPathAddLineToPoint(p, nullptr, 8, 19);
+      CGPathAddArc(p, nullptr, 20, 19, 12, M_PI, 0, false);
+      CGPathAddLineToPoint(p, nullptr, 32, 34);
+      CGPathAddLineToPoint(p, nullptr, 28, 30.5);
+      CGPathAddLineToPoint(p, nullptr, 24, 34);
+      CGPathAddLineToPoint(p, nullptr, 20, 30.5);
+      CGPathAddLineToPoint(p, nullptr, 16, 34);
+      CGPathAddLineToPoint(p, nullptr, 12, 30.5);
+      CGPathCloseSubpath(p);
+      KPGlyphPath(c, p, false);
+      CGPathRelease(p);
+      CGContextFillEllipseInRect(c, CGRectMake(12.6, 15.5, 5, 6));
+      CGContextFillEllipseInRect(c, CGRectMake(22.4, 15.5, 5, 6));
+      break;
+    }
+    case KPUIGlyph::Export: {
+      // An arrow out of a tray: save a copy somewhere else.
+      CGMutablePathRef p = CGPathCreateMutable();
+      CGPathMoveToPoint(p, nullptr, 8, 22);
+      CGPathAddLineToPoint(p, nullptr, 8, 34);
+      CGPathAddLineToPoint(p, nullptr, 32, 34);
+      CGPathAddLineToPoint(p, nullptr, 32, 22);
+      KPGlyphPath(c, p, false);
+      CGPathRelease(p);
+      KPGlyphArrow(c, CGPointMake(20, 27), CGPointMake(20, 5), 7);
       break;
     }
     case KPUIGlyph::Search: {

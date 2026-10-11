@@ -2,10 +2,11 @@
 // app reads commands, one per line, from commands.txt in that folder as lines are added, and writes
 // what it's asked to photograph there as PNGs (the window as drawn: game and screens together). Run
 // it with KARTPAD_MUTED=1 KARTPAD_BACKGROUND=1 so it stays silent and never takes the focus.
-//   home | close | screen settings|controllers|miis|pair-wii|pair-phone | pad up|down|left|right|a|b|x|y|lb|rb|start
+//   home | close | screen settings|controllers|miis|ghosts|pair-wii|pair-phone | pad up|down|left|right|a|b|x|y|lb|rb|start
 //   shot NAME | resize W H | fullscreen | appearance light|dark|system | restart | quit | wait SECONDS
 //   focus LABEL | click LABEL | drag FROM TO LABEL | where | navmap | roster | vpad add|press|release|remove | key NAME
 //   move IDENTIFIER|vpadN SLOT | phone start|status|background-input|remove N
+//   dropfile PATH (as if dropped on the game window) | droptypes (what the game window takes in a drag)
 // Included by KartPadMacShell.mm at the end.
 
 #import <objc/objc-exception.h>
@@ -94,6 +95,19 @@ static void KPQARun(NSString *line) {
   if ([command isEqualToString:@"home"]) KPShowScreen(@"home");
   else if ([command isEqualToString:@"close"]) [KPOverlay() closeAll];
   else if ([command isEqualToString:@"screen"]) KPShowScreen(argument);
+  else if ([command isEqualToString:@"dropfile"]) {
+    // The event SDL makes for a drop; the path stays allocated, as SDL's own would until it's handled.
+    NSString *path = [line substringFromIndex:MIN(line.length, command.length + 1)];
+    SDL_Event event{};
+    event.type = SDL_EVENT_DROP_FILE;
+    event.drop.data = SDL_strdup(path.fileSystemRepresentation);
+    KPQALog([NSString stringWithFormat:@"dropfile %@: %@", path, SDL_PushEvent(&event) ? @"pushed" : @(SDL_GetError())]);
+  } else if ([command isEqualToString:@"droptypes"]) {
+    // NSWindow has no getter for its types: whether SDL takes drops, and whether the window answers them.
+    NSWindow *game = KPGameWindow();
+    KPQALog([NSString stringWithFormat:@"droptypes events=%@ window=%@ drags=%@", SDL_EventEnabled(SDL_EVENT_DROP_FILE) ? @"on" : @"off",
+                                       game.class, [game respondsToSelector:@selector(performDragOperation:)] ? @"yes" : @"no"]);
+  }
   else if ([command isEqualToString:@"pad"]) KPQAPad(argument.lowercaseString);
   else if ([command isEqualToString:@"shot"]) KPQAShot(argument);
   else if ([command isEqualToString:@"fullscreen"]) [Controller() toggleGameFullScreen:nil];

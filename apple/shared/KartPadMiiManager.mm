@@ -1227,7 +1227,7 @@ NSArray<NSDictionary<NSString *, id> *> *KartPadOriginalGhosts(NSUInteger licens
         try {
           auto data = kartpad::ghost::Export(bytes, (unsigned)license, slot, downloaded);
           [records addObject:@{@"name": [NSString stringWithFormat:@"%s — %@", kartpad::ghost::CourseNames[slot], downloaded ? @"Downloaded" : @"Personal Best"],
-              @"data": [NSData dataWithBytes:data.data() length:data.size()]}];
+              @"data": [NSData dataWithBytes:data.data() length:data.size()], @"slot": @(slot), @"downloaded": @(downloaded)}];
         } catch (const std::exception& failure) {
           // A corrupt ghost must not prevent exporting another valid slot.
           if (firstGhostError.empty()) firstGhostError = failure.what();

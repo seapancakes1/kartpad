@@ -607,6 +607,12 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
     [game addObject:row];
   }
   {
+    KPSettingRow *row = KPRow(@"Time Trial ghosts", nil, KPRowAction);
+    row.run = ^{ [KPOverlay() present:KPMakeGhostsScreen()]; };
+    row.restart = ^BOOL { return KartPadHasPendingGhost(); };
+    [game addObject:row];
+  }
+  {
     KPSettingRow *row = KPRow(@"Mario Kart Wii files", @"Needs a mouse.", KPRowAction);
     row.value = ^NSString * {
       NSError *error = nil;
