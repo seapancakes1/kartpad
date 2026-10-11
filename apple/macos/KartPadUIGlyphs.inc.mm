@@ -2,9 +2,10 @@
 // rounded line style. They're generic shapes (a house, a gamepad, a gear), never a console maker's
 // logo. Included by KartPadMacShell.mm with the overlay.
 
+// New glyphs go at the end: some code stores them as ints.
 enum class KPUIGlyph {
   Home, Play, Swap, Mii, Pad, Gear, Power, Speaker, SpeakerOff, Window, FullScreen, Plus, Keyboard,
-  Restart, Find, Move, Close, Chevron, Back, WiiRemote, Bluetooth, Check, Buttons, Battery
+  Restart, Find, Move, Close, Chevron, Back, WiiRemote, Bluetooth, Check, Buttons, Battery, Disc, Order, Search
 };
 
 static void KPGlyphPath(CGContextRef c, CGPathRef path, bool fill) {
@@ -16,6 +17,20 @@ static void KPGlyphRounded(CGContextRef c, CGRect r, CGFloat radius, bool fill) 
   CGPathRef path = CGPathCreateWithRoundedRect(r, radius, radius, nullptr);
   KPGlyphPath(c, path, fill);
   CGPathRelease(path);
+}
+static void KPGlyphRing(CGContextRef c, CGFloat x, CGFloat y, CGFloat radius) {
+  CGContextStrokeEllipseInRect(c, CGRectMake(x - radius, y - radius, radius * 2, radius * 2));
+}
+// An open arrowhead, drawn like the chevrons, with its tip at tip.
+static void KPGlyphHead(CGContextRef c, CGPoint tip, CGFloat angle, CGFloat arm) {
+  CGContextMoveToPoint(c, tip.x - arm * cos(angle - M_PI_4), tip.y - arm * sin(angle - M_PI_4));
+  CGContextAddLineToPoint(c, tip.x, tip.y);
+  CGContextAddLineToPoint(c, tip.x - arm * cos(angle + M_PI_4), tip.y - arm * sin(angle + M_PI_4));
+  CGContextStrokePath(c);
+}
+static void KPGlyphArrow(CGContextRef c, CGPoint from, CGPoint to, CGFloat arm) {
+  KPLine(c, from.x, from.y, to.x, to.y);
+  KPGlyphHead(c, to, atan2(to.y - from.y, to.x - from.x), arm);
 }
 
 // level is 0…1 for Speaker and Battery.
@@ -62,20 +77,23 @@ static void KPDrawGlyph(CGContextRef c, KPUIGlyph glyph, CGRect rect, unsigned i
       break;
     }
     case KPUIGlyph::Swap: {
-      // Two arrows passing each other: switch games.
-      KPArrow(c, CGPointMake(6, 13), CGPointMake(33, 13), 3.4);
-      KPArrow(c, CGPointMake(34, 27), CGPointMake(7, 27), 3.4);
+      // Two arrows passing each other: change one thing for another.
+      CGContextSetLineWidth(c, 4);
+      KPGlyphArrow(c, CGPointMake(6, 12.5), CGPointMake(32, 12.5), 7.5);
+      KPGlyphArrow(c, CGPointMake(34, 27.5), CGPointMake(8, 27.5), 7.5);
       break;
     }
     case KPUIGlyph::Mii: {
       // A round head on shoulders.
       CGContextFillEllipseInRect(c, CGRectMake(12, 3, 16, 17));
       CGMutablePathRef p = CGPathCreateMutable();
-      CGPathMoveToPoint(p, nullptr, 5, 37);
-      CGPathAddCurveToPoint(p, nullptr, 5, 26, 12, 22, 20, 22);
-      CGPathAddCurveToPoint(p, nullptr, 28, 22, 35, 26, 35, 37);
+      CGPathMoveToPoint(p, nullptr, 6, 36);
+      CGPathAddCurveToPoint(p, nullptr, 6, 26.8, 12.6, 23, 20, 23);
+      CGPathAddCurveToPoint(p, nullptr, 27.4, 23, 34, 26.8, 34, 36);
       CGPathCloseSubpath(p);
-      KPGlyphPath(c, p, true);
+      CGContextAddPath(c, p);
+      CGContextSetLineWidth(c, 2);
+      CGContextDrawPath(c, kCGPathFillStroke);
       CGPathRelease(p);
       break;
     }
@@ -103,14 +121,19 @@ static void KPDrawGlyph(CGContextRef c, KPUIGlyph glyph, CGRect rect, unsigned i
       break;
     }
     case KPUIGlyph::Gear: {
-      CGContextSetLineWidth(c, 3);
-      for (int i = 0; i < 8; ++i) {
-        const CGFloat a = i * M_PI / 4;
-        KPLine(c, 20 + 11 * cos(a), 20 + 11 * sin(a), 20 + 16.5 * cos(a), 20 + 16.5 * sin(a));
+      // Six chunky teeth round a hole: Settings.
+      CGMutablePathRef p = CGPathCreateMutable();
+      const CGFloat step = M_PI / 3;
+      for (int i = 0; i < 6; ++i) {
+        const CGFloat a = -M_PI_2 + i * step;
+        CGPathAddArc(p, nullptr, 20, 20, 12, a - step / 2, a - 0.29, false);
+        CGPathAddArc(p, nullptr, 20, 20, 17, a - 0.19, a + 0.19, false);
+        CGPathAddArc(p, nullptr, 20, 20, 12, a + 0.29, a + step / 2, false);
       }
-      CGContextSetLineWidth(c, 3.4);
-      CGContextStrokeEllipseInRect(c, CGRectMake(8.5, 8.5, 23, 23));
-      CGContextStrokeEllipseInRect(c, CGRectMake(15, 15, 10, 10));
+      CGPathCloseSubpath(p);
+      KPGlyphPath(c, p, false);
+      CGPathRelease(p);
+      KPGlyphRing(c, 20, 20, 4.6);
       break;
     }
     case KPUIGlyph::Power: {
@@ -122,44 +145,54 @@ static void KPDrawGlyph(CGContextRef c, KPUIGlyph glyph, CGRect rect, unsigned i
     case KPUIGlyph::Speaker:
     case KPUIGlyph::SpeakerOff: {
       CGMutablePathRef p = CGPathCreateMutable();
-      CGPathMoveToPoint(p, nullptr, 5, 15);
-      CGPathAddLineToPoint(p, nullptr, 12, 15);
-      CGPathAddLineToPoint(p, nullptr, 21, 7);
-      CGPathAddLineToPoint(p, nullptr, 21, 33);
-      CGPathAddLineToPoint(p, nullptr, 12, 25);
-      CGPathAddLineToPoint(p, nullptr, 5, 25);
+      CGPathMoveToPoint(p, nullptr, 5, 15.5);
+      CGPathAddLineToPoint(p, nullptr, 11.5, 15.5);
+      CGPathAddLineToPoint(p, nullptr, 19.5, 8.5);
+      CGPathAddLineToPoint(p, nullptr, 19.5, 31.5);
+      CGPathAddLineToPoint(p, nullptr, 11.5, 24.5);
+      CGPathAddLineToPoint(p, nullptr, 5, 24.5);
       CGPathCloseSubpath(p);
-      KPGlyphPath(c, p, true);
+      CGContextAddPath(c, p);
+      CGContextSetLineWidth(c, 2.4);
+      CGContextDrawPath(c, kCGPathFillStroke);
       CGPathRelease(p);
+      CGContextSetLineWidth(c, 3.4);
       if (glyph == KPUIGlyph::SpeakerOff) {
-        KPLine(c, 27, 14, 36, 26);
-        KPLine(c, 36, 14, 27, 26);
+        KPLine(c, 25.5, 15, 35.5, 25);
+        KPLine(c, 35.5, 15, 25.5, 25);
       } else {
         if (level > 0.05) {
-          CGContextAddArc(c, 21, 20, 7, -0.8, 0.8, 0);
+          CGContextAddArc(c, 20, 20, 7, -0.8, 0.8, 0);
           CGContextStrokePath(c);
         }
         if (level > 0.5) {
-          CGContextAddArc(c, 21, 20, 13, -0.85, 0.85, 0);
+          CGContextAddArc(c, 20, 20, 13, -0.85, 0.85, 0);
           CGContextStrokePath(c);
         }
       }
       break;
     }
     case KPUIGlyph::Window: {
-      CGContextSetLineWidth(c, 3);
-      KPGlyphRounded(c, CGRectMake(5, 8, 30, 24), 4, false);
-      KPLine(c, 5, 14, 35, 14);
+      // A window with a solid title bar.
+      CGContextSetLineWidth(c, 3.2);
+      CGPathRef frame = CGPathCreateWithRoundedRect(CGRectMake(5, 8, 30, 24), 5, 5, nullptr);
+      CGContextSaveGState(c);
+      CGContextAddPath(c, frame);
+      CGContextClip(c);
+      CGContextFillRect(c, CGRectMake(5, 8, 30, 7));
+      CGContextRestoreGState(c);
+      KPGlyphPath(c, frame, false);
+      CGPathRelease(frame);
       break;
     }
     case KPUIGlyph::FullScreen: {
-      CGContextSetLineWidth(c, 3.4);
+      // Four rounded corners pointing out.
       for (int x : {0, 1})
         for (int y : {0, 1}) {
           const CGFloat cx = x ? 34 : 6, cy = y ? 33 : 7, sx = x ? -1 : 1, sy = y ? -1 : 1;
-          CGContextMoveToPoint(c, cx, cy + sy * 9);
-          CGContextAddLineToPoint(c, cx, cy);
-          CGContextAddLineToPoint(c, cx + sx * 9, cy);
+          CGContextMoveToPoint(c, cx, cy + sy * 9.5);
+          CGContextAddArcToPoint(c, cx, cy, cx + sx * 9.5, cy, 4);
+          CGContextAddLineToPoint(c, cx + sx * 9.5, cy);
           CGContextStrokePath(c);
         }
       break;
@@ -171,37 +204,47 @@ static void KPDrawGlyph(CGContextRef c, KPUIGlyph glyph, CGRect rect, unsigned i
       break;
     }
     case KPUIGlyph::Keyboard: {
-      CGContextSetLineWidth(c, 3);
-      KPGlyphRounded(c, CGRectMake(3, 10, 34, 21), 4, false);
+      // Two rows of round keys over a space bar.
+      CGContextSetLineWidth(c, 3.2);
+      KPGlyphRounded(c, CGRectMake(3.5, 9, 33, 22), 5, false);
       for (int row = 0; row < 2; ++row)
-        for (int col = 0; col < 5; ++col)
-          CGContextFillRect(c, CGRectMake(8 + col * 5.6, 14.5 + row * 5, 3, 3));
-      CGContextFillRect(c, CGRectMake(12, 25, 16, 2.6));
+        for (int col = 0; col < 4; ++col)
+          CGContextFillEllipseInRect(c, CGRectMake(9.2 + col * 6, 13.2 + row * 5.2, 3.6, 3.6));
+      CGContextSetLineWidth(c, 3);
+      KPLine(c, 14, 25.8, 26, 25.8);
       break;
     }
     case KPUIGlyph::Restart: {
-      CGContextAddArc(c, 20, 21, 12.5, -M_PI * 0.15, M_PI * 1.55, 0);
+      // A clockwise circle arrow, open at the top right.
+      CGContextSetLineWidth(c, 3.6);
+      CGContextAddArc(c, 20, 21.3, 12.5, -M_PI / 5, M_PI * 1.5, 0);
       CGContextStrokePath(c);
-      KPArrowHead(c, CGPointMake(20 + 12.5 * cos(-M_PI * 0.15), 21 + 12.5 * sin(-M_PI * 0.15)), M_PI * 0.42, 9);
+      KPGlyphHead(c, CGPointMake(20.8, 8.8), 0.06, 7);
       break;
     }
     case KPUIGlyph::Find: {
-      // Ripples out from a dot: "this one is me".
-      CGContextFillEllipseInRect(c, CGRectMake(16, 16, 8, 8));
+      // A remote with its light on, buzzing: "this one is me".
+      CGContextSetLineWidth(c, 3.2);
+      KPGlyphRounded(c, CGRectMake(14, 7, 12, 26), 5, false);
+      CGContextFillEllipseInRect(c, CGRectMake(18.1, 11.1, 3.8, 3.8));
       CGContextSetLineWidth(c, 3);
-      CGContextAddArc(c, 20, 20, 10, -0.9, 0.9, 0);
-      CGContextStrokePath(c);
-      CGContextAddArc(c, 20, 20, 10, M_PI - 0.9, M_PI + 0.9, 0);
-      CGContextStrokePath(c);
-      CGContextAddArc(c, 20, 20, 17, -0.75, 0.75, 0);
-      CGContextStrokePath(c);
-      CGContextAddArc(c, 20, 20, 17, M_PI - 0.75, M_PI + 0.75, 0);
-      CGContextStrokePath(c);
+      for (CGFloat side : {0.0, M_PI}) {
+        CGContextAddArc(c, 20, 20, 12.8, side - 0.48, side + 0.48, 0);
+        CGContextStrokePath(c);
+        CGContextAddArc(c, 20, 20, 18, side - 0.42, side + 0.42, 0);
+        CGContextStrokePath(c);
+      }
       break;
     }
     case KPUIGlyph::Move: {
-      KPArrow(c, CGPointMake(20, 20), CGPointMake(4, 20), 3.2);
-      KPArrow(c, CGPointMake(20, 20), CGPointMake(36, 20), 3.2);
+      // Arrows out four ways.
+      CGContextSetLineWidth(c, 3.6);
+      KPLine(c, 20, 5.5, 20, 34.5);
+      KPLine(c, 5.5, 20, 34.5, 20);
+      for (int i = 0; i < 4; ++i) {
+        const CGFloat a = i * M_PI_2;
+        KPGlyphHead(c, CGPointMake(20 + 15 * cos(a), 20 + 15 * sin(a)), a, 5.5);
+      }
       break;
     }
     case KPUIGlyph::Close: {
@@ -227,12 +270,15 @@ static void KPDrawGlyph(CGContextRef c, KPUIGlyph glyph, CGRect rect, unsigned i
       break;
     }
     case KPUIGlyph::WiiRemote: {
-      CGContextSetLineWidth(c, 3);
-      KPGlyphRounded(c, CGRectMake(13, 2, 14, 36), 5, false);
-      CGContextFillEllipseInRect(c, CGRectMake(17.5, 8, 5, 5));
-      CGContextFillRect(c, CGRectMake(18.5, 16, 3, 7));
-      CGContextFillRect(c, CGRectMake(16.5, 18, 7, 3));
-      CGContextFillEllipseInRect(c, CGRectMake(18, 28, 4, 4));
+      // A remote held upright: D-pad, A, then 1 and 2.
+      CGContextSetLineWidth(c, 3.2);
+      KPGlyphRounded(c, CGRectMake(13.5, 2.5, 13, 35), 6, false);
+      CGContextSetLineWidth(c, 2.6);
+      KPLine(c, 17, 10.5, 23, 10.5);
+      KPLine(c, 20, 7.5, 20, 13.5);
+      CGContextFillEllipseInRect(c, CGRectMake(17.4, 17.4, 5.2, 5.2));
+      CGContextFillEllipseInRect(c, CGRectMake(18.4, 26, 3.2, 3.2));
+      CGContextFillEllipseInRect(c, CGRectMake(18.4, 31, 3.2, 3.2));
       break;
     }
     case KPUIGlyph::Bluetooth: {
@@ -262,11 +308,43 @@ static void KPDrawGlyph(CGContextRef c, KPUIGlyph glyph, CGRect rect, unsigned i
       break;
     }
     case KPUIGlyph::Battery: {
-      CGContextSetLineWidth(c, 2.6);
-      KPGlyphRounded(c, CGRectMake(3, 12, 31, 16), 3.5, false);
-      CGContextFillRect(c, CGRectMake(34.5, 17, 3, 6));
-      const CGFloat fill = std::clamp(level, CGFloat(0), CGFloat(1));
-      if (fill > 0) KPGlyphRounded(c, CGRectMake(6, 15, 25 * fill, 10), 1.6, true);
+      CGContextSetLineWidth(c, 3);
+      KPGlyphRounded(c, CGRectMake(3, 11.5, 31, 17), 5, false);
+      KPGlyphRounded(c, CGRectMake(35, 16, 3.2, 8), 1.6, true);
+      const CGFloat fill = std::clamp(level, CGFloat(0), CGFloat(1)) * 24;
+      if (fill > 0) KPGlyphRounded(c, CGRectMake(6.5, 15, fill, 10), std::min(CGFloat(2), fill / 2), true);
+      break;
+    }
+    case KPUIGlyph::Disc: {
+      // A game disc in front of another: switch game. The back one stops short of the front one.
+      CGContextAddArc(c, 24, 16, 11.5, 4.025, 6.971, 0);
+      CGContextStrokePath(c);
+      KPGlyphRing(c, 16, 24, 11.5);
+      CGContextSetLineWidth(c, 3.2);
+      KPGlyphRing(c, 16, 24, 3.3);
+      break;
+    }
+    case KPUIGlyph::Order: {
+      // A numbered list: players take their places in turn.
+      CGContextSetLineWidth(c, 3);
+      CGContextMoveToPoint(c, 4.5, 8.1);
+      CGContextAddLineToPoint(c, 8.5, 4.5);
+      CGContextAddLineToPoint(c, 8.5, 15);
+      CGContextStrokePath(c);
+      CGContextFillEllipseInRect(c, CGRectMake(6, 18.5, 5, 5));
+      CGContextFillEllipseInRect(c, CGRectMake(6, 29.5, 5, 5));
+      CGContextSetLineWidth(c, 3.4);
+      KPLine(c, 16, 9.5, 35, 9.5);
+      KPLine(c, 16, 21, 35, 21);
+      KPLine(c, 16, 32, 35, 32);
+      break;
+    }
+    case KPUIGlyph::Search: {
+      // A magnifying glass: look for something.
+      CGContextSetLineWidth(c, 3.6);
+      KPGlyphRing(c, 17.5, 17.5, 10);
+      CGContextSetLineWidth(c, 4.4);
+      KPLine(c, 25.2, 25.2, 33, 33);
       break;
     }
   }

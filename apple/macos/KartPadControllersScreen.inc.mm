@@ -54,7 +54,7 @@ enum : unsigned { KPPressConfirm = 1, KPPressBack = 2, KPPressStart = 4 };
   self.seenInput = [NSMutableDictionary dictionary];
   __weak KPControllersScreen *weakSelf = self;
   self.order = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
-    KPDrawPill(c, r, state, KPStyle::Plain, KPUIGlyph::Swap, @"Player Order");
+    KPDrawPill(c, r, state, KPStyle::Plain, KPUIGlyph::Order, @"Player Order");
   } action:^{ [weakSelf beginOrdering]; }];
   self.order.label = @"Player Order";
   self.connect = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
@@ -459,6 +459,7 @@ enum : unsigned { KPPressConfirm = 1, KPPressBack = 2, KPPressStart = 4 };
     }];
   [menu add:@"Stop playing" detail:nil glyph:(int)KPUIGlyph::Close enabled:YES run:^{
     [roster move:device toSlot:-1];
+    if (!device.isKeyboard) [roster.benched addObject:device.identifier];
     KPUIPlay(KPUISound::PagePrevious);
   }];
   [KPOverlay() present:menu];

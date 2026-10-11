@@ -143,6 +143,20 @@ static int KPIndexForGamepad(SDL_Gamepad *pad) {
 
 extern "C" void KartPadSetKeyboardDrivesWiiChannel0(bool drives);  // runtime kpad.cpp
 
+// SDL's own mapping for a Wii Remote with nothing attached reads the D-pad from a hat that its Wii
+// driver never makes: the driver reports the D-pad as buttons, as it does with a Nunchuk attached
+// (whose mapping does read them). Without this a bare remote's D-pad can't move around KartPad's
+// screens or light up in its drawing. The game reads the remote's raw buttons, so it isn't affected.
+static void KPFixBareWiiRemoteMapping(SDL_JoystickID id) {
+  const char *name = SDL_GetGamepadNameForID(id);
+  if (name == nullptr || strcmp(name, "Nintendo Wii Remote") != 0) return;
+  char guid[64];
+  SDL_GUIDToString(SDL_GetJoystickGUIDForID(id), guid, sizeof guid);
+  NSString *mapping = [NSString stringWithFormat:@"%s,Nintendo Wii Remote,a:b0,b:b1,back:b4,dpdown:b12,dpleft:b13,dpright:b14,"
+                                                 @"dpup:b11,guide:b5,start:b6,x:b2,y:b3,", guid];
+  if (SDL_AddGamepadMapping(mapping.UTF8String) < 0) NSLog(@"[KartPad] Wii Remote D-pad mapping not added: %s", SDL_GetError());
+}
+
 @protocol KPRosterListener <NSObject>
 - (void)rosterChanged;
 @end
@@ -152,6 +166,9 @@ extern "C" void KartPadSetKeyboardDrivesWiiChannel0(bool drives);  // runtime kp
 @property(nonatomic, strong) KPPadDevice *lastActive;
 @property(nonatomic, strong) NSHashTable<id<KPRosterListener>> *listeners;
 @property(nonatomic) BOOL quiet;  // the Controllers screen animates changes itself; no toasts meanwhile
+// Controllers someone took out with Stop playing: pressing a button doesn't bring them back in
+// (KPAutoJoinTick) until they're given a player again. Until they disconnect, by identifier.
+@property(nonatomic, strong) NSMutableSet<NSString *> *benched;
 + (instancetype)shared;
 - (void)refresh;
 - (KPPadDevice *)deviceInSlot:(int)slot;
@@ -197,6 +214,7 @@ extern "C" void KartPadSetKeyboardDrivesWiiChannel0(bool drives);  // runtime kp
     _lightSlot = [NSMutableDictionary dictionary];
     _devices = @[];
     _listeners = [NSHashTable weakObjectsHashTable];
+    _benched = [NSMutableSet set];
   }
   return self;
 }
@@ -277,6 +295,7 @@ extern "C" void KartPadSetKeyboardDrivesWiiChannel0(bool drives);  // runtime kp
     NSString *identifier = [NSString stringWithFormat:@"sdl:%u", ids[i]];
     KPPadDevice *device = _known[identifier];
     if (device == nil) {
+      KPFixBareWiiRemoteMapping(ids[i]);
       device = [KPPadDevice new];
       device.identifier = identifier;
       device.joystick = ids[i];
@@ -500,6 +519,7 @@ extern "C" void KartPadSetKeyboardDrivesWiiChannel0(bool drives);  // runtime kp
       [self placeKeyboardOn:-1];
   }
   [KPControllers().applied removeAllObjects];
+  if (slot >= 0) [_benched removeObject:device.identifier];
   AppendSessionLine([NSString stringWithFormat:@"controllerMove=%@; player=%d", device.name, slot + 1]);
   _lightSlot[device.identifier] = nil;
   if (occupant) _lightSlot[occupant.identifier] = nil;

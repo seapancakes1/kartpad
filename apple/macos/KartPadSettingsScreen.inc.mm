@@ -563,7 +563,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
       if (index == 1 && !KPRetroRewindReady()) {
         KPUIPlay(KPUISound::Reject);
         [KPOverlay() toast:@"Retro Rewind isn't set up yet" detail:@"Set up Retro Rewind files below first." stripe:0
-                      icon:^(CGContextRef c, CGRect r) { KPDrawGlyph(c, KPUIGlyph::Swap, r, KPP->secondaryText); } image:nil];
+                      icon:^(CGContextRef c, CGRect r) { KPDrawGlyph(c, KPUIGlyph::Disc, r, KPP->secondaryText); } image:nil];
         return;
       }
       [Controller() chooseRuntimeProfile:index ? kKartPadRetroProfile : kKartPadBaseProfile];

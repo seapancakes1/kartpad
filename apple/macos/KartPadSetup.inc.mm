@@ -161,7 +161,7 @@ static void KPSetupSearch(void (^progress)(NSString *place), void (^found)(KPSet
       break;
     }
     case KPSetupFind: {
-      [self action:@"Look for my game" detail:@"In Downloads, Desktop, Documents and connected drives" glyph:KPUIGlyph::Find primary:YES
+      [self action:@"Look for my game" detail:@"In Downloads, Desktop, Documents and connected drives" glyph:KPUIGlyph::Search primary:YES
                run:^{ [weakSelf search]; }];
       [self action:@"I'll choose the folder" detail:@"In a Finder window. Needs a mouse." glyph:KPUIGlyph::Window primary:NO
                run:^{ [weakSelf chooseFolder]; }];

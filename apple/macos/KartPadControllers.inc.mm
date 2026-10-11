@@ -33,6 +33,14 @@ static NSString *KPButtonLabel(SDL_Gamepad *pad, int button) {
   if (button < 0 || button >= SDL_GAMEPAD_BUTTON_COUNT) return @"Unbound";
   const auto type = pad ? SDL_GetGamepadType(pad) : SDL_GAMEPAD_TYPE_STANDARD;
   if (button < 4) {
+    // Face buttons by position (south, east, west, north). A Wii Remote's B trigger is south, A east,
+    // 1 west and 2 north (with a Classic Controller attached, its own buttons take over); a GameCube
+    // controller's B sits west and X east.
+    const char *name = pad ? SDL_GetGamepadName(pad) : nullptr;
+    if (name && (strcmp(name, "Nintendo Wii Remote") == 0 || strcmp(name, "Nintendo Wii Remote with Nunchuk") == 0))
+      return @[@"B", @"A", @"1", @"2"][button];
+    if (type == SDL_GAMEPAD_TYPE_GAMECUBE || (name && (strstr(name, "GameCube") || strstr(name, "Gamecube"))))
+      return @[@"A", @"X", @"B", @"Y"][button];
     if (type == SDL_GAMEPAD_TYPE_PS3 || type == SDL_GAMEPAD_TYPE_PS4 || type == SDL_GAMEPAD_TYPE_PS5)
       return @[@"Cross", @"Circle", @"Square", @"Triangle"][button];
     if (type == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO || type == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR)

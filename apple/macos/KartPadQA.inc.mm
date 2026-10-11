@@ -5,6 +5,7 @@
 //   home | close | screen settings|controllers|miis|pair-wii | pad up|down|left|right|a|b|x|y|lb|rb|start
 //   shot NAME | resize W H | fullscreen | appearance light|dark|system | restart | quit | wait SECONDS
 //   focus LABEL | click LABEL | where | navmap | roster | vpad add|press|release|remove
+//   move IDENTIFIER|vpadN SLOT
 // Included by KartPadMacShell.mm at the end.
 
 #import <objc/objc-exception.h>
@@ -57,6 +58,12 @@ static void KPQAShot(NSString *name) {
   KPQALog([NSString stringWithFormat:@"shot %@ %ldx%ld", name, (long)rep.pixelsWide, (long)rep.pixelsHigh]);
 }
 
+// A focus that found nothing: the press after it is skipped, so it can't land on whatever happened
+// to be focused instead (and, say, put the keyboard on a player in preferences shared with the user).
+static BOOL KPQAFocusMissed;
+// The virtual controllers `vpad add` made, by joystick ID; `vpadN` names one in other commands.
+static NSMutableArray<NSNumber *> *KPQAVirtualPads = [NSMutableArray array];
+
 static void KPQAPad(NSString *name) {
   NSDictionary<NSString *, NSNumber *> *buttons = @{
     @"up": @(KartPadMiiPadUp), @"down": @(KartPadMiiPadDown), @"left": @(KartPadMiiPadLeft), @"right": @(KartPadMiiPadRight),
@@ -64,6 +71,11 @@ static void KPQAPad(NSString *name) {
     @"lb": @(KartPadMiiPadPreviousTab), @"rb": @(KartPadMiiPadNextTab), @"start": @(KartPadMiiPadStart)};
   NSNumber *button = buttons[name];
   if (button == nil) return;
+  if (KPQAFocusMissed && ([name isEqualToString:@"a"] || [name isEqualToString:@"x"] || [name isEqualToString:@"y"])) {
+    KPQAFocusMissed = NO;
+    KPQALog([NSString stringWithFormat:@"pad %@ skipped: the focus before it found nothing", name]);
+    return;
+  }
   const KartPadMiiPadButton value = (KartPadMiiPadButton)button.integerValue;
   if (KPOverlayTakesPads()) {
     KPOverlayPadPress(value, YES);
@@ -158,8 +170,24 @@ static void KPQARun(NSString *line) {
   } else if ([command isEqualToString:@"focus"]) {
     // Select a control by its label on the current screen.
     NSString *label = [line substringFromIndex:MIN(line.length, (NSUInteger)6)];
+    KPQAFocusMissed = YES;
     for (KPUIButton *button in KPOverlay().top.focusables)
-      if ([button.label isEqualToString:label]) [KPOverlay() focus:button sound:NO];
+      if ([button.label isEqualToString:label]) {
+        [KPOverlay() focus:button sound:NO];
+        KPQAFocusMissed = NO;
+      }
+    if (KPQAFocusMissed) KPQALog([NSString stringWithFormat:@"focus %@: not found", label]);
+  } else if ([command isEqualToString:@"move"] && words.count >= 3) {
+    // Put a controller on a player, or (-1) take it off, the way Controllers does but without
+    // benching it: move IDENTIFIER SLOT (identifiers as roster prints them).
+    KPControllerRoster *roster = KPControllerRoster.shared;
+    [roster refresh];
+    NSString *identifier = words[1];
+    if ([identifier hasPrefix:@"vpad"] && identifier.length > 4 && [identifier substringFromIndex:4].integerValue < (NSInteger)KPQAVirtualPads.count)
+      identifier = [NSString stringWithFormat:@"sdl:%@", KPQAVirtualPads[[identifier substringFromIndex:4].integerValue]];
+    KPPadDevice *device = [roster deviceWithIdentifier:identifier];
+    if (device) [roster move:device toSlot:words[2].intValue];
+    KPQALog([NSString stringWithFormat:@"move %@ %@: %@", words[1], words[2], device ? @"done" : @"no such controller"]);
   } else if ([command isEqualToString:@"sdldelegate"]) {
     // SDL's app delegate, and whether it has had its first activation (KPFocusGameWindowAtLaunch).
     NSObject *delegate = (NSObject *)NSApp.delegate;
@@ -173,7 +201,7 @@ static void KPQARun(NSString *line) {
   } else if ([command isEqualToString:@"vpad"]) {
     // Virtual controllers (SDL's own), so choosing controllers by pressing can be checked without any:
     // vpad add | vpad press N BUTTON | vpad release N BUTTON | vpad remove N
-    static NSMutableArray<NSNumber *> *pads = [NSMutableArray array];
+    NSMutableArray<NSNumber *> *pads = KPQAVirtualPads;
     NSDictionary<NSString *, NSNumber *> *buttons = @{
       @"a": @(SDL_GAMEPAD_BUTTON_SOUTH), @"b": @(SDL_GAMEPAD_BUTTON_EAST), @"x": @(SDL_GAMEPAD_BUTTON_WEST),
       @"y": @(SDL_GAMEPAD_BUTTON_NORTH), @"start": @(SDL_GAMEPAD_BUTTON_START), @"up": @(SDL_GAMEPAD_BUTTON_DPAD_UP),

@@ -217,7 +217,7 @@ static KPScreen *KPMakeMiisScreen();
 #else
     NSString *detail = ready ? @"Switch game" : @"Set up first";
 #endif
-    KPDrawTile(c, r, state, NO, KPUIGlyph::Swap, KPGameTitle(KPOtherProfile()), detail);
+    KPDrawTile(c, r, state, NO, KPUIGlyph::Disc, KPGameTitle(KPOtherProfile()), detail);
   } action:^{ [weakSelf askToSwitch]; }];
   self.switchGame.label = [NSString stringWithFormat:@"Switch to %@", KPGameTitle(KPOtherProfile())];
   self.switchGame.hidden = !KPCanSwitchGames();
@@ -718,12 +718,85 @@ extern "C" bool KartPadOverlayPauseWanted() {
 
 static void KPShowHomeHint();
 static void KPCurtainDone();  // KartPadCurtain.inc.mm
+
+// A controller that isn't playing joins by pressing any button during the game, as on a console:
+// it takes the first free player (or the keyboard's, while the keyboard just follows free players)
+// once the button is let go, so the press that joined doesn't also act in the game. Not while one
+// of KartPad's screens is open (those answer every controller already), not while KartPad isn't in
+// front, and not for a controller someone took out with Stop playing.
+static void KPAutoJoinTick() {
+  // Per controller: 0 nothing held, 1 pressed (joins when let go), 2 already held when first seen.
+  static NSMutableDictionary<NSNumber *, NSNumber *> *state = [NSMutableDictionary dictionary];
+  static NSMutableDictionary<NSNumber *, NSNumber *> *refusedAt = [NSMutableDictionary dictionary];
+  if (KPOverlay().active || KartPadGameStarting()) {
+    [state removeAllObjects];
+    return;
+  }
+  NSMutableDictionary<NSNumber *, NSNumber *> *now = [NSMutableDictionary dictionary];
+  NSMutableArray<NSNumber *> *joining = [NSMutableArray array];
+  int count = 0;
+  SDL_JoystickID *ids = SDL_GetGamepads(&count);
+  for (int i = 0; i < count; ++i) {
+    SDL_Gamepad *pad = SDL_GetGamepadFromID(ids[i]);
+    // Automated checks (in the background) let their virtual controllers join, and only those.
+    const bool listening = NSApp.active ? !KPUIBackgroundAutomation() || SDL_IsJoystickVirtual(ids[i])
+                                        : KPUIBackgroundAutomation() && SDL_IsJoystickVirtual(ids[i]);
+    if (pad == nullptr || !listening || KPPortForGamepad(pad) >= 0) continue;
+    bool down = false;
+    for (int button = 0; button < SDL_GAMEPAD_BUTTON_COUNT && !down; ++button)
+      down = button != SDL_GAMEPAD_BUTTON_GUIDE && SDL_GetGamepadButton(pad, (SDL_GamepadButton)button);
+    NSNumber *key = @(ids[i]), *was = state[key];
+    int next = was == nil ? (down ? 2 : 0) : was.intValue;
+    if (next == 0 && down) next = 1;
+    else if (next == 1 && !down) {
+      [joining addObject:key];
+      next = 0;
+    } else if (next == 2 && !down) next = 0;
+    now[key] = @(next);
+  }
+  SDL_free(ids);
+  [state setDictionary:now];
+  if (joining.count == 0) return;
+  KPControllerRoster *roster = KPControllerRoster.shared;
+  [roster refresh];
+  const BOOL keyboardFloats = ![[NSUserDefaults.standardUserDefaults objectForKey:KPKeyboardPlayerKey] isKindOfClass:NSNumber.class];
+  for (NSNumber *key in joining) {
+    KPPadDevice *device = [roster deviceWithIdentifier:[NSString stringWithFormat:@"sdl:%@", key]];
+    if (device == nil || device.slot >= 0 || [roster.benched containsObject:device.identifier]) continue;
+    int slot = -1;
+    for (int i = 0; i < KPPlayerCount && slot < 0; ++i) {
+      KPPadDevice *occupant = [roster deviceInSlot:i];
+      if (occupant == nil || (occupant.isKeyboard && keyboardFloats)) slot = i;
+    }
+    if (slot < 0) {
+      // Every player has a controller: say so, now and then.
+      const NSTimeInterval time = NSProcessInfo.processInfo.systemUptime;
+      if (time - refusedAt[key].doubleValue < 20) continue;
+      refusedAt[key] = @(time);
+      [KPOverlay() toast:@"All four players have a controller" detail:@"Swap one in HOME › Controllers." stripe:0
+                    icon:^(CGContextRef c, CGRect r) { KPDrawGlyph(c, KPUIGlyph::Pad, r, KPP->secondaryText); } image:nil];
+      continue;
+    }
+    [roster move:device toSlot:slot];
+    [roster identify:device];
+    AppendSessionLine([NSString stringWithFormat:@"controllerJoined=%@; player=%d", device.name, slot + 1]);
+    NSImage *portrait = nil;
+    if (NSData *mii = [roster miiFor:device]) portrait = KartPadMiiPortrait(mii, ^{});
+    const KPPadFamily family = device.family;
+    [KPOverlay() toast:[NSString stringWithFormat:@"%@ joined", device.name] detail:KPPlayerName(slot) stripe:KPPlayerColors[slot]
+                  icon:^(CGContextRef c, CGRect r) {
+      KPDrawGlyph(c, family == KPFamilyWiiRemote ? KPUIGlyph::WiiRemote : KPUIGlyph::Pad, r, KPP->accentBottom);
+    } image:portrait];
+    KPUIPlay(KPUISound::Saved);
+  }
+}
 // From the game loop: the roster's view of the pads, the first-launch hint once the game is up, and
 // after a restart, the curtain told it can go.
 static void KPOverlayGameTick() {
   static NSTimeInterval lastRefresh;
   static bool hinted;
   const NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
+  KPAutoJoinTick();
   if (now - lastRefresh > 0.5) {
     lastRefresh = now;
     [KPControllerRoster.shared refresh];
@@ -769,7 +842,7 @@ static void KPShowHomeHint() {
 @implementation KPControllerRoster (Toasts)
 - (void)announceConnected:(KPPadDevice *)device {
   const int slot = device.slot;
-  NSString *detail = slot >= 0 ? [NSString stringWithFormat:@"Player %d", slot + 1] : @"Not playing yet: add it in HOME › Controllers";
+  NSString *detail = slot >= 0 ? [NSString stringWithFormat:@"Player %d", slot + 1] : @"Press any button to join";
   NSImage *portrait = nil;
   if (NSData *mii = [self miiFor:device]) portrait = KartPadMiiPortrait(mii, ^{});
   const KPPadFamily family = device.family;
