@@ -424,7 +424,7 @@ enum : unsigned { KPPressConfirm = 1, KPPressBack = 2, KPPressStart = 4 };
     }
   }
   KPPadDevice *device = [self.cards containsObject:focus] ? [roster deviceInSlot:(int)focus.tag2] : focus.tagObject;
-  if (button == KartPadMiiPadRedo && device && !device.isKeyboard) {  // Y: find it
+  if (button == KartPadMiiPadUndo && device && !device.isKeyboard) {  // X: find it, as on HOME
     [roster identify:device];
     KPUIPlay(KPUISound::Confirm);
     KPUIWobble([self viewFor:device]);
@@ -505,7 +505,7 @@ enum : unsigned { KPPressConfirm = 1, KPPressBack = 2, KPPressStart = 4 };
                NSTextAlignmentLeft);
   NSString *subtitle = @"Press any button to see which card is yours.";
   NSString *const press = KPButtonWord(KPJoinDevice(), KartPadMiiPadConfirm);
-  std::vector<KPHint> hints = {{KartPadMiiPadConfirm, @"Options"}, {KartPadMiiPadRedo, @"Find"}, {KartPadMiiPadBack, @"Back"}};
+  std::vector<KPHint> hints = {{KartPadMiiPadConfirm, @"Options"}, {KartPadMiiPadUndo, @"Find"}, {KartPadMiiPadBack, @"Back"}};
   unsigned ink = KPP->secondaryText;
   if (self.mode == KPControllersAssigning) {
     subtitle = [NSString stringWithFormat:@"Press %@ on the controller for %@.", press, KPPlayerName(self.target)];

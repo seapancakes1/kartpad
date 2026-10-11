@@ -5,6 +5,15 @@ game window, look like the Mii editor (silver buttons, pinstripes, Wii-blue
 focus, the game's own menu sounds) and can be used with only a controller. The
 mouse and keyboard work too: click a button, or use the arrows, Return and esc.
 They scale with the window, from a small window at a desk to full screen on a TV.
+The button hints along the bottom, and lines like "Press A to join", show the
+buttons of the controller used last: ✕ ○ □ △ on a PlayStation pad, the printed
+letters on a Switch pad or Wii Remote, return and esc on the keyboard.
+
+A Switch Pro Controller, Joy-Cons in the grip and a Wii U Pro Controller use
+Nintendo's layout, in menus and in the game: A on the right confirms and
+accelerates, B at the bottom goes back and brakes. Other controllers go by
+position (the bottom button is A). A button setup you saved for a controller
+is kept; **Reset** in button setup goes back to this layout.
 
 ## For players
 
@@ -48,7 +57,7 @@ so you can tell which one is yours.
     the next Player 2, and so on. It finishes by itself once every controller
     has pressed (or press Start); controllers that didn't press stop playing.
     B cancels and puts everyone back.
-- **Y** makes it buzz and flash its light (in the player's colour on
+- **X** (as on HOME) makes it buzz and flash its light (in the player's colour on
   controllers with a colour light).
 - A on a card: Change controller, Set up buttons, Choose a Mii, Find it, Stop
   playing. A controller in the Not playing tray offers each player directly.
@@ -118,6 +127,7 @@ button press.
 | `apple/macos/KartPadHomeScreen.inc.mm` | HOME, the HOME button, hooks the pad reader and runtime call, the hint, connect/battery toasts |
 | `apple/macos/KartPadControllerRoster.inc.mm` | Every controller as players see it: kind, player, battery, light colour, Mii, live state; keyboard placement; moves and swaps |
 | `apple/macos/KartPadControllersScreen.inc.mm` | Controllers, button setup, Mii picker, Connect a Controller |
+| `apple/macos/KartPadHints.inc.mm` | Button hints and button names as the controller in hand labels them |
 | `apple/macos/KartPadControllerArt.inc.mm` | The live controller drawings |
 | `apple/macos/KartPadSettingsScreen.inc.mm` | Settings |
 | `apple/macos/KartPadMiisScreen.inc.mm` | The shared Miis screen hosted in the game window (the editor embeds itself, `KPMiiEmbedEditor` in `KartPadMiiEditor.inc.mm`) |

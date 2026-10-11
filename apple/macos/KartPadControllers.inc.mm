@@ -43,7 +43,8 @@ static NSString *KPButtonLabel(SDL_Gamepad *pad, int button) {
       return @[@"A", @"X", @"B", @"Y"][button];
     if (type == SDL_GAMEPAD_TYPE_PS3 || type == SDL_GAMEPAD_TYPE_PS4 || type == SDL_GAMEPAD_TYPE_PS5)
       return @[@"Cross", @"Circle", @"Square", @"Triangle"][button];
-    if (type == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO || type == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR)
+    if (type == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO || type == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR ||
+        (name && strstr(name, "Wii U Pro Controller")))
       return @[@"B", @"A", @"Y", @"X"][button];
     return @[@"A", @"B", @"X", @"Y"][button];
   }

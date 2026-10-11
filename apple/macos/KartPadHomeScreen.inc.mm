@@ -463,7 +463,7 @@ static KPScreen *KPMakeMiisScreen();
   self.displayToggle.needsDisplay = YES;
 }
 
-// X on a player identifies their controller (it buzzes and flashes); Y opens Controllers.
+// X on a player identifies their controller (it buzzes and flashes), as it does on Controllers.
 - (BOOL)handle:(KartPadMiiPadButton)button {
   KPUIButton *focus = self.focus;
   if (button == KartPadMiiPadUndo && [self.slots containsObject:focus]) {

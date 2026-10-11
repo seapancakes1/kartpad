@@ -43,18 +43,19 @@ static NSString *KPHintLabel(KPPadDevice *device, KartPadMiiPadButton button) {
     }
   }
   SDL_Gamepad *pad = device.gamepad;
-  SDL_GamepadButton confirm = SDL_GAMEPAD_BUTTON_SOUTH, back = SDL_GAMEPAD_BUTTON_EAST;
-  if (pad) KPPadConfirmBack(pad, &confirm, &back);
+  const KPPadFace buttons = pad ? KPPadFaceButtons(pad)
+                               : KPPadFace{SDL_GAMEPAD_BUTTON_SOUTH, SDL_GAMEPAD_BUTTON_EAST, SDL_GAMEPAD_BUTTON_WEST, SDL_GAMEPAD_BUTTON_NORTH};
+  const SDL_GamepadButton confirm = buttons.a, back = buttons.b;
   const BOOL nintendo = device.family == KPFamilySwitch || device.family == KPFamilyJoyCon;
-  // X and Y in menus are the west and north buttons, unless confirm or back took them (KPMiiPadRead).
+  // X and Y in menus are the game's X and Y, unless confirm or back took them (KPMiiPadRead).
   auto face = [&](SDL_GamepadButton native) -> NSString * {
     return native == confirm || native == back ? nil : KPButtonLabel(pad, native);
   };
   switch (button) {
     case KartPadMiiPadConfirm: return KPButtonLabel(pad, confirm);
     case KartPadMiiPadBack: return KPButtonLabel(pad, back);
-    case KartPadMiiPadUndo: return face(SDL_GAMEPAD_BUTTON_WEST);
-    case KartPadMiiPadRedo: return face(SDL_GAMEPAD_BUTTON_NORTH);
+    case KartPadMiiPadUndo: return face(buttons.x);
+    case KartPadMiiPadRedo: return face(buttons.y);
     case KartPadMiiPadPreviousTab:
       return device.family == KPFamilyWiiRemote ? nil : nintendo ? @"L" : KPButtonLabel(pad, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER);
     case KartPadMiiPadNextTab:

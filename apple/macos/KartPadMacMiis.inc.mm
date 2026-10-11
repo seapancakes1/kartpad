@@ -176,17 +176,25 @@ static bool KPPadCapturing();
 static bool KPPadWindowsVisible() { return KartPadMiiWindowsVisible() || KPControllers().panel.visible || KPOverlayActive(); }
 static bool KPMiiPadOwnsInput() { return KPMiiPadOwned || KPPadWindowsVisible(); }
 
-// Confirm and back are the buttons a pad plays the game's A and B with (so a remapped pad, or a Wii
-// U Pro, confirms with its own A). A Wii Remote's A is SDL's east button and B (the trigger) south.
-static void KPPadConfirmBack(SDL_Gamepad *pad, SDL_GamepadButton *confirm, SDL_GamepadButton *back) {
-  *confirm = SDL_GAMEPAD_BUTTON_SOUTH;
-  *back = SDL_GAMEPAD_BUTTON_EAST;
+// The buttons a pad plays the game's A, B, X and Y with, which menus confirm, go back, and do X and Y
+// with (so a remapped pad confirms with its new A). A pad that isn't playing has the runtime's default
+// for it (pad.cpp): Nintendo's labelled layout on a Switch Pro, Joy-Cons in the grip and a Wii U Pro
+// (A on the right, B at the bottom), positions on the rest. A Wii Remote's A is SDL's east button, B
+// (the trigger) south, 1 west and 2 north.
+struct KPPadFace {
+  SDL_GamepadButton a, b, x, y;
+};
+static KPPadFace KPPadFaceButtons(SDL_Gamepad *pad) {
   const char *name = SDL_GetGamepadName(pad);
-  if (name != nullptr && strncmp(name, "Nintendo Wii Remote", 19) == 0) {
-    *confirm = SDL_GAMEPAD_BUTTON_EAST;
-    *back = SDL_GAMEPAD_BUTTON_SOUTH;
-    return;
-  }
+  if (name != nullptr && strncmp(name, "Nintendo Wii Remote", 19) == 0)
+    return {SDL_GAMEPAD_BUTTON_EAST, SDL_GAMEPAD_BUTTON_SOUTH, SDL_GAMEPAD_BUTTON_WEST, SDL_GAMEPAD_BUTTON_NORTH};
+  const SDL_GamepadType type = SDL_GetGamepadType(pad);
+  const bool labelled = (type == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO && SDL_GetGamepadProduct(pad) != 0x2073) ||
+                        type == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR || (name && strstr(name, "Wii U Pro Controller"));
+  const KPPadFace standard = labelled
+      ? KPPadFace{SDL_GAMEPAD_BUTTON_EAST, SDL_GAMEPAD_BUTTON_SOUTH, SDL_GAMEPAD_BUTTON_NORTH, SDL_GAMEPAD_BUTTON_WEST}
+      : KPPadFace{SDL_GAMEPAD_BUTTON_SOUTH, SDL_GAMEPAD_BUTTON_EAST, SDL_GAMEPAD_BUTTON_WEST, SDL_GAMEPAD_BUTTON_NORTH};
+  KPPadFace face = standard;
   for (int port = 0; port < 4; ++port) {
     const int index = PADGetIndexForPort(port);
     if (index < 0 || PADGetSDLGamepadForIndex(index) != pad) continue;
@@ -194,15 +202,24 @@ static void KPPadConfirmBack(SDL_Gamepad *pad, SDL_GamepadButton *confirm, SDL_G
     PADButtonMapping *mappings = PADGetButtonMappings(port, &count);
     for (unsigned i = 0; mappings && i < count; ++i) {
       if (mappings[i].nativeButton >= SDL_GAMEPAD_BUTTON_COUNT) continue;
-      if (mappings[i].padButton == PAD_BUTTON_A) *confirm = (SDL_GamepadButton)mappings[i].nativeButton;
-      if (mappings[i].padButton == PAD_BUTTON_B) *back = (SDL_GamepadButton)mappings[i].nativeButton;
+      const auto native = (SDL_GamepadButton)mappings[i].nativeButton;
+      if (mappings[i].padButton == PAD_BUTTON_A) face.a = native;
+      if (mappings[i].padButton == PAD_BUTTON_B) face.b = native;
+      if (mappings[i].padButton == PAD_BUTTON_X) face.x = native;
+      if (mappings[i].padButton == PAD_BUTTON_Y) face.y = native;
     }
-    if (*confirm == *back) {
-      *confirm = SDL_GAMEPAD_BUTTON_SOUTH;
-      *back = SDL_GAMEPAD_BUTTON_EAST;
+    if (face.a == face.b) {
+      face.a = standard.a;
+      face.b = standard.b;
     }
-    return;
+    break;
   }
+  return face;
+}
+static void KPPadConfirmBack(SDL_Gamepad *pad, SDL_GamepadButton *confirm, SDL_GamepadButton *back) {
+  const KPPadFace face = KPPadFaceButtons(pad);
+  *confirm = face.a;
+  *back = face.b;
 }
 
 // Every connected pad counts, Wii Remotes included. pressedBy is the pad that pressed something since
@@ -218,8 +235,8 @@ static uint32_t KPMiiPadRead(bool *anyHeld, SDL_JoystickID *pressedBy) {
   for (int i = 0; i < padCount; ++i) {
     SDL_Gamepad *pad = SDL_GetGamepadFromID(padIDs[i]);
     if (pad == nullptr) continue;
-    SDL_GamepadButton confirm, back;
-    KPPadConfirmBack(pad, &confirm, &back);
+    const KPPadFace face = KPPadFaceButtons(pad);
+    const SDL_GamepadButton confirm = face.a, back = face.b;
     uint32_t mine = 0;
     auto down = [&](SDL_GamepadButton button) { return SDL_GetGamepadButton(pad, button); };
     auto set = [&](KartPadMiiPadButton button, bool on) { if (on) mine |= 1u << button; };
@@ -237,8 +254,8 @@ static uint32_t KPMiiPadRead(bool *anyHeld, SDL_JoystickID *pressedBy) {
     set(KartPadMiiPadConfirm, down(confirm));
     set(KartPadMiiPadBack, down(back));
     auto other = [&](SDL_GamepadButton button) { return button != confirm && button != back && down(button); };
-    set(KartPadMiiPadUndo, other(SDL_GAMEPAD_BUTTON_WEST));
-    set(KartPadMiiPadRedo, other(SDL_GAMEPAD_BUTTON_NORTH));
+    set(KartPadMiiPadUndo, other(face.x));
+    set(KartPadMiiPadRedo, other(face.y));
     set(KartPadMiiPadPreviousTab, down(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER));
     set(KartPadMiiPadNextTab, down(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER));
     set(KartPadMiiPadStart, down(SDL_GAMEPAD_BUTTON_START));
