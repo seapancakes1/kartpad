@@ -93,6 +93,13 @@ and setup download the exact version, check its size and SHA-256, unpack it
 with macOS's own `ditto`, check it as the game does and install it in KartPad's
 data folder. It keeps going while you play.
 
+**Discord.** While the Discord app is open on the Mac, your Discord status shows
+what you're playing. In Mario Kart Wii that's the course, then the mode and
+class ("Luigi Circuit", "Grand Prix · 150cc") during a race, and "In the menus"
+otherwise, under WiiCompiled's Discord application. Retro Rewind shows its own
+status. Settings → Game → Show on Discord turns it off (`[discord] enabled` in
+Config.toml). It only talks to the Discord app on this Mac.
+
 **The first few launches** show a hint, "Press HOME for menus", after your first
 button press.
 
@@ -113,6 +120,7 @@ button press.
 | `apple/macos/KartPadCurtain.inc.mm` | Restarts behind a curtain |
 | `apple/macos/KartPadSetup.inc.mm` | First-run setup |
 | `apple/macos/KartPadRetroDownload.inc.mm` | Retro Rewind download (dual builds) |
+| `apple/macos/KartPadDiscordPresence.inc.mm` | What Discord shows during a Mario Kart Wii race (`kartpad/discord/race_presence.h`); the runtime's `DiscordPresence` sends it from its own thread |
 | `apple/macos/KartPadQA.inc.mm` | Automated checks (below) |
 
 ### How it fits together
@@ -186,7 +194,9 @@ mouse click on a control: what the window's hit test finds, then the click),
 control on the screen), `vpad add|press N BUTTON|release N BUTTON|remove N`
 (SDL virtual controllers, to check choosing controllers by pressing and joining),
 `move IDENTIFIER|vpadN SLOT` (put a controller on a player, or take it off with
--1, without benching it), `shot NAME`,
+-1, without benching it), `key NAME` (a key the game reads as typed, by SDL's
+name: `key return` is A for the keyboard's player; a backgrounded game ignores
+controllers but takes these), `shot NAME`,
 `shotwindow NAME`, `resize W H`, `appearance light|dark|system`, `frames` (the
 presented-frame counter, to check the game holds still), `roster` (every
 controller's player and Aurora port), `toast`, `hint`,
