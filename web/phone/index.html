@@ -12,14 +12,18 @@
 <title>KartPad Controller</title>
 <!--
   KartPad's phone controller. One page, two ways in:
-  - Over HTTPS (GitHub Pages), where browsers give a page the phone's motion, so it can steer by
-    tilting. The QR code on the Mac opens it with the Mac's address and this launch's key after the #
-    (never sent to the page's host). Joining opens the Mac's helper page in a second tab, which swaps
-    WebRTC details with KartPad (apple/macos/KartPadPhoneControllers.inc.mm) and closes; input then
-    goes straight to the Mac over a data channel.
+  - Over HTTPS, where a build of KartPad says it's published (KARTPAD_PHONE_PAGE_URL; see
+    docs/MULTIPLAYER.md). Browsers give such a page the phone's motion, so it can steer by tilting.
+    The QR code on the Mac opens it with the Mac's address and this launch's key after the # (never
+    sent to the page's host). Joining opens the Mac's helper page in a second tab with an offer
+    signed with the key, which swaps WebRTC details with KartPad
+    (apple/macos/KartPadPhoneControllers.inc.mm) and closes; input then goes straight to the Mac over
+    a data channel.
   - From the Mac itself (built into the app, and served at its own address with the key after the #),
     touch only, over a WebSocket.
-  Messages are those of runtime/include/kartpad/network/phone_pad.h. KartPad also says what the
+  The key itself is never sent: joining proves it with HMAC-SHA256 (see "Joining" below). Messages
+  are those of runtime/include/kartpad/network/phone_pad.h, and VERSION is its ProtocolVersion: publish
+  this page again when that changes. KartPad also says what the
   player is doing (the menus, the start of a race, the race, a fall), and the page shows the controls
   for it: a D-pad in the menus; in a race, Drift under the right thumb and Item on the left, with a
   stick or tilt steering. In a race it accelerates by itself from GO; the start and a fall are the
@@ -316,7 +320,7 @@ const fragment = new URLSearchParams(location.hash.slice(1));
 const mac = secure ? fragment.get("mac") || "" : location.host;
 const key = secure ? fragment.get("k") || "" : location.hash.slice(1);
 const macOrigin = "http://" + mac;
-const tokenKey = "kartpad-phone-" + key;
+const phoneKey = "kartpad-phone-" + key;
 const canTilt = secure && typeof DeviceMotionEvent !== "undefined";
 const iOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (/Mac/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
 
@@ -364,10 +368,14 @@ function show(name) {
   for (const id of ["join", "message", "settings", "tiltAsk"]) $(id).classList.toggle("hidden", id !== name);
   placeStage();
 }
-function message(title, text, button, touch) {
+// button: its label ("" for none), which joins again unless action says otherwise.
+let messageAction = null;
+function message(title, text, button, touch, action) {
   $("messageTitle").textContent = title;
   $("messageText").textContent = text || "";
   $("messageButton").textContent = button || "Try Again";
+  $("messageButton").classList.toggle("hidden", button === "");
+  messageAction = action || null;
   $("touchButton").classList.toggle("hidden", !(touch && secure));
   show("message");
 }
@@ -507,8 +515,72 @@ function applyLayout() {
   send(true);
 }
 
+// ---- Joining (phone_pad.h, "Joining"). KartPad's hello carries a nonce, and the phone's first
+// message proves it has the key with HMAC-SHA256 over it; the link tab's signal proves it over the
+// offer. SHA-256 is here in plain JS, since plain-HTTP pages don't get crypto.subtle.
+const VERSION = 1;
+const SHA256_K = [
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2];
+function sha256(bytes) {
+  const n = bytes.length, total = (n + 72) & ~63, m = new Uint8Array(total), view = new DataView(m.buffer);
+  m.set(bytes);
+  m[n] = 0x80;
+  view.setUint32(total - 8, Math.floor(n / 0x20000000));
+  view.setUint32(total - 4, (n * 8) >>> 0);
+  const h = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+  const w = new Uint32Array(64), rotr = (x, k) => (x >>> k) | (x << (32 - k));
+  for (let at = 0; at < total; at += 64) {
+    for (let i = 0; i < 16; ++i) w[i] = view.getUint32(at + i * 4);
+    for (let i = 16; i < 64; ++i)
+      w[i] = w[i - 16] + (rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >>> 3)) + w[i - 7] +
+             (rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >>> 10));
+    let [a, b, c, d, e, f, g, hh] = h;
+    for (let i = 0; i < 64; ++i) {
+      const t1 = (hh + (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) + ((e & f) ^ (~e & g)) + SHA256_K[i] + w[i]) | 0;
+      const t2 = ((rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) | 0;
+      hh = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
+    }
+    [a, b, c, d, e, f, g, hh].forEach((v, i) => { h[i] = (h[i] + v) | 0; });
+  }
+  const out = new Uint8Array(32), outView = new DataView(out.buffer);
+  h.forEach((v, i) => outView.setUint32(i * 4, v >>> 0));
+  return out;
+}
+function hmacSha256(key, message) {
+  const block = new Uint8Array(64), inner = new Uint8Array(64 + message.length), outer = new Uint8Array(96);
+  block.set(key.length > 64 ? sha256(key) : key);
+  for (let i = 0; i < 64; ++i) { inner[i] = block[i] ^ 0x36; outer[i] = block[i] ^ 0x5c; }
+  inner.set(message, 64);
+  outer.set(sha256(inner), 64);
+  return sha256(outer);
+}
+const utf8 = (text) => new TextEncoder().encode(text);
+const hex = (bytes) => Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+const proof = (key, text) => hex(hmacSha256(utf8(key), utf8(text)));
+function joinMessage(key, id, nonce) {
+  const head = "join " + VERSION + " " + id;
+  return head + " " + proof(key, head + " " + nonce);
+}
+function signalMessage(key, id, offer) {
+  const head = "signal " + VERSION + " " + id;
+  return head + " " + proof(key, head + "\n" + offer) + "\n" + offer;
+}
+
 // ---- The link to the Mac
-let joined = false, wanted = false, seq = 0, lastSent = "", wakeLock = null;
+// This phone's id with KartPad, random and kept for the tab: it gets its player back on reconnecting.
+function phoneId() {
+  let id = stored(phoneKey);
+  if (!/^[0-9a-f]{32}$/.test(id || "")) { id = hex(crypto.getRandomValues(new Uint8Array(16))); store(phoneKey, id); }
+  return id;
+}
+let joined = false, wanted = false, seq = 0, lastSent = "", wakeLock = null, macVersion = 0;
 let ws = null, retry = 0, retryTimer = 0, failedInARow = 0;
 let pc = null, padChannel = null, controlChannel = null, offer = null, openTimer = 0;
 const pings = new Map(), rtts = [];
@@ -529,7 +601,7 @@ function onBinary(data) {
 function connect() {
   clearTimeout(retryTimer);
   if (ws) { ws.onclose = null; try { ws.close(); } catch (e) {} }
-  ws = new WebSocket("ws://" + location.host + "/ws?k=" + key + "&t=" + (stored(tokenKey) || ""));
+  ws = new WebSocket("ws://" + location.host + "/ws");
   ws.binaryType = "arraybuffer";
   setLive(false, "Connecting…");
   ws.onopen = () => { retry = 0; };
@@ -597,7 +669,7 @@ function join() {
   }
   if (!offer) return;
   wanted = true;
-  const helper = window.open(macOrigin + "/link#k=" + key + "&t=" + (stored(tokenKey) || "") + "&o=" + b64url(offer), "kartpad-link");
+  const helper = window.open(macOrigin + "/link#s=" + b64url(signalMessage(key, phoneId(), offer)), "kartpad-link");
   if (!helper) {
     message("Couldn’t open the link tab", "Allow pop-ups for this page, then try again.", "Try Again", true);
     return;
@@ -609,7 +681,11 @@ function join() {
 }
 window.addEventListener("message", async (event) => {
   if (!secure || event.origin !== macOrigin || !event.data || !pc) return;
-  if (event.data.t === "link-error") return failed("KartPad couldn’t link this phone (" + event.data.why + ").");
+  if (event.data.t === "link-error") {
+    if (event.data.why === "version") return mismatch(event.data.v);
+    if (event.data.why === "expired") return goodbye("expired");
+    return failed("KartPad couldn’t link this phone (" + event.data.why + ").");
+  }
   if (event.data.t !== "answer") return;
   setLive(false, "Connecting…");
   try { await pc.setRemoteDescription({type: "answer", sdp: event.data.sdp}); }
@@ -623,7 +699,7 @@ function failed(why) {
   prepare().catch(() => {});
 }
 // The WebRTC link went away (Wi‑Fi, a long screen lock, KartPad quit). Coming back needs a tap, since
-// it opens the helper tab again; the token keeps this phone's player for a minute.
+// it opens the helper tab again; its id keeps this phone's player for a minute.
 function lost() {
   const was = joined;
   joined = false;
@@ -638,17 +714,34 @@ function lost() {
 function onControl(text) {
   let m;
   try { m = JSON.parse(text); } catch (e) { return; }
-  if (m.t === "welcome") welcome(m);
+  if (m.t === "hello") hello(m);
+  else if (m.t === "welcome") welcome(m);
   else if (m.t === "player") player(m.player);
   else if (m.t === "color") document.documentElement.style.setProperty("--player", m.rgb);
   else if (m.t === "race") setView(m.view);
   else if (m.t === "rumble") rumble(m.on);
   else if (m.t === "bye") goodbye(m.reason);
 }
+// KartPad's hello, first on the WebSocket: join, proving the key with its nonce.
+function hello(m) {
+  macVersion = m.v;
+  if (m.v !== VERSION) mismatch(m.v);
+  else if (!secure && ws && ws.readyState === 1) ws.send(joinMessage(key, phoneId(), m.nonce));
+}
+// KartPad speaks another version of the protocol: say which side to update.
+function mismatch(v) {
+  wanted = false;
+  joined = false;
+  letGo();
+  if (secure) { closeLink(); prepare().catch(() => {}); }
+  else if (ws) { ws.onclose = null; ws.close(); ws = null; }
+  if (v > VERSION) message("This page is out of date", secure ? "Reload it, or use touch controls." : "Reload it.", "Reload", true,
+                           () => location.reload());
+  else message("Update KartPad", "KartPad on the Mac is older than this page.", "Try Again", true);
+}
 let askedTilt = false;
 function welcome(m) {
-  const first = !joined && stored(tokenKey) !== m.token;
-  store(tokenKey, m.token);
+  const first = !m.resumed;
   joined = true;
   failedInARow = 0;
   view = "menus";  // KartPad says what's on next
@@ -666,13 +759,17 @@ function goodbye(reason) {
   else if (ws) { ws.onclose = null; ws.close(); ws = null; }
   if (reason === "full") message("Four phones are already playing", "Ask someone to leave, then try again.");
   else if (reason === "replaced") message("Opened somewhere else", "This controller is now in another tab or window.", "Use It Here");
-  else if (reason === "removed") { store(tokenKey, null); message("Removed", "", "Join Again"); }
-  else if (reason === "left") { store(tokenKey, null); show("join"); }
+  else if (reason === "removed") { store(phoneKey, null); message("Removed", "", "Join Again"); }
+  else if (reason === "left") { store(phoneKey, null); show("join"); }
+  else if (reason === "version") mismatch(macVersion);
+  else if (reason === "expired") message("Link expired", "Scan the code in KartPad again.", "");
   else message("KartPad closed", "Open KartPad on the Mac and scan the code again.");
 }
 
 // ---- Sending: whenever anything changes, and every 50 ms so KartPad knows the phone is there.
-let buttons = 0;
+// WebRTC input isn't resent or kept in order, so there each change goes twice more soon after;
+// KartPad drops copies and late ones by seq.
+let buttons = 0, repeats = 0;
 function send(force) {
   if (!joined || !linkOpen()) return;
   let x = 0, y = 0;
@@ -682,7 +779,8 @@ function send(force) {
     y = itemAim() || y;
   }
   const state = buttons + ":" + x + ":" + y;
-  if (!force && state === lastSent) return;
+  if (state !== lastSent) repeats = secure ? 2 : 0;
+  else if (!force) return;
   lastSent = state;
   const bytes = new Uint8Array(8);
   bytes[0] = 1; bytes[1] = seq = (seq + 1) & 255;
@@ -691,6 +789,7 @@ function send(force) {
   sendPad(bytes);
 }
 setInterval(() => send(true), 50);
+setInterval(() => { if (repeats > 0) { --repeats; send(true); } }, 20);
 function letGo() {
   fingers.clear();
   stick = null; stickX = stickY = 0;
@@ -732,6 +831,10 @@ function answerPing(id) {
   $("delay").textContent = "Link: " + middleDelay() + " ms (worst " + Math.round(Math.max(...rtts)) + " ms)";
 }
 
+// Screen wake locks are for HTTPS pages only. The plain-HTTP page has no good stand-in: a tiny muted
+// looping video no longer keeps a screen on (WebKit lets it sleep for looping or silent video, Chrome
+// for silent video that isn't big on screen), and an audible one takes over the phone's sound.
+// Touches keep it on while playing, and the page rejoins after a lock.
 async function keepAwake() {
   try { if (navigator.wakeLock && document.visibilityState === "visible") wakeLock = await navigator.wakeLock.request("screen"); } catch (e) {}
 }
@@ -871,7 +974,7 @@ syncSettings();
 // ---- Touch: each finger holds a button (or two, on a seam or A+B), Item, the stick, the D-pad or
 // HOME, and can slide from one button to another.
 const keys = Array.from(document.querySelectorAll(".key[data-bit]"));
-const fingers = new Map();  // pointerId → {kind: "key" | "unlock" | "item" | "stick" | "dpad" | "home", bits, el, aim}
+const fingers = new Map();  // pointerId → {kind: "key" | "unlock" | "item" | "stick" | "dpad" | "home" | "bar", bits, el, aim}
 let stick = null, stickX = 0, stickY = 0;  // stick: where it was touched, on the stage
 let aLocked = false, aLockTimer = 0, homeTimer = 0, homeUntil = 0;
 let aimHeld = 0, aimUntil = 0;
@@ -994,7 +1097,8 @@ document.addEventListener("pointerdown", (e) => {
   if (!joined || sheet !== null || !$("turn").classList.contains("hidden")) return;
   const target = document.elementFromPoint(e.clientX, e.clientY);
   const bar = target && target.closest && target.closest("#tiltKey, #gear, #layoutKey");
-  if (bar) { barKeys[bar.id](); return; }
+  // These act when let go (lift): a touch's lift, unlike its press, lets the page ask for motion access.
+  if (bar) { fingers.set(e.pointerId, {kind: "bar", bits: 0, el: bar}); return; }
   if (inside($("dpad"), e.clientX, e.clientY)) {
     fingers.set(e.pointerId, {kind: "dpad", bits: dpadBits(e.clientX, e.clientY)});
     buzz(8);
@@ -1013,7 +1117,7 @@ document.addEventListener("pointerdown", (e) => {
 });
 document.addEventListener("pointermove", (e) => {
   const finger = fingers.get(e.pointerId);
-  if (!finger) return;
+  if (!finger || finger.kind === "bar") return;
   if (finger.kind === "stick") {
     const p = toStage(e.clientX, e.clientY);
     let dx = p.x - stick.x, dy = p.y - stick.y;
@@ -1045,6 +1149,10 @@ function lift(e) {
   const finger = fingers.get(e.pointerId);
   if (!finger) return;
   fingers.delete(e.pointerId);
+  if (finger.kind === "bar") {
+    if (e.type === "pointerup" && inside(finger.el, e.clientX, e.clientY)) barKeys[finger.el.id]();
+    return;
+  }
   if (finger.kind === "stick") { stick = null; stickX = 0; stickY = 0; restStick(); }
   else if (finger.kind === "home") cancelHome();
   else if (finger.kind === "item") letGoOfItem(finger);
@@ -1058,7 +1166,7 @@ for (const type of ["touchstart", "touchmove", "gesturestart", "dblclick", "cont
 
 // ---- Off we go
 $("joinButton").onclick = join;
-$("messageButton").onclick = join;
+$("messageButton").onclick = () => (messageAction || join)();
 $("touchButton").onclick = () => { location.href = macOrigin + "/#" + key; };
 show("join");
 applyLayout();

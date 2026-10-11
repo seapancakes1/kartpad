@@ -51,9 +51,11 @@ reconnect. These tests do not establish a physical three-controller race.
 Guests can play on a Mac with their own phone and nothing to install. Choose
 **Controls → Add Phone Controller…** (or **HOME → Controllers → Connect a
 Controller → Phone**), scan the QR code with the phone's camera, open the link
-and tap **Join**. A second tab opens for a moment to link the phone to the Mac,
-then closes. Choose **Use Tilt** to steer by turning the phone like a wheel, or
-**Use the Stick**.
+and tap **Join**. Builds that publish the tilt page (see
+[The tilt page](#the-tilt-page)) open that: a second tab opens for a moment to
+link the phone to the Mac, then closes, and **Use Tilt** steers by turning the
+phone like a wheel, or **Use the Stick**. Otherwise the code opens the touch
+controller the Mac serves itself.
 
 The phone shows the controls for what its player is doing, which KartPad reads
 from the game:
@@ -99,15 +101,17 @@ More:
   pages), so the phone needs internet to open it. After it opens, input goes
   straight from the phone to the Mac over a WebRTC data channel on your Wi‑Fi;
   nothing passes through the internet. If that direct link fails, **Use Touch
-  Controls** opens the same controller from the Mac itself, touch only.
+  Controls** opens the same controller from the Mac itself, touch only. If the
+  page and KartPad are different versions, the phone says which to update.
 - The Mac's phone page lists the phones that have joined, with each one's
   player, how quick its link is, and **Remove**.
 - Up to four phones join, each as its own controller (`Phone 1` to `Phone 4`)
   on the first free player (or the keyboard's, while the keyboard just follows
   free players), as a controller does. Controllers and Player Order move them
   like any other controller, and the phone shows its player number and colour.
-- The phone must be on the same Wi‑Fi as the Mac. Networks that keep devices
-  apart, common on campus, hotel and guest Wi‑Fi, block it.
+- The phone must be on the same network as the Mac: a private address, or the
+  same subnet as the Mac (networks with public addresses included). Networks
+  that keep devices apart, common on campus, hotel and guest Wi‑Fi, block it.
 - A phone that locks or drops keeps its player for a minute. The touch-only page
   rejoins by itself. The tilt page usually carries on after a short lock, and
   otherwise shows **Reconnect** (one tap, since it opens the linking tab again).
@@ -117,6 +121,43 @@ More:
   and later) give a light tick on presses; the game's rumble doesn't reach them.
 - A phone's player lasts for that session only; it is never saved, so a phone
   that joined first doesn't take Player 1 from a controller next time.
+- When KartPad quits, phones say so.
+
+### The tilt page
+
+The touch controller is always there: the Mac serves `web/phone/index.html`
+itself (the build embeds it). Tilt needs the same file published over HTTPS,
+and a build that knows where:
+
+1. Copy `web/phone/index.html` to any static HTTPS host, as the page at an
+   address of your choosing. It's one self-contained file with nothing to build
+   and no server code; it only ever talks to the Mac. On GitHub Pages, for
+   example, commit it as `pad/index.html` on the branch Pages serves, for
+   `https://<user>.github.io/<repo>/pad/`.
+2. Pass that address when configuring the macOS runtime build,
+   `-DKARTPAD_PHONE_PAGE_URL=https://<user>.github.io/<repo>/pad/`; an existing
+   build directory keeps it in its CMake cache
+   (`cmake -B <runtime build directory> -DKARTPAD_PHONE_PAGE_URL=…`). It must be
+   `https://` with no query or fragment. Left empty (the default), phones get
+   the touch controller only. `scripts/prepare-g7-game-runtime.sh` passes
+   `KARTPAD_PHONE_PAGE_URL` on from the environment.
+3. Publish the page again whenever `ProtocolVersion` in
+   `runtime/include/kartpad/network/phone_pad.h` changes: KartPad turns away a
+   page of another version, and the phone tells the player which to update.
+
+On one Mac, `defaults write dev.kartpad.app KartPadPhonePageURL <https address>`
+overrides the build's address, and an empty value turns tilt off.
+
+Joining is for whoever can see the code. Each launch makes a new key, carried
+only by the QR code, after the `#` (browsers never send that part). Phones prove
+they have it with HMAC-SHA256 instead of sending it: over a fresh nonce from the
+Mac on the touch link, and over the WebRTC offer (each taken once) on the tilt
+link, whose input then travels encrypted (DTLS). Someone watching the Wi‑Fi can
+see the touch link's input, but can't join, take over a phone that dropped, or
+replay a join. Someone who can change traffic on the network can do more: the
+touch page and the linking tab load over plain HTTP. Connections that haven't
+joined yet are limited per address, the oldest making way, and never hold up
+phones that have.
 
 ## DualShock and DualSense
 

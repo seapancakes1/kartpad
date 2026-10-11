@@ -6,9 +6,11 @@
 #include "KartPadPhonePageHTML.inc"
 
 // The helper page (/link) for the HTTPS controller page, which can't reach this Mac's plain-HTTP
-// address itself: the controller page opens it in a second tab with its WebRTC offer and the
-// phone's resume token after the #, it passes them to KartPad over /signal and the answer back to
-// the controller page, then closes. {{CONTROLLER_ORIGIN}} is the only page it answers.
+// address itself: the controller page opens it in a second tab with its signal (its WebRTC offer,
+// signed with the launch's key: phone_pad.h, "Joining") after the #, it passes that to KartPad over
+// /signal and the answer back to the controller page, then closes. It never has the key.
+// {{CONTROLLER_ORIGIN}} is the only page it answers; with each answer or error goes KartPad's
+// protocol version, from its hello.
 static const char KPPhoneHelperPage[] = R"KPHELPER(<!doctype html>
 <html lang="en">
 <head>
@@ -31,24 +33,28 @@ const CONTROLLER_ORIGIN = "{{CONTROLLER_ORIGIN}}";
 const f = new URLSearchParams(location.hash.slice(1));
 const say = (text) => { document.getElementById("say").textContent = text; };
 const unb64url = (s) => decodeURIComponent(escape(atob(s.replace(/-/g, "+").replace(/_/g, "/"))));
-history.replaceState(null, "", location.pathname);  // keep the key out of the tab's history
-let offer = "";
-try { offer = unb64url(f.get("o") || ""); } catch (e) {}
+history.replaceState(null, "", location.pathname);  // a reload mustn't send it again
+let signal = "";
+try { signal = unb64url(f.get("s") || ""); } catch (e) {}
 if (!window.opener) say("This tab lost its link to the controller. Go back and tap Join again.");
-else if (!offer) say("This link is incomplete. Go back and tap Join again.");
+else if (!signal) say("This link is incomplete. Go back and tap Join again.");
 else {
-  const ws = new WebSocket("ws://" + location.host + "/signal?k=" + (f.get("k") || ""));
-  let answered = false;
-  ws.onopen = () => ws.send("t=" + (f.get("t") || "") + "\n" + offer);
+  const ws = new WebSocket("ws://" + location.host + "/signal");
+  let answered = false, version = 0;
+  ws.onopen = () => ws.send(signal);
   ws.onmessage = (event) => {
     if (typeof event.data !== "string") return;
+    if (event.data.startsWith("{")) {  // KartPad's hello
+      try { version = JSON.parse(event.data).v || 0; } catch (e) {}
+      return;
+    }
     answered = true;
     if (event.data.startsWith("error:")) {
-      window.opener.postMessage({t: "link-error", why: event.data.slice(6)}, CONTROLLER_ORIGIN);
+      window.opener.postMessage({t: "link-error", why: event.data.slice(6), v: version}, CONTROLLER_ORIGIN);
       say("KartPad couldn’t link this phone. Go back to try again.");
       return;
     }
-    window.opener.postMessage({t: "answer", sdp: event.data}, CONTROLLER_ORIGIN);
+    window.opener.postMessage({t: "answer", sdp: event.data, v: version}, CONTROLLER_ORIGIN);
     say("Linked. Going back…");
     setTimeout(() => window.close(), 250);
   };

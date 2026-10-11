@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <initializer_list>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -15,8 +16,9 @@
 // HTTPS page that can also read tilt (the Mac's helper page swaps the WebRTC
 // details). This header holds the parts with no platform code: the HTTP request
 // head, the WebSocket handshake and frames (RFC 6455, server side), the phone's
-// messages, the WebRTC signal, what a phone's state becomes on an SDL gamepad,
-// who may connect, and the phone sessions.
+// messages, how a phone proves it has this launch's key, the WebRTC signal, what
+// a phone's state becomes on an SDL gamepad, who may connect, and the phone
+// sessions.
 namespace kartpad::phone_pad {
 
 // ---- SHA-1 and base64, for Sec-WebSocket-Accept ----
@@ -71,6 +73,69 @@ inline std::string Base64(const uint8_t *data, size_t size) {
 inline std::string WebSocketAccept(std::string_view key) {
   const auto digest = Sha1(std::string(key) + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
   return Base64(digest.data(), digest.size());
+}
+
+// ---- SHA-256 and HMAC-SHA256 (FIPS 180-4, RFC 2104), for the join's proof ----
+
+inline std::array<uint8_t, 32> Sha256(std::string_view data) {
+  static constexpr uint32_t k[64] = {
+      0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+      0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+      0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+      0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+      0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+      0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+      0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+      0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2};
+  uint32_t h[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
+  std::string message(data);
+  const uint64_t bits = static_cast<uint64_t>(data.size()) * 8;
+  message.push_back(static_cast<char>(0x80));
+  while (message.size() % 64 != 56) message.push_back('\0');
+  for (int i = 7; i >= 0; --i) message.push_back(static_cast<char>((bits >> (i * 8)) & 0xff));
+  const auto rotr = [](uint32_t v, int n) { return (v >> n) | (v << (32 - n)); };
+  for (size_t chunk = 0; chunk < message.size(); chunk += 64) {
+    uint32_t w[64];
+    for (int i = 0; i < 16; ++i) {
+      const auto *p = reinterpret_cast<const uint8_t *>(message.data() + chunk + i * 4);
+      w[i] = (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | p[3];
+    }
+    for (int i = 16; i < 64; ++i)
+      w[i] = w[i - 16] + (rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >> 3)) + w[i - 7] +
+             (rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >> 10));
+    uint32_t a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], hh = h[7];
+    for (int i = 0; i < 64; ++i) {
+      const uint32_t t1 = hh + (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) + ((e & f) ^ (~e & g)) + k[i] + w[i];
+      const uint32_t t2 = (rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) + ((a & b) ^ (a & c) ^ (b & c));
+      hh = g, g = f, f = e, e = d + t1, d = c, c = b, b = a, a = t1 + t2;
+    }
+    h[0] += a, h[1] += b, h[2] += c, h[3] += d, h[4] += e, h[5] += f, h[6] += g, h[7] += hh;
+  }
+  std::array<uint8_t, 32> out{};
+  for (int i = 0; i < 32; ++i) out[i] = static_cast<uint8_t>(h[i / 4] >> (24 - (i % 4) * 8));
+  return out;
+}
+
+inline std::array<uint8_t, 32> HmacSha256(std::string_view key, std::string_view message) {
+  std::string block(64, '\0');
+  if (key.size() > block.size()) {
+    const auto digest = Sha256(key);
+    std::copy(digest.begin(), digest.end(), block.begin());
+  } else {
+    std::copy(key.begin(), key.end(), block.begin());
+  }
+  std::string inner(64, '\0'), outer(64, '\0');
+  for (size_t i = 0; i < block.size(); ++i) inner[i] = char(block[i] ^ 0x36), outer[i] = char(block[i] ^ 0x5c);
+  const auto innerDigest = Sha256(inner.append(message));
+  outer.append(reinterpret_cast<const char *>(innerDigest.data()), innerDigest.size());
+  return Sha256(outer);
+}
+
+inline std::string Hex(const uint8_t *data, size_t size) {
+  static constexpr char kDigits[] = "0123456789abcdef";
+  std::string out;
+  for (size_t i = 0; i < size; ++i) out += {kDigits[data[i] >> 4], kDigits[data[i] & 15]};
+  return out;
 }
 
 // ---- The HTTP request head ----
@@ -139,20 +204,6 @@ inline Parse ParseRequest(std::string_view buffer, HttpRequest &out, size_t &con
   return Parse::Done;
 }
 
-// The value of name in a query string, or empty. Only plain values are used
-// (hex keys and tokens), so there's no percent-decoding.
-inline std::string QueryValue(std::string_view query, std::string_view name) {
-  while (!query.empty()) {
-    const size_t amp = query.find('&');
-    const std::string_view pair = query.substr(0, amp);
-    const size_t eq = pair.find('=');
-    if (eq != std::string_view::npos && pair.substr(0, eq) == name) return std::string(pair.substr(eq + 1));
-    if (amp == std::string_view::npos) break;
-    query.remove_prefix(amp + 1);
-  }
-  return {};
-}
-
 // Whether a comma-separated header value lists token, ignoring case.
 inline bool HeaderHasToken(std::string_view value, std::string_view token) {
   while (true) {
@@ -179,7 +230,7 @@ inline bool OriginMatchesHost(std::string_view origin, std::string_view host) {
          EqualsIgnoringCase(origin.substr(scheme.size()), host);
 }
 
-// Compares the join key without returning early on the first difference.
+// Compares a join's proof without returning early on the first difference.
 inline bool SameSecret(std::string_view a, std::string_view b) {
   if (a.empty() || a.size() != b.size()) return false;
   unsigned char diff = 0;
@@ -275,7 +326,9 @@ struct PadState {
 };
 
 // Binary messages from the phone. State: {type, seq, buttons (LE16), x, y,
-// reserved (LE16)}, sent when anything changes and every 50 ms. Leave: {type}.
+// reserved (LE16)}, sent when anything changes and every 50 ms; seq goes up by
+// one each time (wrapping), and over WebRTC, where input isn't resent or kept in
+// order, each change is sent twice more soon after. Leave: {type}.
 // Ping: {type, id (LE16)}, sent back unchanged so the phone can time the link.
 // Delay: {type, milliseconds (LE16)}, the round trip the phone has been timing,
 // for the Mac's list of phones.
@@ -314,28 +367,98 @@ inline bool DecodeMessage(std::string_view payload, Message &out) {
   return true;
 }
 
-// ---- The WebRTC signal ----
+// ---- Joining, and the WebRTC signal ----
 
-// The helper page's one message: "t=" and the phone's resume token (empty for a
-// new phone), a newline, then the phone's WebRTC offer. KartPad answers with its
-// own SDP as one text frame, or "error:" and why.
-struct Signal {
-  std::string token, offer;
+// Bumped whenever the page and KartPad stop understanding each other (these
+// messages, the signal, the link tab's address). The page compares it with
+// KartPad's hello and says which one to update.
+inline constexpr int ProtocolVersion = 1;
+
+// The key is this launch's secret, in the code's link after the # (which
+// browsers never send), so it never crosses the network. A phone proves it has
+// it with HMAC-SHA256 under the key (its 32 hex digits as text), in lowercase hex:
+// - On the WebSocket, KartPad first says hello with a nonce, and the phone's
+//   first message is "join <version> <phone> <proof>", proving "join <version>
+//   <phone> <nonce>", so a copy is no use on another connection.
+// - The link tab's one message, the signal, is "signal <version> <phone>
+//   <proof>\n<offer>", proving "signal <version> <phone>\n<offer>". The HTTPS
+//   page makes it before the tab opens (it can't reach the Mac itself), so there's
+//   no nonce: KartPad takes each proof once (Replays), and a copy couldn't finish
+//   the link anyway, since that takes the offer's own DTLS key. KartPad answers
+//   with its own SDP as one text frame, or "error:" and why.
+// <phone> is 32 hex digits the page picks at random and keeps for the tab, so it
+// gets the same phone (and player) back when it reconnects. It isn't secret.
+struct Join {
+  int version = 0;
+  std::string phone, proof;
+  std::string offer;  // a signal's
 };
 
-inline bool ParseSignal(std::string_view text, Signal &out) {
-  if (text.size() > MaxSignalPayload || text.substr(0, 2) != "t=") return false;
+inline bool IsLowerHex(std::string_view s, size_t size) {
+  return s.size() == size && std::all_of(s.begin(), s.end(), [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); });
+}
+
+// The version of a join or signal ("<kind> <version> ..."), or -1 for anything
+// else. Read first, so a page of another version is told so even if the rest of
+// its message has changed.
+inline int MessageVersion(std::string_view text, std::string_view kind) {
+  if (text.size() <= kind.size() + 1 || text.substr(0, kind.size()) != kind || text[kind.size()] != ' ') return -1;
+  int version = 0;
+  size_t i = kind.size() + 1;
+  for (; i < text.size() && i < kind.size() + 6 && text[i] >= '0' && text[i] <= '9'; ++i) version = version * 10 + (text[i] - '0');
+  if (i == kind.size() + 1 || (i < text.size() && text[i] != ' ' && text[i] != '\n')) return -1;
+  return version;
+}
+
+// Reads a join (kind "join") or a signal (kind "signal").
+inline bool ParseJoin(std::string_view text, std::string_view kind, Join &out) {
+  const int version = MessageVersion(text, kind);
+  if (version < 0 || text.size() > MaxSignalPayload) return false;
+  const bool signal = kind == "signal";
   const size_t newline = text.find('\n');
-  if (newline == std::string_view::npos) return false;
-  const std::string_view token = text.substr(2, newline - 2);
-  if (token.size() > 64 ||
-      !std::all_of(token.begin(), token.end(), [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); }))
+  if (signal != (newline != std::string_view::npos)) return false;
+  // "<kind> <version> <phone> <proof>": the version as written, 32 hex digits, 64 hex digits.
+  const std::string_view line = text.substr(0, newline);
+  const std::string number = std::to_string(version);
+  const size_t phoneAt = kind.size() + 1 + number.size() + 1, proofAt = phoneAt + 32 + 1;
+  if (line.size() != proofAt + 64 || line.substr(kind.size() + 1, number.size()) != number ||
+      line[phoneAt - 1] != ' ' || line[proofAt - 1] != ' ' || !IsLowerHex(line.substr(phoneAt, 32), 32) ||
+      !IsLowerHex(line.substr(proofAt), 64))
     return false;
-  const std::string_view offer = text.substr(newline + 1);
-  if (offer.substr(0, 4) != "v=0\r" && offer.substr(0, 4) != "v=0\n") return false;
-  out = {std::string(token), std::string(offer)};
+  const std::string_view offer = signal ? text.substr(newline + 1) : std::string_view();
+  if (signal && offer.substr(0, 4) != "v=0\r" && offer.substr(0, 4) != "v=0\n") return false;
+  out = {version, std::string(line.substr(phoneAt, 32)), std::string(line.substr(proofAt)), std::string(offer)};
   return true;
 }
+
+// What a join's or a signal's proof is of.
+inline std::string JoinProven(const Join &join, std::string_view nonce) {
+  return "join " + std::to_string(join.version) + " " + join.phone + " " + std::string(nonce);
+}
+inline std::string SignalProven(const Join &signal) {
+  return "signal " + std::to_string(signal.version) + " " + signal.phone + "\n" + signal.offer;
+}
+
+inline bool Proves(std::string_view key, std::string_view proven, std::string_view proof) {
+  const auto digest = HmacSha256(key, proven);
+  return !key.empty() && SameSecret(Hex(digest.data(), digest.size()), proof);
+}
+
+// The signal proofs taken this launch, so a copy of one is turned away.
+class Replays {
+ public:
+  // Whether proof is new (it's remembered from now on). Only for proofs that hold.
+  bool Fresh(std::string_view proof) {
+    if (std::find(seen_.begin(), seen_.end(), proof) != seen_.end()) return false;
+    if (seen_.size() >= MaxSeen) seen_.erase(seen_.begin());
+    seen_.emplace_back(proof);
+    return true;
+  }
+
+ private:
+  static constexpr size_t MaxSeen = 256;  // people tapping Join: far more than a launch sees
+  std::vector<std::string> seen_;
+};
 
 // ---- What a phone's state becomes on an SDL gamepad ----
 
@@ -390,20 +513,107 @@ inline bool IsLanIPv4(uint32_t a) {
          (a >> 16) == 0xA9FE || (a >> 22) == (0x64400000u >> 22);
 }
 
-inline bool IsLanIPv6(const std::array<uint8_t, 16> &a) {
+// An address as 16 bytes; IPv4 as IPv4-mapped IPv6 (::ffff:a.b.c.d).
+using Address = std::array<uint8_t, 16>;
+
+inline Address MappedIPv4(uint32_t a) {
+  return {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, uint8_t(a >> 24), uint8_t(a >> 16), uint8_t(a >> 8), uint8_t(a)};
+}
+
+inline bool IsMappedIPv4(const Address &a) {
   static constexpr std::array<uint8_t, 12> kMapped = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff};
-  if (std::equal(kMapped.begin(), kMapped.end(), a.begin()))
+  return std::equal(kMapped.begin(), kMapped.end(), a.begin());
+}
+
+inline bool IsLanIPv6(const Address &a) {
+  if (IsMappedIPv4(a))
     return IsLanIPv4((uint32_t(a[12]) << 24) | (uint32_t(a[13]) << 16) | (uint32_t(a[14]) << 8) | a[15]);
   const bool loopback = std::all_of(a.begin(), a.begin() + 15, [](uint8_t b) { return b == 0; }) && a[15] == 1;
   return loopback || (a[0] & 0xFE) == 0xFC || (a[0] == 0xFE && (a[1] & 0xC0) == 0x80);
 }
 
+// A subnet one of the Mac's interfaces is on (an IPv4 one as mapped addresses).
+struct Subnet {
+  Address address{}, mask{};
+};
+
+inline int PrefixLength(const Address &mask) {
+  int bits = 0;
+  for (uint8_t byte : mask) {
+    for (int bit = 7; bit >= 0 && ((byte >> bit) & 1); --bit) ++bits;
+    if (byte != 0xff) break;
+  }
+  return bits;
+}
+
+// Also anyone on a subnet the Mac itself is on, whatever its addresses (many
+// campus networks hand out public ones). A short prefix (a default route's /0,
+// say) isn't one network: at least /8 for IPv4 and /32 for IPv6.
+inline bool OnNetwork(const Address &peer, const std::vector<Subnet> &subnets) {
+  if (IsLanIPv6(peer)) return true;
+  for (const Subnet &subnet : subnets) {
+    const bool v4 = IsMappedIPv4(subnet.address);
+    if (v4 != IsMappedIPv4(peer) || PrefixLength(subnet.mask) < (v4 ? 96 + 8 : 32)) continue;
+    bool same = true;
+    for (size_t i = 0; i < peer.size(); ++i) same &= ((peer[i] ^ subnet.address[i]) & subnet.mask[i]) == 0;
+    if (same) return true;
+  }
+  return false;
+}
+
+// How good one of the Mac's IPv4 addresses is for the code (0: not at all):
+// Wi-Fi or Ethernet (en*) before other interfaces (Internet Sharing's bridge),
+// and on each, shared (CGNAT) then link-local addresses last. Never VPN tunnels
+// (point to point), AirDrop's link or loopback.
+inline int AddressRank(std::string_view name, uint32_t a, bool pointToPoint) {
+  const auto named = [&](std::string_view prefix) { return name.substr(0, prefix.size()) == prefix; };
+  if (pointToPoint || (a >> 24) == 0 || (a >> 24) == 127 || (a >> 28) >= 0xE) return 0;
+  for (std::string_view tunnel : {"utun", "ipsec", "ppp", "awdl", "llw", "gif", "stf", "anpi"})
+    if (named(tunnel)) return 0;
+  const int kind = (a >> 16) == 0xA9FE ? 0 : (a >> 22) == (0x64400000u >> 22) ? 1 : 2;
+  return 1 + kind * 2 + (named("en") ? 1 : 0);
+}
+
+// Connections that haven't yet proved they have this launch's key (page loads,
+// and sockets before their join or signal): at most MaxWaitingPerPeer from one
+// address and MaxWaiting in all, the oldest closing to make room, so no one on
+// the network keeps phones out by holding sockets open. Phones that have proved
+// it don't count, so a phone joining or coming back always gets in.
+inline constexpr size_t MaxWaitingPerPeer = 4, MaxWaiting = 32;
+// WebRTC links that have proved it but haven't opened yet.
+inline constexpr size_t MaxLinking = 8;
+
+struct Waiting {
+  std::string peer;
+  uint64_t openedAt = 0;
+};
+
+// Which waiting connection to close before taking one more from peer, or -1.
+inline int WaitingToDrop(const std::vector<Waiting> &waiting, std::string_view peer) {
+  int oldest = -1, oldestOfPeer = -1;
+  size_t ofPeer = 0;
+  for (int i = 0; i < static_cast<int>(waiting.size()); ++i) {
+    if (oldest < 0 || waiting[i].openedAt < waiting[oldest].openedAt) oldest = i;
+    if (waiting[i].peer != peer) continue;
+    ++ofPeer;
+    if (oldestOfPeer < 0 || waiting[i].openedAt < waiting[oldestOfPeer].openedAt) oldestOfPeer = i;
+  }
+  if (ofPeer >= MaxWaitingPerPeer) return oldestOfPeer;
+  return waiting.size() >= MaxWaiting ? oldest : -1;
+}
+
 // ---- Messages to the phone (JSON text) ----
 
+// KartPad's first message on a WebSocket: its protocol version, and the nonce a
+// join proves (Joining, above).
+inline std::string HelloMessage(std::string_view nonce) {
+  return "{\"t\":\"hello\",\"v\":" + std::to_string(ProtocolVersion) + ",\"nonce\":\"" + std::string(nonce) + "\"}";
+}
 // Player is 1-4, or 0 while the phone has no player (every player taken).
-inline std::string WelcomeMessage(int phone, int player, std::string_view token) {
+// Resumed: the phone is back within HoldMs and kept its pad.
+inline std::string WelcomeMessage(int phone, int player, bool resumed) {
   return "{\"t\":\"welcome\",\"phone\":" + std::to_string(phone) + ",\"player\":" + std::to_string(player) +
-         ",\"token\":\"" + std::string(token) + "\"}";
+         ",\"resumed\":" + (resumed ? "true" : "false") + "}";
 }
 inline std::string PlayerMessage(int player) { return "{\"t\":\"player\",\"player\":" + std::to_string(player) + "}"; }
 inline std::string ColorMessage(uint8_t r, uint8_t g, uint8_t b) {
@@ -424,29 +634,36 @@ inline std::string RaceMessage(RaceView view) {
   return std::string("{\"t\":\"race\",\"view\":\"") + RaceViewNames[static_cast<int>(view)] + "\"}";
 }
 // Why a phone is sent away: "full", "replaced" (the same phone connected
-// again), "left", "removed" (from the Mac), "expired" or "closed" (KartPad is quitting).
+// again), "left", "removed" (from the Mac), "expired" (its link is from an
+// earlier launch of KartPad: the key doesn't match), "version" (the page and
+// KartPad differ; KartPad's hello says its version) or "closed" (KartPad is
+// quitting).
 inline std::string ByeMessage(std::string_view reason) { return "{\"t\":\"bye\",\"reason\":\"" + std::string(reason) + "\"}"; }
 
 // ---- Phone sessions ----
 
 inline constexpr int MaxPhones = 4;
-inline constexpr size_t MaxConnections = 8;
 inline constexpr uint64_t IdleNeutralMs = 1000;  // no message for this long: let go of everything
 inline constexpr uint64_t HoldMs = 60000;        // a dropped phone keeps its pad and player this long
+// A state message older than the last one taken (by seq) is dropped, unless the
+// last one was this long ago (after a long gap, seq may have wrapped).
+inline constexpr uint64_t ReorderMs = 250;
 
 struct Session {
   bool used = false;
   bool connected = false;
   bool idle = false;  // input let go after IdleNeutralMs
-  std::string token;
-  uint64_t lastMessage = 0, disconnectedAt = 0;
+  std::string phone;  // the page's id for itself
+  uint64_t lastMessage = 0, disconnectedAt = 0, lastState = 0;
   PadState state;
+  bool counting = false;  // seq is the last state message's: since this link joined
+  uint8_t seq = 0;
   uint16_t delayMs = 0;  // as the phone last reported it; 0 before its first report
 };
 
 // Up to four phones, by index: phone i is shown as "Phone i+1" and keeps its
-// index while it reconnects with its token. Times are milliseconds from any
-// steady clock.
+// index while it reconnects with its id. Times are milliseconds from any steady
+// clock.
 class Sessions {
  public:
   struct Joined {
@@ -455,10 +672,12 @@ class Sessions {
     bool replaced = false;  // the session was still connected: drop that connection
   };
 
-  Joined Join(std::string_view token, const std::string &newToken, uint64_t now) {
+  // The session starts with nothing pressed, whatever the last link held: the
+  // caller lets go of the pad too.
+  Joined Join(std::string_view phone, uint64_t now) {
     Joined joined;
-    for (int i = 0; i < MaxPhones && !token.empty(); ++i) {
-      if (sessions_[i].used && SameSecret(sessions_[i].token, token)) {
+    for (int i = 0; i < MaxPhones && !phone.empty(); ++i) {
+      if (sessions_[i].used && sessions_[i].phone == phone) {
         joined = {i, true, sessions_[i].connected};
         break;
       }
@@ -469,7 +688,7 @@ class Sessions {
           joined.index = i;
           sessions_[i] = {};
           sessions_[i].used = true;
-          sessions_[i].token = newToken;
+          sessions_[i].phone = phone;
           break;
         }
       }
@@ -480,13 +699,20 @@ class Sessions {
     s.idle = false;
     s.lastMessage = now;
     s.state = {};
+    s.counting = false;
     return joined;
   }
 
-  // A state message. Returns whether the pad's input changed.
-  bool Update(int index, const PadState &state, uint64_t now) {
+  // A state message. Returns whether the pad's input changed: never for one that
+  // isn't newer (by seq, wrapping) than the last taken, WebRTC input being
+  // unordered and sent more than once.
+  bool Update(int index, uint8_t seq, const PadState &state, uint64_t now) {
     Session &s = sessions_[index];
     s.lastMessage = now;
+    if (s.counting && static_cast<int8_t>(seq - s.seq) <= 0 && now - s.lastState < ReorderMs) return false;
+    s.counting = true;
+    s.seq = seq;
+    s.lastState = now;
     const bool changed = s.idle || !(s.state == state);
     s.idle = false;
     s.state = state;

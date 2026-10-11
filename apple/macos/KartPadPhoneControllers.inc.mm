@@ -3,16 +3,19 @@
 // "Phone 1"–"Phone 4", which players, joining, toasts and the Controllers screen treat like any other
 // controller. The server runs from the first time it's wanted until KartPad quits, with a new link
 // each launch. A phone connects one of two ways:
-// - With tilt: the code opens the controller page over HTTPS (web/phone, on GitHub Pages), where the
-//   browser lets it read the phone's motion. That page can't reach this Mac's plain-HTTP address, so
-//   it opens this server's helper page (/link) in a second tab, which passes its WebRTC offer here
-//   (/signal) and the answer back, then closes. The phone then talks to the Mac directly over two
-//   WebRTC data channels (libdatachannel): "pad" (unordered, no resends) for input and pings, and
-//   "control" (reliable) for everything else.
-// - Touch only, offline: the code opens the page this server serves itself (KartPadPhonePage.inc.mm),
-//   which joins over a WebSocket.
-// The protocol itself is in kartpad/network/phone_pad.h. Network work runs on its own queue, which
-// also sets the virtual pads' buttons and axes (SDL's joystick lock makes that safe from there).
+// - With tilt, when the build says where web/phone is published over HTTPS (KARTPAD_PHONE_PAGE_URL,
+//   cmake/KartPadPhoneLink.cmake): the code opens that page, where the browser lets it read the
+//   phone's motion. It can't reach this Mac's plain-HTTP address, so it opens this server's helper
+//   page (/link) in a second tab, which passes its signed WebRTC offer here (/signal) and the answer
+//   back, then closes. The phone then talks to the Mac directly over two WebRTC data channels
+//   (libdatachannel): "pad" (unordered, no resends) for input and pings, and "control" (reliable)
+//   for everything else.
+// - Touch only, offline, and the only way without a published page: the code opens the page this
+//   server serves itself (KartPadPhonePage.inc.mm), which joins over a WebSocket.
+// Either way the phone proves it has this launch's key, which only the code carries, without sending
+// it (phone_pad.h, "Joining"). The protocol itself is in kartpad/network/phone_pad.h. Network work
+// runs on its own queue, which also sets the virtual pads' buttons and axes (SDL's joystick lock
+// makes that safe from there).
 // Attaching and detaching pads and choosing their players happen on the main thread, as the rest
 // of the roster does. Each phone is also told what its player is doing (the menus, the start of a
 // race, the race), read from the game's memory on the game loop (kartpad/network/phone_race.h), so
@@ -52,7 +55,7 @@ static_assert(kpp::sdl::LeftX == SDL_GAMEPAD_AXIS_LEFTX && kpp::sdl::LeftY == SD
               "phone_pad's SDL axis numbers");
 
 static constexpr const char *KPPhonePreferredPort = "47800";
-static constexpr uint64_t KPPhoneRequestDeadlineMs = 5000;  // a connection that hasn't asked for anything
+static constexpr uint64_t KPPhoneRequestDeadlineMs = 5000;  // a connection that hasn't asked for anything or joined
 static constexpr uint64_t KPPhoneSilenceMs = 5000;          // a phone that has stopped sending (it sends every 50 ms)
 // A WebRTC phone goes quiet when its screen locks, and its link can outlast a short lock, which saves
 // a tap on Reconnect (coming back needs the helper tab again). Its buttons are let go after a second.
@@ -81,19 +84,24 @@ static dispatch_queue_t KPPhoneQueue() {
 // one phone's WebRTC link.
 struct KPPhoneLink {
   nw_connection_t connection;  // nil for a WebRTC link
+  std::string from;            // the peer's address, for phone_pad's limits on waiting connections
   std::string buffer;
   bool upgraded = false;
   bool signal = false;    // the helper page's socket: one WebRTC offer in, its answer out
+  bool proven = false;    // it proved it has this launch's key (a join or a signal)
   bool answered = false;  // nothing more is read: a response or a goodbye is on its way out
   bool closed = false;
   int phone = -1;         // the session it drives, once joined
   uint64_t openedAt = 0, lastHeard = 0;
-  // A WebRTC link: libdatachannel's peer connection and channels, its key in KPPhoneRtcLinks, the
-  // phone's resume token until it joins, and the helper's socket waiting for the answer.
+  std::string nonce;      // a WebSocket's, from its hello, for the join's proof
+  // A WebRTC link: libdatachannel's peer connection, the "pad" and "control" channels, every
+  // channel the phone opened (each to delete), its key in KPPhoneRtcLinks, the phone's id until it
+  // joins, and the helper's socket waiting for the answer.
   int peer = 0, pad = 0, control = 0;
+  std::vector<int> channels;
   uintptr_t serial = 0;
   bool joined = false;
-  std::string token;
+  std::string phoneId;
   std::weak_ptr<KPPhoneLink> signalLink;
 };
 using KPPhoneLinkRef = std::shared_ptr<KPPhoneLink>;
@@ -103,6 +111,7 @@ static nw_listener_t KPPhoneListener;
 static dispatch_source_t KPPhoneTimer;
 static std::string KPPhoneKey;
 static kpp::Sessions KPPhoneSessions;
+static kpp::Replays KPPhoneReplays;
 static std::vector<KPPhoneLinkRef> KPPhoneLinks;
 static std::array<KPPhoneLinkRef, kpp::MaxPhones> KPPhoneDriver;  // the connection each phone plays through
 static std::array<bool, kpp::MaxPhones> KPPhoneRumbling{};
@@ -158,11 +167,12 @@ static void KPPhoneClose(const KPPhoneLinkRef &link) {
       KPPhoneSendText(helper, "error:no connection");
       KPPhoneFinish(helper);
     }
-    // libdatachannel waits for callbacks in flight; those only queue work here, so this can't block.
-    for (int channel : {link->pad, link->control})
-      if (channel) rtcDeleteDataChannel(channel);
+    // Every channel, as deleting the peer connection doesn't delete them. libdatachannel waits for
+    // callbacks in flight; those only queue work here, so this can't block.
+    for (int channel : link->channels) rtcDeleteDataChannel(channel);
     rtcDeletePeerConnection(link->peer);
     link->peer = link->pad = link->control = 0;
+    link->channels.clear();
     KPPhoneRtcLinks.erase(link->serial);
   } else {
     nw_connection_cancel(link->connection);
@@ -274,9 +284,11 @@ static void KPPhoneLetGo(const KPPhoneLinkRef &link, int phone, std::string_view
   dispatch_async(dispatch_get_main_queue(), ^{ [KPPhoneServer.shared removePhone:phone]; });
 }
 
-static void KPPhoneJoin(const KPPhoneLinkRef &link, const std::string &token) {
+// The phone proved it has this launch's key (a join on its WebSocket, or the signal before its WebRTC
+// link opened): its session, then its pad and a player (on the main thread), then the welcome.
+static void KPPhoneJoin(const KPPhoneLinkRef &link, const std::string &phoneId) {
   link->joined = true;
-  const kpp::Sessions::Joined joined = KPPhoneSessions.Join(token, KPPhoneRandomHex(16), KPPhoneNow());
+  const kpp::Sessions::Joined joined = KPPhoneSessions.Join(phoneId, KPPhoneNow());
   if (joined.index < 0) {
     KPPhoneSendAway(link, "full");
     return;
@@ -291,18 +303,36 @@ static void KPPhoneJoin(const KPPhoneLinkRef &link, const std::string &token) {
   KPPhoneRumbling[phone] = false;
   KPPhoneToldView[phone] = -1;
   KPPhoneLinked[phone] = true;
-  const std::string token_ = KPPhoneSessions[phone].token;
+  // The session starts with nothing pressed, and so does the pad, whatever the old link was holding.
+  KPPhoneApply(phone, {});
+  const bool resumed = joined.resumed;
   KPPhoneLinkRef keep = link;
   dispatch_async(dispatch_get_main_queue(), ^{
     [KPPhoneServer.shared seatPhone:phone then:^(int slot) {
       dispatch_async(KPPhoneQueue(), ^{
         if (KPPhoneDriver[phone] != keep) return;
-        KPPhoneSendText(keep, kpp::WelcomeMessage(phone + 1, slot + 1, token_));
+        KPPhoneSendText(keep, kpp::WelcomeMessage(phone + 1, slot + 1, resumed));
         if (slot >= 0) KPPhoneSendText(keep, KPPhoneColorMessage(slot));
         KPPhoneTellView(phone, true);
       });
     }];
   });
+}
+
+// A WebSocket's first message: the join, proving the key with the nonce of this socket's hello.
+static void KPPhoneJoinRequest(const KPPhoneLinkRef &link, const std::string &text) {
+  const int version = kpp::MessageVersion(text, "join");
+  kpp::Join join;
+  if (version >= 0 && version != kpp::ProtocolVersion) {
+    KPPhoneSendAway(link, "version");
+  } else if (version < 0 || !kpp::ParseJoin(text, "join", join)) {
+    KPPhoneClose(link);
+  } else if (!kpp::Proves(KPPhoneKey, kpp::JoinProven(join, link->nonce), join.proof)) {
+    KPPhoneSendAway(link, "expired");  // a link from an earlier launch, with its key
+  } else {
+    link->proven = true;
+    KPPhoneJoin(link, join.phone);
+  }
 }
 
 // A binary message from a phone; channel is the WebRTC channel it came on.
@@ -324,7 +354,7 @@ static void KPPhoneMessage(const KPPhoneLinkRef &link, const std::string &payloa
     KPPhoneDelays[phone] = message.delayMs;
     return;
   }
-  if (KPPhoneSessions.Update(phone, message.state, KPPhoneNow())) KPPhoneApply(phone, message.state);
+  if (KPPhoneSessions.Update(phone, message.seq, message.state, KPPhoneNow())) KPPhoneApply(phone, message.state);
 }
 
 static void KPPhoneSignal(const KPPhoneLinkRef &signalLink, const std::string &text);
@@ -343,9 +373,11 @@ static void KPPhoneReadFrames(const KPPhoneLinkRef &link) {
     link->buffer.erase(0, consumed);
     link->lastHeard = KPPhoneNow();
     if (frame.opcode == kpp::Binary) {
-      KPPhoneMessage(link, frame.payload);
-    } else if (frame.opcode == kpp::Text && link->signal) {
-      KPPhoneSignal(link, frame.payload);
+      if (link->proven) KPPhoneMessage(link, frame.payload);
+      else KPPhoneClose(link);  // input before joining
+    } else if (frame.opcode == kpp::Text && !link->proven) {
+      if (link->signal) KPPhoneSignal(link, frame.payload);
+      else KPPhoneJoinRequest(link, frame.payload);
     } else if (frame.opcode == kpp::Ping) {
       KPPhoneSend(link, kpp::WriteFrame(kpp::Pong, frame.payload));
     } else if (frame.opcode == kpp::Close) {
@@ -369,16 +401,17 @@ static void KPPhoneServeRequest(const KPPhoneLinkRef &link) {
   if (request.path == "/ws" || request.path == "/signal") {
     if (!kpp::IsWebSocketUpgrade(request)) {
       KPPhoneRespond(link, 400, "Bad Request", "text/plain", "Bad request");
-    } else if (!kpp::OriginMatchesHost(request.origin, request.host) ||
-               !kpp::SameSecret(kpp::QueryValue(request.query, "k"), KPPhoneKey)) {
-      // Another page, or a link from an earlier launch of KartPad.
+    } else if (!kpp::OriginMatchesHost(request.origin, request.host)) {
+      // Another page: only the ones served here open these.
       KPPhoneRespond(link, 403, "Forbidden", "text/plain", "Scan the code in KartPad again.");
     } else {
+      // The key is checked by what comes next: a join proving it with this hello's nonce, or a signal.
       KPPhoneSend(link, kpp::UpgradeResponse(request.webSocketKey));
       link->upgraded = true;
+      link->signal = request.path == "/signal";
       link->lastHeard = KPPhoneNow();
-      if (request.path == "/signal") link->signal = true;
-      else KPPhoneJoin(link, kpp::QueryValue(request.query, "t"));
+      link->nonce = KPPhoneRandomHex(16);
+      KPPhoneSendText(link, kpp::HelloMessage(link->nonce));
       KPPhoneReadFrames(link);
     }
   } else if (request.method == "GET" && request.path == "/") {
@@ -419,27 +452,75 @@ static void KPPhoneReceive(const KPPhoneLinkRef &link) {
   });
 }
 
-static bool KPPhonePeerOnNetwork(nw_connection_t connection) {
-  nw_endpoint_t remote = nw_connection_copy_endpoint(connection);
-  if (remote == nil || nw_endpoint_get_type(remote) != nw_endpoint_type_address) return false;
-  const sockaddr *address = nw_endpoint_get_address(remote);
-  if (address == nullptr) return false;
-  if (address->sa_family == AF_INET)
-    return kpp::IsLanIPv4(ntohl(reinterpret_cast<const sockaddr_in *>(address)->sin_addr.s_addr));
-  if (address->sa_family == AF_INET6) {
-    std::array<uint8_t, 16> bytes;
-    memcpy(bytes.data(), &reinterpret_cast<const sockaddr_in6 *>(address)->sin6_addr, bytes.size());
-    return kpp::IsLanIPv6(bytes);
+// An address as phone_pad has them (IPv4 mapped into IPv6).
+static kpp::Address KPPhoneAddressOf(const sockaddr *address) {
+  kpp::Address out{};
+  if (address->sa_family == AF_INET) out = kpp::MappedIPv4(ntohl(reinterpret_cast<const sockaddr_in *>(address)->sin_addr.s_addr));
+  else if (address->sa_family == AF_INET6) memcpy(out.data(), &reinterpret_cast<const sockaddr_in6 *>(address)->sin6_addr, out.size());
+  return out;
+}
+
+static std::string KPPhoneAddressText(const kpp::Address &address) {
+  char text[INET6_ADDRSTRLEN] = {};
+  if (kpp::IsMappedIPv4(address)) inet_ntop(AF_INET, address.data() + 12, text, sizeof text);
+  else inet_ntop(AF_INET6, address.data(), text, sizeof text);
+  return text;
+}
+
+// The subnets this Mac's interfaces are on, but not loopback or tunnels (point to point), for
+// phone_pad's OnNetwork. A netmask's sockaddr can leave out its trailing zero bytes (sa_len).
+static std::vector<kpp::Subnet> KPPhoneSubnets() {
+  std::vector<kpp::Subnet> subnets;
+  ifaddrs *list = nullptr;
+  if (getifaddrs(&list) != 0) return subnets;
+  for (ifaddrs *entry = list; entry; entry = entry->ifa_next) {
+    const sockaddr *address = entry->ifa_addr, *mask = entry->ifa_netmask;
+    if (address == nullptr || mask == nullptr || !(entry->ifa_flags & IFF_UP) ||
+        (entry->ifa_flags & (IFF_LOOPBACK | IFF_POINTOPOINT)) ||
+        (address->sa_family != AF_INET && address->sa_family != AF_INET6))
+      continue;
+    const bool v4 = address->sa_family == AF_INET;
+    const size_t at = v4 ? offsetof(sockaddr_in, sin_addr) : offsetof(sockaddr_in6, sin6_addr), size = v4 ? 4 : 16;
+    kpp::Subnet subnet;
+    subnet.address = KPPhoneAddressOf(address);
+    if (v4) std::fill(subnet.mask.begin(), subnet.mask.begin() + 12, 0xff);
+    if (mask->sa_len > at)
+      memcpy(subnet.mask.data() + 16 - size, reinterpret_cast<const uint8_t *>(mask) + at, std::min<size_t>(size, mask->sa_len - at));
+    subnets.push_back(subnet);
   }
-  return false;
+  freeifaddrs(list);
+  return subnets;
+}
+
+// phone_pad's limits on connections that haven't proved the key yet: the oldest go to make room.
+static void KPPhoneMakeRoom(const std::string &from) {
+  while (true) {
+    std::vector<KPPhoneLinkRef> links;
+    std::vector<kpp::Waiting> waiting;
+    for (const KPPhoneLinkRef &link : KPPhoneLinks) {
+      if (link->peer || link->proven || link->closed) continue;
+      links.push_back(link);
+      waiting.push_back({link->from, link->openedAt});
+    }
+    const int drop = kpp::WaitingToDrop(waiting, from);
+    if (drop < 0) return;
+    KPPhoneClose(links[drop]);
+  }
 }
 
 static void KPPhoneAccept(nw_connection_t connection) {
-  if (!KPPhonePeerOnNetwork(connection) || KPPhoneLinks.size() >= kpp::MaxConnections) {
+  nw_endpoint_t remote = nw_connection_copy_endpoint(connection);
+  const sockaddr *address =
+      remote && nw_endpoint_get_type(remote) == nw_endpoint_type_address ? nw_endpoint_get_address(remote) : nullptr;
+  const kpp::Address peer = address ? KPPhoneAddressOf(address) : kpp::Address{};
+  if (address == nullptr || (address->sa_family != AF_INET && address->sa_family != AF_INET6) ||
+      !kpp::OnNetwork(peer, KPPhoneSubnets())) {
     nw_connection_cancel(connection);
     return;
   }
   auto link = std::make_shared<KPPhoneLink>();
+  link->from = KPPhoneAddressText(peer);
+  KPPhoneMakeRoom(link->from);
   link->connection = connection;
   link->openedAt = KPPhoneNow();
   KPPhoneLinks.push_back(link);
@@ -455,7 +536,7 @@ static void KPPhoneAccept(nw_connection_t connection) {
 }
 
 // Every 100 ms: let go of a quiet phone's buttons, remove pads whose phone didn't come back, close
-// connections that stopped talking, and tell phones what their players are doing.
+// connections that stopped talking or never joined, and tell phones what their players are doing.
 static void KPPhoneTick() {
   const uint64_t now = KPPhoneNow();
   const kpp::Sessions::Changes changes = KPPhoneSessions.Advance(now);
@@ -468,8 +549,8 @@ static void KPPhoneTick() {
     if (link->answered) continue;
     bool quiet;
     if (link->peer) quiet = link->joined ? now - link->lastHeard > KPPhoneRtcSilenceMs : now - link->openedAt > KPPhoneJoinDeadlineMs;
-    else if (link->upgraded) quiet = now - link->lastHeard > KPPhoneSilenceMs;
-    else quiet = now - link->openedAt > KPPhoneRequestDeadlineMs;
+    else if (!link->proven) quiet = now - link->openedAt > KPPhoneRequestDeadlineMs;
+    else quiet = now - link->lastHeard > KPPhoneSilenceMs;
     if (quiet) KPPhoneClose(link);
   }
 }
@@ -519,12 +600,23 @@ static std::string KPPhoneChannelName(int channel) {
   return rtcGetDataChannelLabel(channel, label, sizeof label) > 0 ? std::string(label) : std::string();
 }
 
-// A channel opened. The control channel's opening is when the phone joins.
+static void KPPhoneRtcDrop(const KPPhoneLinkRef &link, int channel) {
+  std::erase(link->channels, channel);
+  rtcDeleteDataChannel(channel);
+}
+
+// A channel opened: the page's "pad" or "control" (whose opening is when the phone joins); any other,
+// or a second of one, goes.
 static void KPPhoneRtcOpened(const KPPhoneLinkRef &link, int channel, const std::string &name) {
-  if (name == "pad") link->pad = channel;
-  else if (name == "control") link->control = channel;
+  int *slot = name == "pad" ? &link->pad : name == "control" ? &link->control : nullptr;
+  if (slot && *slot == channel) return;
+  if (slot == nullptr || *slot) {
+    KPPhoneRtcDrop(link, channel);
+    return;
+  }
+  *slot = channel;
   link->lastHeard = KPPhoneNow();
-  if (name == "control" && !link->joined) KPPhoneJoin(link, link->token);
+  if (slot == &link->control && !link->joined) KPPhoneJoin(link, link->phoneId);
 }
 
 // libdatachannel's callbacks, on its threads: copy what's needed and carry on on the phone queue.
@@ -535,13 +627,17 @@ static void RTC_API KPPhoneRtcGathering(int peer, rtcGatheringState state, void 
   dispatch_async(KPPhoneQueue(), ^{
     const KPPhoneLinkRef link = KPPhoneRtcLink(serial);
     if (link == nullptr) return;
-    // With every candidate gathered, the answer is complete: back through the helper page.
+    // With every candidate gathered, the answer is complete: back through the helper page, which
+    // has nothing more to wait for.
     std::vector<char> sdp(kpp::MaxSignalPayload);
     const int size = rtcGetLocalDescription(link->peer, sdp.data(), static_cast<int>(sdp.size()));
     const KPPhoneLinkRef helper = link->signalLink.lock();
-    if (helper == nullptr || helper->closed) return;
-    KPPhoneSendText(helper, size > 0 ? std::string(sdp.data()) : std::string("error:no answer"));
-    KPPhoneFinish(helper);
+    link->signalLink.reset();
+    if (helper && !helper->closed) {
+      KPPhoneSendText(helper, size > 0 ? std::string(sdp.data()) : std::string("error:no answer"));
+      KPPhoneFinish(helper);
+    }
+    if (size <= 0) KPPhoneClose(link);
   });
 }
 
@@ -568,7 +664,9 @@ static void RTC_API KPPhoneRtcClosed(int channel, void *pointer) {
   const auto serial = reinterpret_cast<uintptr_t>(pointer);
   dispatch_async(KPPhoneQueue(), ^{
     const KPPhoneLinkRef link = KPPhoneRtcLink(serial);
-    if (link && channel == link->control) KPPhoneClose(link);
+    if (link == nullptr) return;
+    if (channel == link->control || channel == link->pad) KPPhoneClose(link);
+    else if (std::find(link->channels.begin(), link->channels.end(), channel) != link->channels.end()) KPPhoneRtcDrop(link, channel);
   });
 }
 
@@ -586,37 +684,49 @@ static void RTC_API KPPhoneRtcMessage(int channel, const char *message, int size
 
 static void RTC_API KPPhoneRtcChannel(int peer, int channel, void *pointer) {
   (void)peer;
+  const auto serial = reinterpret_cast<uintptr_t>(pointer);
+  // Every channel the phone makes is the link's to delete (deleting the peer connection doesn't), or
+  // goes at once if the link has. Queued before its opening below.
+  dispatch_async(KPPhoneQueue(), ^{
+    if (const KPPhoneLinkRef link = KPPhoneRtcLink(serial)) link->channels.push_back(channel);
+    else rtcDeleteDataChannel(channel);
+  });
   rtcSetUserPointer(channel, pointer);
+  // A channel the phone made is usually open by the time it's announced: libdatachannel then calls
+  // its open callback as soon as it's set.
   rtcSetOpenCallback(channel, KPPhoneRtcOpen);
   rtcSetClosedCallback(channel, KPPhoneRtcClosed);
   rtcSetMessageCallback(channel, KPPhoneRtcMessage);
-  // A channel the phone made is usually open by the time it's announced.
-  if (rtcIsOpen(channel)) KPPhoneRtcOpen(channel, pointer);
 }
 
-// The helper page's offer: a WebRTC link for the phone, whose answer goes back the same way
-// (KPPhoneRtcGathering). Host candidates only: no STUN or relay servers, so the link stays on this
-// network or doesn't happen.
+// The helper page's signal: once it proves the key, a WebRTC link for the phone, whose answer goes
+// back the same way (KPPhoneRtcGathering). Host candidates only: no STUN or relay servers, so the
+// link stays on this network or doesn't happen. A refusal says why once, as "error:" and a word.
 static void KPPhoneSignal(const KPPhoneLinkRef &signalLink, const std::string &text) {
-  kpp::Signal signal;
-  const bool parsed = kpp::ParseSignal(text, signal);
-  if (!parsed || KPPhoneLinks.size() >= kpp::MaxConnections) {
-    KPPhoneSendText(signalLink, parsed ? "error:busy" : "error:bad offer");
+  const auto refuse = [&](const char *why) {
+    KPPhoneSendText(signalLink, std::string("error:") + why);
     KPPhoneFinish(signalLink);
-    return;
-  }
-  signalLink->answered = true;  // one offer per socket
+  };
+  const int version = kpp::MessageVersion(text, "signal");
+  kpp::Join signal;
+  if (version >= 0 && version != kpp::ProtocolVersion) return refuse("version");
+  if (version < 0 || !kpp::ParseJoin(text, "signal", signal)) return refuse("bad offer");
+  if (!kpp::Proves(KPPhoneKey, kpp::SignalProven(signal), signal.proof)) return refuse("expired");
+  if (!KPPhoneReplays.Fresh(signal.proof)) return refuse("used");
+  signalLink->proven = true;
+  const auto linking = std::count_if(KPPhoneLinks.begin(), KPPhoneLinks.end(),
+                                     [](const KPPhoneLinkRef &link) { return link->peer && !link->joined; });
+  if (static_cast<size_t>(linking) >= kpp::MaxLinking) return refuse("busy");
   rtcConfiguration config{};
   const int peer = rtcCreatePeerConnection(&config);
-  if (peer < 0) {
-    KPPhoneSendText(signalLink, "error:no webrtc");
-    KPPhoneFinish(signalLink);
-    return;
-  }
+  if (peer < 0) return refuse("no webrtc");
+  signalLink->answered = true;  // one offer per socket
   auto link = std::make_shared<KPPhoneLink>();
   link->peer = peer;
+  link->proven = true;
+  link->from = signalLink->from;
   link->serial = ++KPPhoneNextSerial;
-  link->token = signal.token;
+  link->phoneId = signal.phone;
   link->openedAt = link->lastHeard = KPPhoneNow();
   link->signalLink = signalLink;
   KPPhoneLinks.push_back(link);
@@ -627,9 +737,9 @@ static void KPPhoneSignal(const KPPhoneLinkRef &signalLink, const std::string &t
   rtcSetGatheringStateChangeCallback(peer, KPPhoneRtcGathering);
   rtcSetDataChannelCallback(peer, KPPhoneRtcChannel);
   if (rtcSetRemoteDescription(peer, signal.offer.c_str(), "offer") < 0) {
-    KPPhoneSendText(signalLink, "error:bad offer");
-    KPPhoneFinish(signalLink);
+    link->signalLink.reset();  // told here, not again as the link closes
     KPPhoneClose(link);
+    refuse("bad offer");
   }
 }
 
@@ -646,6 +756,44 @@ static bool SDLCALL KPPhoneRumble(void *userdata, Uint16 low, Uint16 high) {
     KPPhoneRumbling[phone] = on;
     if (const KPPhoneLinkRef &link = KPPhoneDriver[phone]) KPPhoneSendText(link, kpp::RumbleMessage(on));
   });
+  return true;
+}
+
+// KartPad is quitting: tell every phone ("closed", so its page says so instead of reconnecting), and
+// give the goodbyes a moment to leave. Waits a third of a second at most.
+static void KPPhoneSayGoodbye() {
+  static std::atomic<bool> said{false};
+  if (!KPPhoneStarted.load() || said.exchange(true)) return;
+  dispatch_semaphore_t gone = dispatch_semaphore_create(0);
+  dispatch_async(KPPhoneQueue(), ^{
+    dispatch_group_t sent = dispatch_group_create();
+    bool rtc = false;
+    for (const KPPhoneLinkRef &link : KPPhoneDriver) {
+      if (link == nullptr || link->closed) continue;
+      link->answered = true;
+      const std::string bye = kpp::ByeMessage("closed");
+      if (link->peer) {
+        KPPhoneSendText(link, bye);
+        rtc = true;
+      } else {
+        dispatch_group_enter(sent);
+        KPPhoneSend(link, kpp::WriteFrame(kpp::Text, bye), ^{ dispatch_group_leave(sent); });
+      }
+    }
+    // A WebRTC message is sent from libdatachannel's threads: a moment more for those.
+    dispatch_group_notify(sent, KPPhoneQueue(), ^{
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (rtc ? 50 : 0) * NSEC_PER_MSEC), KPPhoneQueue(),
+                     ^{ dispatch_semaphore_signal(gone); });
+    });
+  });
+  dispatch_semaphore_wait(gone, dispatch_time(DISPATCH_TIME_NOW, 300 * NSEC_PER_MSEC));
+}
+
+// Every way out of the game goes through SDL's quit (the window's close, Quit, restarting); AppKit's
+// is for quitting without a game window.
+static bool SDLCALL KPPhoneQuitWatch(void *userdata, SDL_Event *event) {
+  (void)userdata;
+  if (event->type == SDL_EVENT_QUIT) KPPhoneSayGoodbye();
   return true;
 }
 
@@ -673,11 +821,15 @@ static void KPPhoneRaceTick() {
 static BOOL KPPhoneOverlayActive();                // KartPadControllersScreen.inc.mm
 extern "C" bool KartPadControllersVisible();       // KartPadMacMiis.inc.mm
 
-// Where the HTTPS controller page is published (web/phone in this repository), overridable with
-// `defaults write dev.kartpad.app KartPadPhonePageURL <https URL>`; an empty value leaves phones
-// on the touch-only page.
+// Where the HTTPS controller page (web/phone in this repository) is published: the build's
+// KARTPAD_PHONE_PAGE_URL (cmake/KartPadPhoneLink.cmake, empty unless a build sets it), overridable with
+// `defaults write dev.kartpad.app KartPadPhonePageURL <https URL>`. With neither, or an empty value,
+// phones get the touch-only page this Mac serves, and tilt isn't offered.
+#ifndef KARTPAD_PHONE_PAGE_URL
+#define KARTPAD_PHONE_PAGE_URL ""
+#endif
 static NSString *const KPPhonePageURLKey = @"KartPadPhonePageURL";
-static NSString *const KPPhoneDefaultPageURL = @"https://seapancakes1.github.io/kartpad/pad/";
+static NSString *const KPPhoneDefaultPageURL = @KARTPAD_PHONE_PAGE_URL;
 
 static NSURL *KPPhonePageURL() {
   id value = [NSUserDefaults.standardUserDefaults objectForKey:KPPhonePageURLKey];
@@ -700,8 +852,8 @@ static std::string KPPhoneOrigin(NSURL *page) {
   return origin.lowercaseString.UTF8String;
 }
 
-// The address phones reach this Mac on: IPv4 on Wi-Fi or Ethernet first (en*), then any other
-// private one. Not VPN tunnels or AirDrop's link.
+// The address phones reach this Mac on, for the code: the best IPv4 one by phone_pad's AddressRank,
+// Wi-Fi or Ethernet first, public addresses included (phones on the same subnet may connect).
 static NSString *KPPhoneAddress() {
   ifaddrs *list = nullptr;
   if (getifaddrs(&list) != 0) return nil;
@@ -711,11 +863,7 @@ static NSString *KPPhoneAddress() {
     if (entry->ifa_addr == nullptr || entry->ifa_addr->sa_family != AF_INET) continue;
     if (!(entry->ifa_flags & IFF_UP) || !(entry->ifa_flags & IFF_RUNNING) || (entry->ifa_flags & IFF_LOOPBACK)) continue;
     const in_addr address = reinterpret_cast<const sockaddr_in *>(entry->ifa_addr)->sin_addr;
-    const uint32_t host = ntohl(address.s_addr);
-    if (!kpp::IsLanIPv4(host) || (host >> 24) == 127) continue;
-    const char *name = entry->ifa_name;
-    if (strncmp(name, "utun", 4) == 0 || strncmp(name, "awdl", 4) == 0 || strncmp(name, "llw", 3) == 0) continue;
-    const int rank = strncmp(name, "en", 2) == 0 ? ((host >> 16) == 0xA9FE ? 2 : 3) : 1;
+    const int rank = kpp::AddressRank(entry->ifa_name, ntohl(address.s_addr), entry->ifa_flags & IFF_POINTOPOINT);
     if (rank > bestRank) {
       char text[INET_ADDRSTRLEN];
       inet_ntop(AF_INET, &address, text, sizeof text);
@@ -795,6 +943,12 @@ static std::vector<bool> KPPhoneQRModules(NSString *text, int &size) {
   rtcInitLogger(RTC_LOG_WARNING, KPPhoneRtcLog);
   [KPControllerRoster.shared.listeners addObject:self];
   KPPhoneStarted = true;
+  SDL_AddEventWatch(KPPhoneQuitWatch, nullptr);
+  [NSNotificationCenter.defaultCenter addObserverForName:NSApplicationWillTerminateNotification object:nil queue:nil
+                                              usingBlock:^(NSNotification *note) {
+    (void)note;
+    KPPhoneSayGoodbye();
+  }];
   // While one of KartPad's screens has the controllers, phones show the menus' controls. (Screens that
   // pause the game stop the game loop, so this is looked at here.)
   _screenTimer = [NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *timer) {

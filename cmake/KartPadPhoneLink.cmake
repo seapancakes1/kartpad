@@ -3,9 +3,23 @@
 # statically. libdatachannel's own dependencies (libjuice, usrsctp, plog) are git submodules missing
 # from its release tarball, so each is fetched at the commit v0.24.6 pins and put where it expects.
 # Defines kartpad_phone_link, which the Mac products link. It also carries the controller page
-# (web/phone/index.html), so the Mac can serve it itself for the touch-only link.
+# (web/phone/index.html), so the Mac can serve it itself for the touch-only link, and says where the
+# same page is published over HTTPS for tilt (KARTPAD_PHONE_PAGE_URL).
+# The archives are also recorded in dependencies.lock.json.
 include_guard(GLOBAL)
 include(FetchContent)
+
+# Where web/phone/index.html is published over HTTPS, for steering by tilting (browsers only give
+# motion to such pages), e.g. https://example.github.io/kartpad/pad/. Empty (the default): the QR
+# code opens the touch-only page the Mac serves, and tilt isn't offered. docs/MULTIPLAYER.md says how
+# to publish it. The Mac products' shell source gets it as KARTPAD_PHONE_PAGE_URL
+# (runtime/cmake/PublicProducts.cmake), so changing it rebuilds only that.
+set(KARTPAD_PHONE_PAGE_URL "" CACHE STRING
+    "HTTPS address of the published phone controller page (web/phone/index.html), for tilt; empty for touch only")
+if(KARTPAD_PHONE_PAGE_URL AND NOT KARTPAD_PHONE_PAGE_URL MATCHES "^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~%/-]*)?$")
+    message(FATAL_ERROR "KARTPAD_PHONE_PAGE_URL must be an https:// address with no query or fragment: "
+        "${KARTPAD_PHONE_PAGE_URL}")
+endif()
 
 # Fetched only (SOURCE_SUBDIR names a folder that doesn't exist, so nothing is added yet).
 FetchContent_Declare(kartpad_mbedtls
@@ -80,7 +94,7 @@ kartpad_add_phone_link_dependencies()
 
 add_library(kartpad_phone_link INTERFACE)
 target_link_libraries(kartpad_phone_link INTERFACE LibDataChannel::LibDataChannelStatic)
-target_compile_definitions(kartpad_phone_link INTERFACE RTC_STATIC KARTPAD_PHONE_WEBRTC=1)
+target_compile_definitions(kartpad_phone_link INTERFACE RTC_STATIC)
 
 # The controller page as a C++ string (KartPadPhonePage.inc.mm includes it). Written again when the page
 # changes; file(CONFIGURE) leaves the header alone when nothing did, so nothing rebuilds needlessly.
