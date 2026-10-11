@@ -365,6 +365,14 @@ if(BUILD_TESTING)
     $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-UNDEBUG>)
   add_test(NAME kartpad.mii.appearance COMMAND kartpad_mii_appearance_tests)
 
+  add_executable(kartpad_audio_sound_archive_tests runtime/tests/audio_sound_archive_tests.cpp)
+  target_include_directories(kartpad_audio_sound_archive_tests PRIVATE runtime/include)
+  target_compile_features(kartpad_audio_sound_archive_tests PRIVATE cxx_std_20)
+  target_compile_options(kartpad_audio_sound_archive_tests PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/UNDEBUG>
+    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-UNDEBUG>)
+  add_test(NAME kartpad.audio.sound-archive COMMAND kartpad_audio_sound_archive_tests)
+
   add_executable(kartpad_mii_editor_history_tests runtime/tests/mii_editor_history_tests.cpp)
   target_include_directories(kartpad_mii_editor_history_tests PRIVATE runtime/include)
   target_compile_features(kartpad_mii_editor_history_tests PRIVATE cxx_std_20)
