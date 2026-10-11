@@ -29,7 +29,7 @@ test "${bundle_identifier}" = "dev.kartpad.app"
 test "$(plutil -extract CFBundleShortVersionString raw "${plist}")" = "${KARTPAD_EXPECTED_VERSION:-${release_version}}"
 test "$(plutil -extract CFBundleVersion raw "${plist}")" = "${KARTPAD_EXPECTED_BUILD:-${release_build}}"
 test "$(plutil -extract NSBluetoothAlwaysUsageDescription raw "${plist}")" = \
-  "KartPad uses Bluetooth to pair and connect an experimental Wii Remote and Nunchuk."
+  "KartPad uses Bluetooth to pair controllers, including Wii Remotes."
 test -x "${executable}"
 test -f "${contents}/Resources/${icon_name%.icns}.icns"
 cmp "${contents}/Resources/${icon_name%.icns}.icns" "${repo_root}/branding/exports/KartPad.icns"

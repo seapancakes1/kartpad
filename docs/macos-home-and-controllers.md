@@ -52,10 +52,14 @@ so you can tell which one is yours.
   controllers with a colour light).
 - A on a card: Change controller, Set up buttons, Choose a Mii, Find it, Stop
   playing. A controller in the Not playing tray offers each player directly.
-- **Connect** explains pairing mode for each kind. Wii Remotes
-  pair right there. Other controllers use the Mac's Bluetooth settings, which
-  KartPad opens and watches: when the new controller turns up it celebrates and
-  gives it the first free player.
+- **Connect** explains pairing mode for each kind, then KartPad finds the
+  controller and pairs it right there (PlayStation, Pro Controller, Joy-Con,
+  most others, and Wii Remotes). Newer Xbox controllers use Bluetooth LE, which
+  KartPad can't pair, so Xbox and Another controller also offer the Mac's
+  Bluetooth settings, which KartPad watches. When the new controller turns up
+  it celebrates and gives it the first free player. The search stops after
+  about a minute, since it slows other Bluetooth while it runs, and automated
+  runs (`KARTPAD_BACKGROUND=1`) don't search.
 - **The keyboard** is a controller too: by default it plays as the first
   player without a controller, so a pad on Player 1 now works alongside it.
   Settings → Controls → Keyboard plays as pins it to a player.
@@ -222,9 +226,9 @@ anything a run changed.
 
 - Real controllers, HOME/Guide on each kind, the Bluetooth hand-off and
   the Wii Remote flow need checking with physical hardware.
-- Pairing Xbox, PlayStation and Pro Controllers goes through the Mac's
-  Bluetooth settings (KartPad guides and watches); only Wii Remotes pair inside
-  KartPad.
+- Pairing inside KartPad needs checking with each kind of controller in
+  pairing mode. Newer Xbox controllers (Bluetooth LE) still pair in the Mac's
+  Bluetooth settings.
 - The game itself still restarts to switch games; the curtain covers the gap.
   The Dock icon disappears for that moment.
 - Taking the focus at launch can only be checked by opening KartPad from the

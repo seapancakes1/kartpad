@@ -89,7 +89,7 @@ plutil -insert NSHighResolutionCapable -bool true "${plist}"
 # mode can use the real display bounds, including the area around the notch.
 plutil -insert NSPrefersDisplaySafeAreaCompatibilityMode -bool false "${plist}"
 plutil -insert NSBluetoothAlwaysUsageDescription -string \
-  "KartPad uses Bluetooth to pair and connect an experimental Wii Remote and Nunchuk." "${plist}"
+  "KartPad uses Bluetooth to pair controllers, including Wii Remotes." "${plist}"
 plutil -insert NSPrincipalClass -string NSApplication "${plist}"
 
 # Bundle every non-system dylib and rewrite absolute paths. Release builds are

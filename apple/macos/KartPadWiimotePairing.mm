@@ -434,3 +434,266 @@ void KartPadCancelWiimotePairing(void) {
   gKartPadWiimotePairController.statusHandler = nil;
   [gKartPadWiimotePairController cancelPairingWork];
 }
+
+#pragma mark Other Bluetooth controllers
+
+// PlayStation, Switch and most other controllers use classic Bluetooth with "just works" pairing,
+// so the public IOBluetooth calls are enough: search, pair, and let the controller open its HID
+// link. macOS's HID driver then publishes it, and SDL and KartPad's roster see a new controller.
+@interface KartPadGamepadPairController : NSObject
+    <IOBluetoothDeviceInquiryDelegate, IOBluetoothDevicePairDelegate>
+@property(nonatomic, copy) void (^statusHandler)(NSString *message, BOOL busy);
+@property(nonatomic, copy) void (^logHandler)(NSString *line);
+- (void)begin;
+- (void)cancel;
+@end
+
+// Forgetting a pairing, as the Mac's Bluetooth settings do; there's no public call for it.
+@interface IOBluetoothDevice (KartPadPrivateRemove)
+- (void)remove;
+@end
+
+namespace {
+
+// About a minute of searching: an inquiry slows other Bluetooth (headphones, connected
+// controllers) while it runs, so it doesn't run for as long as the screen stays open.
+constexpr int kGamepadSearchRounds = 6;
+constexpr int64_t kGamepadConnectTimeout = 20 * NSEC_PER_SEC;
+// A controller the Mac already knows that turns up in a search is in pairing mode again, so its
+// half of the old pairing may be gone (paired to a console since, say). Give the old one a moment,
+// then forget it and pair afresh.
+constexpr int64_t kGamepadKnownTimeout = 8 * NSEC_PER_SEC;
+
+BOOL IsGamepad(IOBluetoothDevice *device) {
+  NSString *name = device.name ?: @"";
+  // Wii Remotes have their own path, which needs the Mac's address as the PIN.
+  if ([name hasPrefix:@"Nintendo RVL-"]) return NO;
+  if (device.deviceClassMajor == kBluetoothDeviceClassMajorPeripheral) {
+    const BluetoothDeviceClassMinor minor = device.deviceClassMinor & 0x0f;
+    if (minor == kBluetoothDeviceClassMinorPeripheral2Joystick ||
+        minor == kBluetoothDeviceClassMinorPeripheral2Gamepad) return YES;
+  }
+  // Some controllers say they're something else; their names give them away.
+  for (NSString *hint in @[@"Controller", @"DualSense", @"DUALSHOCK", @"Joy-Con", @"Gamepad", @"8BitDo"])
+    if ([name rangeOfString:hint options:NSCaseInsensitiveSearch].location != NSNotFound) return YES;
+  return NO;
+}
+
+} // namespace
+
+@implementation KartPadGamepadPairController {
+  IOBluetoothDeviceInquiry *_inquiry;
+  IOBluetoothDevicePair *_pair;
+  IOBluetoothDevice *_device;
+  NSMutableSet<NSString *> *_seen;  // addresses already logged this search
+  int _rounds;
+  NSUInteger _attempt;  // so a stale timer from an earlier attempt does nothing
+}
+
+- (void)setStatus:(NSString *)status busy:(BOOL)busy {
+  if (self.statusHandler) self.statusHandler(status, busy);
+}
+
+- (void)log:(NSString *)format, ... NS_FORMAT_FUNCTION(1, 2) {
+  if (!self.logHandler) return;
+  va_list args;
+  va_start(args, format);
+  self.logHandler([[NSString alloc] initWithFormat:format arguments:args]);
+  va_end(args);
+}
+
+// Runs block after delay unless a newer attempt (or cancel) has come along.
+- (void)after:(int64_t)delay do:(void (^)(KartPadGamepadPairController *controller))block {
+  const NSUInteger attempt = _attempt;
+  __weak KartPadGamepadPairController *weakSelf = self;
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, delay), dispatch_get_main_queue(), ^{
+    KartPadGamepadPairController *controller = weakSelf;
+    if (controller != nil && controller->_attempt == attempt) block(controller);
+  });
+}
+
+- (void)cancel {
+  ++_attempt;
+  [_inquiry stop];
+  _inquiry = nil;
+  [_pair stop];
+  _pair = nil;
+  _device = nil;
+}
+
+- (void)begin {
+  [self cancel];
+  if (IOBluetoothHostController.defaultController.powerState != kBluetoothHCIPowerStateON) {
+    [self log:@"search=bluetooth-off"];
+    [self setStatus:@"Bluetooth is off. Turn it on in Control Center, then Search Again." busy:NO];
+    return;
+  }
+  _rounds = 0;
+  _seen = [NSMutableSet set];
+  _inquiry = [IOBluetoothDeviceInquiry inquiryWithDelegate:self];
+  _inquiry.searchType = kIOBluetoothDeviceSearchClassic;
+  _inquiry.updateNewDeviceNames = YES;
+  const IOReturn result = [_inquiry start];
+  if (result != kIOReturnSuccess) {
+    _inquiry = nil;
+    [self log:@"search=failed; error=0x%x", result];
+    [self setStatus:@"Bluetooth search couldn't start. Check that KartPad may use Bluetooth in System Settings → Privacy & Security."
+               busy:NO];
+    return;
+  }
+  [self log:@"search=started"];
+  [self setStatus:@"Looking for it…" busy:YES];
+}
+
+- (void)found:(IOBluetoothDevice *)device {
+  if (_device != nil) return;
+  const BOOL gamepad = IsGamepad(device);
+  NSString *address = device.addressString ?: @"";
+  // Names only for controllers: the search also sees the neighbours' phones and headphones.
+  if (![_seen containsObject:address] || gamepad) {
+    [_seen addObject:address];
+    [self log:@"seen=%@; class=0x%02x/0x%02x; paired=%d", gamepad ? (device.name ?: @"(no name yet)") : @"other",
+              device.deviceClassMajor, device.deviceClassMinor, device.isPaired];
+  }
+  if (!gamepad) return;
+  _device = device;
+  [_inquiry stop];
+  _inquiry = nil;
+  if (device.isPaired) {
+    [self connectKnown];
+    return;
+  }
+  [self pair];
+}
+
+- (void)pair {
+  _pair = [IOBluetoothDevicePair pairWithDevice:_device];
+  _pair.delegate = self;
+  const IOReturn result = [_pair start];
+  if (result != kIOReturnSuccess) {
+    [self log:@"pair=failed-to-start; error=0x%x", result];
+    _pair = nil;
+    _device = nil;
+    [self setStatus:@"Pairing couldn't start. Put it in pairing mode again, then Search Again." busy:NO];
+    return;
+  }
+  [self setStatus:[NSString stringWithFormat:@"Found %@. Pairing…", _device.name.length ? _device.name : @"a controller"] busy:YES];
+}
+
+// The controller opens its own HID link once it's paired (or, if the Mac already knows it, once it
+// hears from it); opening the baseband connection nudges ones that wait to be called.
+- (void)openConnection {
+  if (!_device.isConnected) [_device openConnection:self];  // asynchronous with a target
+}
+
+- (void)connectionComplete:(IOBluetoothDevice *)device status:(IOReturn)status {
+  (void)device;
+  [self log:@"baseband=0x%x", status];  // the HID link, not this, says whether it worked
+}
+
+- (void)connectKnown {
+  [self openConnection];
+  [self setStatus:@"Found it. Connecting…" busy:YES];
+  [self after:kGamepadKnownTimeout do:^(KartPadGamepadPairController *controller) { [controller forgetAndPair]; }];
+}
+
+- (void)forgetAndPair {
+  if (![_device respondsToSelector:@selector(remove)]) {
+    [self log:@"forget=unavailable"];
+    [self setStatus:@"It didn't connect. Forget it in Bluetooth settings, then Search Again." busy:NO];
+    return;
+  }
+  [self log:@"forget=started"];
+  [self setStatus:@"Pairing it again…" busy:YES];
+  [_device closeConnection];
+  [_device remove];
+  [self waitForgotten:12];
+}
+
+// Forgetting finishes in the background; pair once it has (or try anyway after about 3 seconds).
+- (void)waitForgotten:(int)triesLeft {
+  if (!_device.isPaired || triesLeft == 0) {
+    [self log:@"forget=%@", _device.isPaired ? @"still-paired" : @"done"];
+    [self pair];
+    return;
+  }
+  [self after:250 * NSEC_PER_MSEC do:^(KartPadGamepadPairController *controller) { [controller waitForgotten:triesLeft - 1]; }];
+}
+
+- (void)paired {
+  [self openConnection];
+  [self setStatus:@"Paired. Connecting…" busy:YES];
+  [self after:kGamepadConnectTimeout do:^(KartPadGamepadPairController *controller) {
+    [controller log:@"connect=timed-out; connected=%d", controller->_device.isConnected];
+    [controller setStatus:@"It paired, but hasn't connected. Press its PS or HOME button." busy:NO];
+  }];
+}
+
+- (void)deviceInquiryDeviceFound:(IOBluetoothDeviceInquiry *)sender device:(IOBluetoothDevice *)device {
+  (void)sender;
+  [self found:device];
+}
+
+- (void)deviceInquiryDeviceNameUpdated:(IOBluetoothDeviceInquiry *)sender
+                                device:(IOBluetoothDevice *)device
+                      devicesRemaining:(uint32_t)devicesRemaining {
+  (void)sender;
+  (void)devicesRemaining;
+  [self found:device];
+}
+
+- (void)deviceInquiryComplete:(IOBluetoothDeviceInquiry *)sender error:(IOReturn)error aborted:(BOOL)aborted {
+  if (aborted || sender != _inquiry || _device != nil) return;
+  if (error == kIOReturnSuccess && ++_rounds < kGamepadSearchRounds) {
+    [sender clearFoundDevices];
+    [sender start];
+    return;
+  }
+  _inquiry = nil;
+  [self log:@"search=gave-up; rounds=%d; error=0x%x", _rounds, error];
+  [self setStatus:@"Didn't find one. Put it in pairing mode, then Search Again." busy:NO];
+}
+
+- (void)devicePairingPINCodeRequest:(id)sender {
+  // Only older controllers ask; the common default.
+  [self log:@"pair=pin-requested"];
+  BluetoothPINCode code{};
+  memcpy(code.data, "0000", 4);
+  [(IOBluetoothDevicePair *)sender replyPINCode:4 PINCode:&code];
+}
+
+- (void)devicePairingUserConfirmationRequest:(id)sender numericValue:(BluetoothNumericValue)numericValue {
+  (void)numericValue;
+  [self log:@"pair=confirmation-requested"];
+  [(IOBluetoothDevicePair *)sender replyUserConfirmation:YES];
+}
+
+- (void)devicePairingFinished:(id)sender error:(IOReturn)error {
+  if (sender != _pair) return;
+  [self log:@"pair=finished; error=0x%x", error];
+  if (error != kIOReturnSuccess) {
+    [_pair stop];
+    _pair = nil;
+    _device = nil;
+    [self setStatus:@"Pairing didn't finish. Put it in pairing mode again, then Search Again." busy:NO];
+    return;
+  }
+  [self paired];
+}
+
+@end
+
+static KartPadGamepadPairController *gKartPadGamepadPairController;
+
+void KartPadBeginGamepadPairing(void (^status)(NSString *message, BOOL busy), void (^log)(NSString *line)) {
+  if (gKartPadGamepadPairController == nil) gKartPadGamepadPairController = [KartPadGamepadPairController new];
+  gKartPadGamepadPairController.statusHandler = status;
+  gKartPadGamepadPairController.logHandler = log;
+  [gKartPadGamepadPairController begin];
+}
+
+void KartPadCancelGamepadPairing(void) {
+  gKartPadGamepadPairController.statusHandler = nil;
+  gKartPadGamepadPairController.logHandler = nil;
+  [gKartPadGamepadPairController cancel];
+}

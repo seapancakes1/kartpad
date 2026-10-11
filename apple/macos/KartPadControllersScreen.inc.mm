@@ -1089,9 +1089,10 @@ static void KPChooseMii(KPPadDevice *device) {
 
 #pragma mark Connecting a controller
 
-// Pairing, one kind of controller at a time: how to put it in pairing mode, then (for most) the
-// Mac's Bluetooth settings, which KartPad watches so the new controller shows up and is celebrated.
-// Wii Remotes pair right here.
+// Pairing, one kind of controller at a time: how to put it in pairing mode, then KartPad finds it
+// and pairs it right here (KartPadWiimotePairing.mm), and celebrates when it shows up. Newer Xbox
+// controllers use Bluetooth LE, which KartPad can't pair, so Xbox (and Another controller) also
+// offer the Mac's Bluetooth settings, which KartPad watches the same way.
 enum class KPPairKind { Xbox, PlayStation, Switch, WiiRemote, Other };
 
 @interface KPConnectScreen : KPScreen <KPRosterListener>
@@ -1129,17 +1130,22 @@ static KPPadFamily KPPairFamily(KPPairKind kind) {
 static NSString *KPPairSteps(KPPairKind kind) {
   switch (kind) {
     case KPPairKind::Xbox:
-      return @"1. Turn the controller on.\n2. Hold the pair button on its top edge until the Xbox button flashes fast.\n3. In Bluetooth settings, click Connect next to it.";
+      return @"1. Turn the controller on.\n2. Hold the pair button on its top edge until the Xbox button flashes fast.\n3. Most newer ones connect in Bluetooth settings: click Connect next to it.";
     case KPPairKind::PlayStation:
-      return @"1. Hold Share (or Create) and the PS button until the light flashes.\n2. In Bluetooth settings, click Connect next to it.";
+      return @"1. Hold Share (or Create) and the PS button until the light flashes.\n2. KartPad pairs it by itself.";
     case KPPairKind::Switch:
-      return @"1. Hold the sync button on the top edge (on a Joy\u2011Con, the rail) until the lights run.\n2. In Bluetooth settings, click Connect next to it.";
+      return @"1. Hold the sync button on the top edge (on a Joy\u2011Con, the rail) until the lights run.\n2. KartPad pairs it by itself.";
     case KPPairKind::WiiRemote:
       return @"1. Open the battery cover and press the red SYNC button.\n2. KartPad pairs it by itself.";
     case KPPairKind::Other:
-      return @"1. Put it in pairing mode (usually: hold its pair button).\n2. In Bluetooth settings, click Connect next to it.\nUSB controllers just plug in.";
+      return @"1. Put it in pairing mode (usually: hold its pair button).\n2. KartPad looks for it. If it doesn\u2019t connect, click Connect next to it in Bluetooth settings.\nUSB controllers just plug in.";
   }
   return @"";
+}
+// Kinds KartPad pairs itself, so the button searches again; the rest search too, but their button
+// is Bluetooth settings.
+static BOOL KPPairSearches(KPPairKind kind) {
+  return kind == KPPairKind::PlayStation || kind == KPPairKind::Switch || kind == KPPairKind::WiiRemote;
 }
 - (void)build {
   self.solid = YES;
@@ -1164,9 +1170,9 @@ static NSString *KPPairSteps(KPPairKind kind) {
   }
   self.primary = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
     KPConnectScreen *screen = weakSelf;
-    const BOOL wii = screen.kind == KPPairKind::WiiRemote;
-    KPDrawPill(c, r, state, KPStyle::Primary, wii ? KPUIGlyph::Find : KPUIGlyph::Bluetooth,
-               wii ? (screen.busy ? @"Searching…" : @"Search Again") : @"Open Bluetooth Settings");
+    const BOOL searches = KPPairSearches(screen.kind);
+    KPDrawPill(c, r, state, KPStyle::Primary, searches ? KPUIGlyph::Find : KPUIGlyph::Bluetooth,
+               searches ? (screen.busy ? @"Searching…" : @"Search Again") : @"Open Bluetooth Settings");
   } action:^{ [weakSelf primaryAction]; }];
   self.done = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
     KPDrawPill(c, r, state, KPStyle::Plain, KPUIGlyph::Check, @"Done");
@@ -1197,6 +1203,23 @@ static NSString *KPPairSteps(KPPairKind kind) {
   [KPOverlay() focus:self.primary sound:NO];
   self.needsDisplay = YES;
   if (kind == KPPairKind::WiiRemote) [self pairWiiRemote];
+  else [self pairGamepad];
+}
+- (void)pairGamepad {
+  // Automated checks don't search: it can bring up macOS's Bluetooth permission prompt.
+  if (KPUIBackgroundAutomation()) return;
+  self.busy = YES;
+  __weak KPConnectScreen *weakSelf = self;
+  KartPadBeginGamepadPairing(^(NSString *message, BOOL busy) {
+    KPConnectScreen *screen = weakSelf;
+    // Where KartPad can't finish the job, the button below can.
+    if (!busy && !KPPairSearches(screen.kind)) message = @"Not connected yet. Open Bluetooth Settings and click Connect next to it.";
+    screen.status = message;
+    screen.busy = busy;
+    screen.needsDisplay = YES;
+    screen.primary.needsDisplay = YES;
+  }, ^(NSString *line) { AppendSessionLine([@"controllerPairing=" stringByAppendingString:line]); });
+  self.primary.needsDisplay = YES;
 }
 - (void)pairWiiRemote {
   self.busy = YES;
@@ -1215,6 +1238,13 @@ static NSString *KPPairSteps(KPPairKind kind) {
     if (!self.busy) [self pairWiiRemote];
     return;
   }
+  if (KPPairSearches(self.kind)) {
+    if (!self.busy) [self pairGamepad];
+    return;
+  }
+  // Settings pairs it from here on; two pairings of one controller at once can trip each other.
+  KartPadCancelGamepadPairing();
+  self.busy = NO;
   NSURL *settings = [NSURL URLWithString:@"x-apple.systempreferences:com.apple.BluetoothSettings"];
   if (![NSWorkspace.sharedWorkspace openURL:settings])
     [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"x-apple.systempreferences:com.apple.preferences.Bluetooth"]];
@@ -1228,6 +1258,7 @@ static NSString *KPPairSteps(KPPairKind kind) {
   for (KPPadDevice *device in KPControllerRoster.shared.devices) {
     if (device.isKeyboard || [self.before containsObject:device.identifier]) continue;
     self.arrived = device;
+    KartPadCancelGamepadPairing();
     // A new controller with no player takes the first free one.
     KPControllerRoster *roster = KPControllerRoster.shared;
     if (device.slot < 0)
@@ -1256,12 +1287,14 @@ static NSString *KPPairSteps(KPPairKind kind) {
 }
 - (void)willDisappear {
   KartPadCancelWiimotePairing();
+  KartPadCancelGamepadPairing();
   [KPControllerRoster.shared.listeners removeObject:self];
   SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "0");
 }
 - (void)back {
   if (!self.choosing && !self.arrived) {
     KartPadCancelWiimotePairing();
+    KartPadCancelGamepadPairing();
     self.choosing = YES;
     self.busy = NO;
     [self layoutDesign];
