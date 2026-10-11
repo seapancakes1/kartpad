@@ -1116,7 +1116,15 @@ enum class KPPairKind { Controller, WiiRemote, Phone };
 @property(nonatomic, copy) NSString *status;
 @property(nonatomic) BOOL busy;
 @property(nonatomic, strong) NSSet<NSString *> *before;
+// The same controllers by what survives SDL reopening them (KPPadDevice.stableKey): a Wii Remote
+// that comes back under a new SDL ID isn't a new arrival.
+@property(nonatomic, strong) NSSet<NSString *> *beforeKeys;
 @property(nonatomic, strong) KPPadDevice *arrived;
+// Bluetooth Settings turned on SDL's background events; this is what they were, for when it closes.
+@property(nonatomic, copy) NSString *previousBackgroundHint;
+@property(nonatomic) BOOL backgroundHintOwned;
+// What the page last drew of what changes by itself (the new controller's drawing, the phones).
+@property(nonatomic) uint64_t shownLook;
 @property(nonatomic, strong) NSMutableArray<KPUIButton *> *removes;  // Phone: Remove, one per phone listed
 @end
 
@@ -1232,9 +1240,13 @@ static constexpr CGFloat KPPhoneListTop = 300, KPPhoneRowHeight = 58;
   self.kind = kind;
   self.choosing = NO;
   self.arrived = nil;
-  NSMutableSet *ids = [NSMutableSet set];
-  for (KPPadDevice *device in KPControllerRoster.shared.devices) [ids addObject:device.identifier];
+  NSMutableSet *ids = [NSMutableSet set], *keys = [NSMutableSet set];
+  for (KPPadDevice *device in KPControllerRoster.shared.devices) {
+    [ids addObject:device.identifier];
+    if (device.stableKey) [keys addObject:device.stableKey];
+  }
   self.before = ids;
+  self.beforeKeys = keys;
   self.status = kind == KPPairKind::WiiRemote ? @"Getting Bluetooth ready…"
               : kind == KPPairKind::Phone       ? @"Waiting for a phone…"
                                                 : @"Looking for it…";
@@ -1297,7 +1309,9 @@ static constexpr CGFloat KPPhoneListTop = 300, KPPhoneRowHeight = 58;
   // Phones keep coming: the code stays up and each new one is announced in turn.
   if (self.choosing || (self.arrived && !phone)) return;
   for (KPPadDevice *device in KPControllerRoster.shared.devices) {
-    if (device.isKeyboard || [self.before containsObject:device.identifier]) continue;
+    if (device.isKeyboard || [self.before containsObject:device.identifier] ||
+        (device.stableKey && [self.beforeKeys containsObject:device.stableKey]))
+      continue;
     self.before = [self.before setByAddingObject:device.identifier];
     self.arrived = device;
     KartPadCancelGamepadPairing();

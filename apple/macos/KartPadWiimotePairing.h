@@ -7,7 +7,9 @@ FOUNDATION_EXPORT NSString *const KartPadExperimentalWiimoteDefaultsKey;
 void KartPadShowWiimotePairing(void);
 void KartPadApplyExperimentalWiimotePreference(void);
 // Pairing without its own window, for KartPad's Connect a Controller screen: status reports each step
-// on the main thread (busy while it is still working).
+// on the main thread (busy while it is still working). Remotes already connected stay connected: SDL's
+// Wii driver is on while it pairs, then back as it was unless a remote connected. The search stops
+// on its own after about a minute. The experimental setting is left as it is.
 void KartPadBeginWiimotePairing(void (^status)(NSString *message, BOOL busy));
 void KartPadCancelWiimotePairing(void);
 

@@ -33,6 +33,9 @@ static NSString *KPHex(NSData *data) {
 @property(nonatomic) SDL_JoystickID joystick;
 @property(nonatomic) KPPadFamily family;
 @property(nonatomic, copy) NSString *name, *systemName, *profileKey;
+// What stays the same while SDL closes and reopens the controller under a new ID (switching its Wii
+// driver off and on does that to every Wii Remote): its HID path, else its serial. nil for neither.
+@property(nonatomic, copy) NSString *stableKey;
 @property(nonatomic) int slot;          // 0–3, -1 when not playing
 @property(nonatomic) int battery;       // percent, -1 unknown
 @property(nonatomic) BOOL charging, wired, canRumble, hasLight, twin;
@@ -311,6 +314,9 @@ static void KPHintDeviceChanged();  // KartPadHints.inc.mm
       device.name = KPFriendlyName(pad, device.family);
       device.systemName = @(SDL_GetGamepadName(pad) ?: "Controller");
       device.profileKey = KPProfileKey(pad);
+      const char *path = SDL_GetGamepadPath(pad), *serial = SDL_GetGamepadSerial(pad);
+      device.stableKey = path && *path ? [NSString stringWithFormat:@"path:%s", path]
+                       : serial && *serial ? [@"serial:" stringByAppendingString:device.profileKey] : nil;
       device.connectedAt = now;
       SDL_PropertiesID props = SDL_GetGamepadProperties(pad);
       device.canRumble = SDL_GetBooleanProperty(props, SDL_PROP_GAMEPAD_CAP_RUMBLE_BOOLEAN, false);

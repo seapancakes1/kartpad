@@ -7,6 +7,7 @@
 
 #import <AppKit/AppKit.h>
 #import <IOBluetooth/IOBluetooth.h>
+#import <IOKit/IOKitLib.h>
 #import <IOKit/hid/IOHIDKeys.h>
 #import <IOKit/hid/IOHIDManager.h>
 
@@ -14,6 +15,7 @@
 #include <SDL3/SDL_hints.h>
 #include <SDL3/SDL_joystick.h>
 
+#include <cctype>
 #include <cstring>
 
 NSString *const KartPadExperimentalWiimoteDefaultsKey =
@@ -42,18 +44,45 @@ NSString *const KartPadExperimentalWiimoteDefaultsKey =
 - (void)beginPairing;
 - (void)cancelPairingWork;
 - (void)deviceMatched:(id)object;
-- (void)inputConfirmed;
 @end
 
 namespace {
 
-constexpr size_t kInputBufferSize = 64;
 NSString *const kSyntheticDeviceKey = @"GCSyntheticDevice";
+// About a minute of searching, as for other controllers (kGamepadSearchRounds below): an inquiry
+// slows other Bluetooth while it runs.
+constexpr int kWiimoteSearchRounds = 6;
+// How long SDL gets to open the remote once macOS has it, looked at every 300 ms.
+constexpr int kHandoffChecks = 10;
 
 NSNumber *HIDNumber(IOHIDDeviceRef device, CFStringRef key) {
   CFTypeRef value = IOHIDDeviceGetProperty(device, key);
   return value != nullptr && CFGetTypeID(value) == CFNumberGetTypeID()
       ? (__bridge NSNumber *)value : nil;
+}
+
+NSString *HIDString(IOHIDDeviceRef device, CFStringRef key) {
+  CFTypeRef value = IOHIDDeviceGetProperty(device, key);
+  return value != nullptr && CFGetTypeID(value) == CFStringGetTypeID()
+      ? (__bridge NSString *)value : nil;
+}
+
+uint64_t HIDRegistryID(IOHIDDeviceRef device) {
+  uint64_t identifier = 0;
+  const io_service_t service = IOHIDDeviceGetService(device);
+  if (service != IO_OBJECT_NULL) IORegistryEntryGetRegistryEntryID(service, &identifier);
+  return identifier;
+}
+
+// A Bluetooth address as just its hex digits, lowercase. macOS writes it "00-1f-32-…", for the
+// Bluetooth device and as the HID device's serial number, which SDL passes on as the pad's.
+NSString *AddressDigits(NSString *address) {
+  NSMutableString *digits = [NSMutableString string];
+  for (NSUInteger i = 0; i < address.length; ++i) {
+    const unichar c = [address characterAtIndex:i];
+    if (c < 128 && isxdigit(c)) [digits appendFormat:@"%c", (char)tolower(c)];
+  }
+  return digits;
 }
 
 void DeviceMatched(void *context, IOReturn result, void *sender,
@@ -67,35 +96,43 @@ void DeviceMatched(void *context, IOReturn result, void *sender,
   }
 }
 
-void InputReport(void *context, IOReturn result, void *sender,
-                 IOHIDReportType type, uint32_t reportID, uint8_t *report,
-                 CFIndex length) {
-  (void)sender;
-  (void)type;
-  (void)reportID;
-  (void)report;
-  (void)length;
-  if (result != kIOReturnSuccess) return;
-  KartPadWiimotePairController *controller =
-      (__bridge KartPadWiimotePairController *)context;
-  [controller inputConfirmed];
+// The Wii Remotes SDL has now, by SDL ID.
+NSSet<NSNumber *> *ConnectedRemotes() {
+  NSMutableSet<NSNumber *> *remotes = [NSMutableSet set];
+  int count = 0;
+  SDL_JoystickID *ids = SDL_GetGamepads(&count);
+  for (int index = 0; index < count; ++index) {
+    const char *name = SDL_GetGamepadNameForID(ids[index]);
+    if (name != nullptr && strstr(name, "Nintendo Wii Remote") != nullptr) [remotes addObject:@(ids[index])];
+  }
+  SDL_free(ids);
+  return remotes;
 }
 
 } // namespace
 
+// Pairing keeps SDL's Wii driver on throughout, so the remotes already connected stay connected (and
+// keep their SDL IDs): the new one pairs over Bluetooth, macOS publishes it, and SDL opens it as it
+// does any remote that connects. The driver setting goes back to what it was afterwards, unless a
+// remote connected meanwhile, which keeps it on for the rest of this run.
 @implementation KartPadWiimotePairController {
   NSPanel *_panel;
   NSTextField *_status;
   NSProgressIndicator *_progress;
   NSButton *_doneButton;
+  NSButton *_againButton;
   IOBluetoothDeviceInquiry *_inquiry;
   IOBluetoothDevicePair *_pair;
   IOBluetoothDevice *_bluetoothDevice;
   IOHIDManagerRef _hidManager;
-  IOHIDDeviceRef _hidDevice;
-  uint8_t _inputBuffer[kInputBufferSize];
-  BOOL _inputReceived;
+  NSSet<NSNumber *> *_hidBefore;      // HID devices (registry IDs) there when the search began
+  NSSet<NSNumber *> *_remotesBefore;  // SDL's remotes then
+  NSString *_driverHintBefore;
+  BOOL _driverHintOwned;
+  BOOL _connected;
   BOOL _handedOff;
+  int _rounds;
+  NSUInteger _attempt;  // so a check left from an earlier attempt does nothing
 }
 
 - (void)dealloc {
@@ -103,7 +140,6 @@ void InputReport(void *context, IOReturn result, void *sender,
 }
 
 - (void)tearDownHIDManager {
-  [self closeHID];
   if (_hidManager != nullptr) {
     IOHIDManagerRegisterDeviceMatchingCallback(_hidManager, nullptr, nullptr);
     IOHIDManagerUnscheduleFromRunLoop(_hidManager, CFRunLoopGetMain(),
@@ -114,18 +150,42 @@ void InputReport(void *context, IOReturn result, void *sender,
   }
 }
 
+// SDL's Wii driver on while pairing, the setting before remembered for afterwards.
+- (void)holdDriverOn {
+  if (!_driverHintOwned) {
+    const char *hint = SDL_GetHint(SDL_HINT_JOYSTICK_HIDAPI_WII);
+    _driverHintBefore = hint ? [NSString stringWithUTF8String:hint] : nil;
+    _driverHintOwned = YES;
+  }
+  SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_WII, "1");
+}
+
+- (void)releaseDriver {
+  if (!_driverHintOwned) return;
+  _driverHintOwned = NO;
+  if (_connected) return;  // the new remote stays connected
+  if (_driverHintBefore) SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_WII, _driverHintBefore.UTF8String);
+  else SDL_ResetHint(SDL_HINT_JOYSTICK_HIDAPI_WII);
+}
+
 - (void)cancelPairingWork {
+  ++_attempt;
   [_inquiry stop];
   _inquiry = nil;
   if (!_handedOff) [_pair stop];
   _pair = nil;
   [self tearDownHIDManager];
-  KartPadApplyExperimentalWiimotePreference();
+  [self releaseDriver];
 }
 
 - (void)closePairingPanel:(id)sender {
   (void)sender;
   [_panel close];
+}
+
+- (void)searchAgain:(id)sender {
+  (void)sender;
+  [self beginPairing];
 }
 
 - (void)windowWillClose:(NSNotification *)notification {
@@ -137,6 +197,7 @@ void InputReport(void *context, IOReturn result, void *sender,
   if (self.statusHandler) self.statusHandler(status, spinning);
   _status.stringValue = status;
   _progress.hidden = !spinning;
+  _againButton.hidden = spinning;
   if (spinning) [_progress startAnimation:nil];
   else [_progress stopAnimation:nil];
 }
@@ -166,12 +227,15 @@ void InputReport(void *context, IOReturn result, void *sender,
     [_progress startAnimation:nil];
     _doneButton = [NSButton buttonWithTitle:@"Close" target:self
                                      action:@selector(closePairingPanel:)];
+    _againButton = [NSButton buttonWithTitle:@"Search Again" target:self
+                                      action:@selector(searchAgain:)];
+    _againButton.hidden = YES;
     NSStackView *statusRow = [NSStackView stackViewWithViews:@[_progress, _status]];
     statusRow.orientation = NSUserInterfaceLayoutOrientationHorizontal;
     statusRow.alignment = NSLayoutAttributeCenterY;
     statusRow.spacing = 10;
     NSView *spacer = [NSView new];
-    NSStackView *buttons = [NSStackView stackViewWithViews:@[spacer, _doneButton]];
+    NSStackView *buttons = [NSStackView stackViewWithViews:@[spacer, _againButton, _doneButton]];
     buttons.orientation = NSUserInterfaceLayoutOrientationHorizontal;
     [spacer setContentHuggingPriority:NSLayoutPriorityDefaultLow
                        forOrientation:NSLayoutConstraintOrientationHorizontal];
@@ -206,12 +270,18 @@ void InputReport(void *context, IOReturn result, void *sender,
 }
 
 - (void)beginPairing {
+  ++_attempt;
   [_inquiry stop];
   _inquiry = nil;
+  if (!_handedOff) [_pair stop];
   _pair = nil;
-  _inputReceived = NO;
+  // A remote paired earlier this run isn't the one this search is for.
+  _bluetoothDevice = nil;
   _handedOff = NO;
-  SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_WII, "0");
+  _rounds = 0;
+  [self tearDownHIDManager];
+  [self holdDriverOn];
+  _remotesBefore = ConnectedRemotes();
   [self setStatus:@"Looking for a Wii Remote…"
          spinning:YES];
   [self setupHIDManager];
@@ -219,6 +289,7 @@ void InputReport(void *context, IOReturn result, void *sender,
   _inquiry.searchType = kIOBluetoothDeviceSearchClassic;
   IOReturn result = [_inquiry start];
   if (result != kIOReturnSuccess) {
+    _inquiry = nil;
     [self setStatus:[NSString stringWithFormat:
         @"Bluetooth discovery could not start (0x%x). Check System Settings → Privacy & Security → Bluetooth.",
         result] spinning:NO];
@@ -240,8 +311,17 @@ void InputReport(void *context, IOReturn result, void *sender,
   IOHIDManagerScheduleWithRunLoop(_hidManager, CFRunLoopGetMain(),
                                   kCFRunLoopDefaultMode);
   IOHIDManagerOpen(_hidManager, kIOHIDOptionsTypeNone);
+  NSMutableSet<NSNumber *> *before = [NSMutableSet set];
+  CFSetRef devices = IOHIDManagerCopyDevices(_hidManager);
+  if (devices != nullptr) {
+    for (id object in (__bridge NSSet *)devices) [before addObject:@(HIDRegistryID((__bridge IOHIDDeviceRef)object))];
+    CFRelease(devices);
+  }
+  _hidBefore = before;
 }
 
+// The HID device macOS published for the remote this search found: by its Bluetooth address, or
+// where the device gives none, a remote of its kind that wasn't there when the search began.
 - (BOOL)matchesPairedDevice:(IOHIDDeviceRef)device {
   if (_bluetoothDevice == nil) return NO;
   CFTypeRef synthetic = IOHIDDeviceGetProperty(
@@ -250,84 +330,67 @@ void InputReport(void *context, IOReturn result, void *sender,
   NSNumber *vendor = HIDNumber(device, CFSTR(kIOHIDVendorIDKey));
   NSNumber *product = HIDNumber(device, CFSTR(kIOHIDProductIDKey));
   if (vendor.unsignedIntegerValue != 0x057e) return NO;
+  NSString *serial = AddressDigits(HIDString(device, CFSTR(kIOHIDSerialNumberKey)));
+  NSString *address = AddressDigits(_bluetoothDevice.addressString);
+  if (serial.length == 12 && address.length == 12) return [serial isEqualToString:address];
+  if ([_hidBefore containsObject:@(HIDRegistryID(device))]) return NO;
   const BOOL remotePlus = [_bluetoothDevice.name containsString:@"-TR"];
   return product.unsignedIntegerValue == (remotePlus ? 0x0330 : 0x0306);
 }
 
 - (void)deviceMatched:(id)object {
   IOHIDDeviceRef device = (__bridge IOHIDDeviceRef)object;
-  if (![self matchesPairedDevice:device] || _hidDevice != nullptr) return;
-  IOReturn result = IOHIDDeviceOpen(device, kIOHIDOptionsTypeNone);
-  if (result == kIOReturnExclusiveAccess) {
-    [self handOffToSDL:@"The Wii Remote is paired and already in use by KartPad."];
-    return;
-  }
-  if (result != kIOReturnSuccess) {
-    [self setStatus:@"The remote paired but didn’t connect. Try again."
-           spinning:NO];
-    return;
-  }
-  _hidDevice = (IOHIDDeviceRef)CFRetain(device);
-  memset(_inputBuffer, 0, sizeof(_inputBuffer));
-  IOHIDDeviceRegisterInputReportCallback(_hidDevice, _inputBuffer,
-      sizeof(_inputBuffer), InputReport, (__bridge void *)self);
-  const uint8_t led[] = {0x11, 0x10};
-  const uint8_t mode[] = {0x12, 0x04, 0x30};
-  const uint8_t status[] = {0x15, 0x00};
-  IOHIDDeviceSetReport(_hidDevice, kIOHIDReportTypeOutput, 0x11, led, sizeof(led));
-  IOHIDDeviceSetReport(_hidDevice, kIOHIDReportTypeOutput, 0x12, mode, sizeof(mode));
-  IOHIDDeviceSetReport(_hidDevice, kIOHIDReportTypeOutput, 0x15, status, sizeof(status));
-  [self setStatus:@"Connecting…"
-         spinning:YES];
+  if (_handedOff || ![self matchesPairedDevice:device]) return;
+  [self handOffToSDL];
 }
 
-- (void)inputConfirmed {
-  if (_inputReceived) return;
-  _inputReceived = YES;
-  [self handOffToSDL:@"Connecting…"];
-}
-
-- (void)closeHID {
-  if (_hidDevice == nullptr) return;
-  IOHIDDeviceRegisterInputReportCallback(_hidDevice, _inputBuffer,
-      sizeof(_inputBuffer), nullptr, nullptr);
-  IOHIDDeviceClose(_hidDevice, kIOHIDOptionsTypeNone);
-  CFRelease(_hidDevice);
-  _hidDevice = nullptr;
-}
-
-- (void)handOffToSDL:(NSString *)message {
+// macOS has the remote: SDL's Wii driver, on all along, opens it as it does any remote that
+// connects. KartPad doesn't open it too, so the two never set its reports at once.
+- (void)handOffToSDL {
   _handedOff = YES;
-  [self setStatus:message spinning:YES];
+  [self setStatus:@"Connecting…" spinning:YES];
   [self tearDownHIDManager];
+  [self checkSDLHandoff:kHandoffChecks];
+}
+
+- (void)checkSDLHandoff:(int)checksLeft {
+  const NSUInteger attempt = _attempt;
+  __weak KartPadWiimotePairController *weakSelf = self;
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 300 * NSEC_PER_MSEC),
                  dispatch_get_main_queue(), ^{
-    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_WII, "1");
+    KartPadWiimotePairController *controller = weakSelf;
+    if (controller == nil || controller->_attempt != attempt) return;
     SDL_UpdateJoysticks();
-    [self verifySDLHandoff];
+    NSString *found = [controller arrivedRemote];
+    if (found != nil) {
+      controller->_connected = YES;
+      [controller setStatus:[NSString stringWithFormat:
+          @"Connected as %@. Attach the Nunchuk any time.",
+          found] spinning:NO];
+    } else if (checksLeft > 1) {
+      [controller checkSDLHandoff:checksLeft - 1];
+    } else {
+      [controller setStatus:@"Paired. Press A on the Wii Remote."
+                   spinning:NO];
+    }
   });
 }
 
-- (void)verifySDLHandoff {
-  int count = 0;
-  SDL_JoystickID *ids = SDL_GetGamepads(&count);
+// SDL's name for the remote this search found, once SDL has it: the remote with its Bluetooth
+// address, or else one that wasn't connected when the search began.
+- (NSString *)arrivedRemote {
+  NSString *address = AddressDigits(_bluetoothDevice.addressString);
   NSString *found = nil;
-  for (int index = 0; index < count; ++index) {
-    const char *name = SDL_GetGamepadNameForID(ids[index]);
-    if (name != nullptr && strstr(name, "Nintendo Wii Remote") != nullptr) {
-      found = [NSString stringWithUTF8String:name];
-      break;
-    }
+  for (NSNumber *identifier in ConnectedRemotes()) {
+    const char *name = SDL_GetGamepadNameForID(identifier.unsignedIntValue);
+    if (name == nullptr) continue;
+    SDL_Gamepad *pad = SDL_GetGamepadFromID(identifier.unsignedIntValue);
+    const char *serial = pad ? SDL_GetGamepadSerial(pad) : nullptr;
+    if (serial != nullptr && address.length == 12 && [AddressDigits(@(serial)) isEqualToString:address])
+      return [NSString stringWithUTF8String:name];
+    if (found == nil && ![_remotesBefore containsObject:identifier]) found = [NSString stringWithUTF8String:name];
   }
-  SDL_free(ids);
-  if (found != nil) {
-    [self setStatus:[NSString stringWithFormat:
-        @"Connected as %@. Attach the Nunchuk any time.",
-        found] spinning:NO];
-  } else {
-    [self setStatus:@"Paired. Press A on the Wii Remote."
-           spinning:NO];
-  }
+  return found;
 }
 
 - (void)preparePairedDevice:(IOBluetoothDevice *)device {
@@ -338,7 +401,7 @@ void InputReport(void *context, IOReturn result, void *sender,
   if (devices != nullptr) {
     for (id object in (__bridge NSSet *)devices) {
       [self deviceMatched:object];
-      if (_hidDevice != nullptr) break;
+      if (_handedOff) break;
     }
     CFRelease(devices);
   }
@@ -365,12 +428,17 @@ void InputReport(void *context, IOReturn result, void *sender,
   }
 }
 
+// The search goes round again until a remote turns up, for about a minute.
 - (void)deviceInquiryComplete:(IOBluetoothDeviceInquiry *)sender
                          error:(IOReturn)error aborted:(BOOL)aborted {
-  if (!aborted && _bluetoothDevice == nil && error == kIOReturnSuccess) {
+  if (aborted || sender != _inquiry || _bluetoothDevice != nil) return;
+  if (error == kIOReturnSuccess && ++_rounds < kWiimoteSearchRounds) {
     [sender clearFoundDevices];
     [sender start];
+    return;
   }
+  _inquiry = nil;
+  [self setStatus:@"Didn't find one. Press SYNC, then Search Again." spinning:NO];
 }
 
 - (void)devicePairingPINCodeRequest:(id)sender {
@@ -389,6 +457,7 @@ void InputReport(void *context, IOReturn result, void *sender,
 
 - (void)devicePairingFinished:(id)sender error:(IOReturn)error {
   IOBluetoothDevicePair *pair = (IOBluetoothDevicePair *)sender;
+  if (pair != _pair) return;
   if (error != kIOReturnSuccess) {
     [self setStatus:[NSString stringWithFormat:@"Bluetooth pairing failed (0x%x).", error]
            spinning:NO];
@@ -418,12 +487,12 @@ void KartPadApplyExperimentalWiimotePreference(void) {
   SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_WII, enabled ? "1" : "0");
 }
 
+// The experimental setting stays as the player left it (the menu turns it on, with its warning);
+// pairing switches SDL's Wii driver on only while it needs it.
 void KartPadBeginWiimotePairing(void (^status)(NSString *message, BOOL busy)) {
   if (gKartPadWiimotePairController == nil) {
     gKartPadWiimotePairController = [KartPadWiimotePairController new];
   }
-  [NSUserDefaults.standardUserDefaults setBool:YES forKey:KartPadExperimentalWiimoteDefaultsKey];
-  KartPadApplyExperimentalWiimotePreference();
   gKartPadWiimotePairController.statusHandler = status;
   [gKartPadWiimotePairController beginPairing];
 }
@@ -447,11 +516,6 @@ void KartPadCancelWiimotePairing(void) {
 - (void)cancel;
 @end
 
-// Forgetting a pairing, as the Mac's Bluetooth settings do; there's no public call for it.
-@interface IOBluetoothDevice (KartPadPrivateRemove)
-- (void)remove;
-@end
-
 namespace {
 
 // About a minute of searching: an inquiry slows other Bluetooth (headphones, connected
@@ -459,8 +523,10 @@ namespace {
 constexpr int kGamepadSearchRounds = 6;
 constexpr int64_t kGamepadConnectTimeout = 20 * NSEC_PER_SEC;
 // A controller the Mac already knows that turns up in a search is in pairing mode again, so its
-// half of the old pairing may be gone (paired to a console since, say). Give the old one a moment,
-// then forget it and pair afresh.
+// half of the old pairing may be gone (paired to a console since, say). If it hasn't come in after
+// a moment, the player forgets it in Bluetooth settings: KartPad doesn't forget a pairing itself
+// (there's no public call, and a controller that connects but isn't one SDL can use would lose its
+// pairing for nothing).
 constexpr int64_t kGamepadKnownTimeout = 8 * NSEC_PER_SEC;
 
 BOOL IsGamepad(IOBluetoothDevice *device) {
@@ -593,30 +659,13 @@ BOOL IsGamepad(IOBluetoothDevice *device) {
 - (void)connectKnown {
   [self openConnection];
   [self setStatus:@"Found it. Connecting…" busy:YES];
-  [self after:kGamepadKnownTimeout do:^(KartPadGamepadPairController *controller) { [controller forgetAndPair]; }];
-}
-
-- (void)forgetAndPair {
-  if (![_device respondsToSelector:@selector(remove)]) {
-    [self log:@"forget=unavailable"];
-    [self setStatus:@"It didn't connect. Forget it in Bluetooth settings, then Search Again." busy:NO];
-    return;
-  }
-  [self log:@"forget=started"];
-  [self setStatus:@"Pairing it again…" busy:YES];
-  [_device closeConnection];
-  [_device remove];
-  [self waitForgotten:12];
-}
-
-// Forgetting finishes in the background; pair once it has (or try anyway after about 3 seconds).
-- (void)waitForgotten:(int)triesLeft {
-  if (!_device.isPaired || triesLeft == 0) {
-    [self log:@"forget=%@", _device.isPaired ? @"still-paired" : @"done"];
-    [self pair];
-    return;
-  }
-  [self after:250 * NSEC_PER_MSEC do:^(KartPadGamepadPairController *controller) { [controller waitForgotten:triesLeft - 1]; }];
+  [self after:kGamepadKnownTimeout do:^(KartPadGamepadPairController *controller) {
+    const BOOL connected = controller->_device.isConnected;
+    [controller log:@"connect=known-timed-out; connected=%d", connected];
+    [controller setStatus:connected ? @"It connected, but KartPad can't use it."
+                                    : @"It didn't connect. Forget it in Bluetooth settings, then Search Again."
+                     busy:NO];
+  }];
 }
 
 - (void)paired {

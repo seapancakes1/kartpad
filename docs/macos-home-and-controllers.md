@@ -69,8 +69,11 @@ so you can tell which one is yours.
   KartPad watches. When the new controller turns up it celebrates and gives it
   the first free player. The search stops after about a minute, since it slows
   other Bluetooth while it runs, and automated runs (`KARTPAD_BACKGROUND=1`)
-  don't search. The phone page shows one QR code and lists the phones that have
-  joined, each with its player, its link delay and **Remove**.
+  don't search. A controller the Mac already knows that doesn't connect is
+  forgotten in Bluetooth Settings (KartPad doesn't forget pairings itself).
+  Wii Remotes already connected stay connected while another pairs. The phone
+  page shows one QR code and lists the phones that have joined, each with its
+  player, its link delay and **Remove**.
 - **The keyboard** is a controller too: by default it plays as the first
   player without a controller, so a pad on Player 1 now works alongside it.
   Settings → Controls → Keyboard plays as pins it to a player.
