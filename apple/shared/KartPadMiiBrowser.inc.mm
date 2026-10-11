@@ -372,7 +372,8 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
     sound.accessibilityValue=[KPMiiSounds shared].enabled?@"On":@"Off";
 #endif
 }
-- (void)willShow{[[KPMiiSounds shared] prepare:KPMiiSoundArchivePath()];KPPlay(KPSound::Open);}
+// The editor's preview shader compiles meanwhile, off the main thread, so the editor opens ready.
+- (void)willShow{[[KPMiiSounds shared] prepare:KPMiiSoundArchivePath()];KPPlay(KPSound::Open);KPMiiPreparePipeline(MTLCreateSystemDefaultDevice(),nil);}
 - (void)willClose{KPPlay(KPSound::Close);[[KPMiiSounds shared] suspendSoon];}
 - (BOOL)editable{return !self.queueBlocked&&!self.readError;}
 - (NSDictionary*)recordForSlot:(NSUInteger)slot{for(NSDictionary *record in self.records)if([record[@"slot"] unsignedIntegerValue]==slot)return record;return nil;}

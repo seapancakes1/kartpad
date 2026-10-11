@@ -48,6 +48,68 @@ struct KPMiiUniform { simd_float4x4 mvp, model; simd_float4 color; float texture
     return self;
 }
 @end
+// The preview's render pipeline, built once per device off the main thread: compiling the shader
+// took about 170 ms of the main thread (the game's, on the Mac) the first time an editor opened.
+// The Miis screen starts it when it opens; each preview draws once it is ready. Main thread only.
+static NSString *KPMiiShaderSource(){
+    return @R"METAL(
+#include <metal_stdlib>
+using namespace metal;
+struct V { float4 p; float4 n; float2 uv; float4 color; };
+struct U { float4x4 mvp; float4x4 model; float4 color; float textured; float unlit; float bodyMaterial; float alphaThreshold; };
+struct O { float4 p [[position]]; float3 n; float2 uv; float4 color; };
+vertex O miiVertex(uint i [[vertex_id]], const device V *v [[buffer(0)]], constant U &u [[buffer(1)]]) {
+    O o; o.p=u.mvp*v[i].p; o.n=(u.model*v[i].n).xyz; o.uv=v[i].uv; o.color=v[i].color; return o;
+}
+fragment float4 miiFragment(O o [[stage_in]], constant U &u [[buffer(1)]],
+                           texture2d<float> t [[texture(0)]], texture2d<float> lm [[texture(1)]],
+                           texture2d<float> hm [[texture(2)]], sampler s [[sampler(0)]]) {
+    float3 n=normalize(o.n);
+    if(u.bodyMaterial>0.5) {
+        // NW4R MiiBody TEV: vertex alpha is a lighting coefficient; texture alpha masks highlights.
+        // Neither is surface transparency; the material's alpha test drops the atlas's transparent texels.
+        // Both body sections use the same diffuse atlas.
+        float2 env=float2(n.x,-n.y)*0.5+0.5;
+        float4 diffuse=t.sample(s,o.uv);
+        if(diffuse.a<u.alphaThreshold)discard_fragment();
+        float3 lighting=saturate(o.color.rgb+lm.sample(s,env).rgb*o.color.a);
+        float3 rgb=saturate(diffuse.rgb*lighting)*u.color.rgb;
+        rgb=saturate(rgb+hm.sample(s,env).rgb*diffuse.a);
+        return float4(rgb,1);
+    }
+    float4 c=u.color*o.color;
+    if(u.textured>0.5) { float4 sample=t.sample(s,o.uv); sample.rgb/=max(sample.a,0.0001); c*=sample; }
+    if(c.a<0.006)discard_fragment();
+    float light=(u.unlit>0.5||length(o.n)<0.001)?1.0:0.72+0.28*max(0.0,dot(n,normalize(float3(-0.3,0.5,0.8))));
+    return float4(c.rgb*light,c.a);
+}
+)METAL";
+}
+static void KPMiiPreparePipeline(id<MTLDevice> device,void(^ready)(id<MTLRenderPipelineState> pipeline)){
+    static id<MTLDevice> built;static id<MTLRenderPipelineState> pipeline;static NSMutableArray *waiting;static BOOL compiling;
+    if(!device)return;
+    if(device==built&&pipeline){if(ready)ready(pipeline);return;}
+    if(!waiting)waiting=[NSMutableArray array];
+    if(ready)[waiting addObject:ready];
+    if(compiling&&device==built)return;
+    built=device;pipeline=nil;compiling=YES;
+    auto finish=^(id<MTLRenderPipelineState> state,NSError *error){dispatch_async(dispatch_get_main_queue(),^{
+        if(device!=built)return;
+        if(error)NSLog(@"Mii preview pipeline: %@",error.localizedDescription);
+        pipeline=state;compiling=NO;NSArray *callbacks=waiting;waiting=[NSMutableArray array];
+        if(state)for(void(^callback)(id<MTLRenderPipelineState>) in callbacks)callback(state);
+    });};
+    [device newLibraryWithSource:KPMiiShaderSource() options:nil completionHandler:^(id<MTLLibrary> library,NSError *error){
+        if(!library){finish(nil,error);return;}
+        MTLRenderPipelineDescriptor *p=[MTLRenderPipelineDescriptor new];
+        p.vertexFunction=[library newFunctionWithName:@"miiVertex"];p.fragmentFunction=[library newFunctionWithName:@"miiFragment"];
+        p.colorAttachments[0].pixelFormat=MTLPixelFormatBGRA8Unorm;p.depthAttachmentPixelFormat=MTLPixelFormatDepth32Float;p.rasterSampleCount=4;
+        auto attachment=p.colorAttachments[0];attachment.blendingEnabled=YES;
+        attachment.sourceRGBBlendFactor=MTLBlendFactorSourceAlpha;attachment.destinationRGBBlendFactor=MTLBlendFactorOneMinusSourceAlpha;
+        attachment.sourceAlphaBlendFactor=MTLBlendFactorOne;attachment.destinationAlphaBlendFactor=MTLBlendFactorOneMinusSourceAlpha;
+        [device newRenderPipelineStateWithDescriptor:p completionHandler:^(id<MTLRenderPipelineState> state,NSError *failure){finish(state,failure);}];
+    }];
+}
 @interface KPMiiMetalPreview : MTKView <MTKViewDelegate> {
     id<MTLCommandQueue> _queue;
     id<MTLRenderPipelineState> _pipeline;
@@ -85,45 +147,6 @@ struct KPMiiUniform { simd_float4x4 mvp, model; simd_float4 color; float texture
         self.colorPixelFormat=MTLPixelFormatBGRA8Unorm; self.depthStencilPixelFormat=MTLPixelFormatDepth32Float;
         self.sampleCount=4;self.clearColor=MTLClearColorMake(.925,.947,.945,1);
         _queue=[self.device newCommandQueue];
-        NSString *source=@R"METAL(
-#include <metal_stdlib>
-using namespace metal;
-struct V { float4 p; float4 n; float2 uv; float4 color; };
-struct U { float4x4 mvp; float4x4 model; float4 color; float textured; float unlit; float bodyMaterial; float alphaThreshold; };
-struct O { float4 p [[position]]; float3 n; float2 uv; float4 color; };
-vertex O miiVertex(uint i [[vertex_id]], const device V *v [[buffer(0)]], constant U &u [[buffer(1)]]) {
-    O o; o.p=u.mvp*v[i].p; o.n=(u.model*v[i].n).xyz; o.uv=v[i].uv; o.color=v[i].color; return o;
-}
-fragment float4 miiFragment(O o [[stage_in]], constant U &u [[buffer(1)]],
-                           texture2d<float> t [[texture(0)]], texture2d<float> lm [[texture(1)]],
-                           texture2d<float> hm [[texture(2)]], sampler s [[sampler(0)]]) {
-    float3 n=normalize(o.n);
-    if(u.bodyMaterial>0.5) {
-        // NW4R MiiBody TEV: vertex alpha is a lighting coefficient; texture alpha masks highlights.
-        // Neither is surface transparency; the material's alpha test drops the atlas's transparent texels.
-        // Both body sections use the same diffuse atlas.
-        float2 env=float2(n.x,-n.y)*0.5+0.5;
-        float4 diffuse=t.sample(s,o.uv);
-        if(diffuse.a<u.alphaThreshold)discard_fragment();
-        float3 lighting=saturate(o.color.rgb+lm.sample(s,env).rgb*o.color.a);
-        float3 rgb=saturate(diffuse.rgb*lighting)*u.color.rgb;
-        rgb=saturate(rgb+hm.sample(s,env).rgb*diffuse.a);
-        return float4(rgb,1);
-    }
-    float4 c=u.color*o.color;
-    if(u.textured>0.5) { float4 sample=t.sample(s,o.uv); sample.rgb/=max(sample.a,0.0001); c*=sample; }
-    if(c.a<0.006)discard_fragment();
-    float light=(u.unlit>0.5||length(o.n)<0.001)?1.0:0.72+0.28*max(0.0,dot(n,normalize(float3(-0.3,0.5,0.8))));
-    return float4(c.rgb*light,c.a);
-}
-)METAL";
-        NSError *error=nil;id<MTLLibrary> library=[self.device newLibraryWithSource:source options:nil error:&error];
-        MTLRenderPipelineDescriptor *p=[MTLRenderPipelineDescriptor new];
-        p.vertexFunction=[library newFunctionWithName:@"miiVertex"];p.fragmentFunction=[library newFunctionWithName:@"miiFragment"];
-        p.colorAttachments[0].pixelFormat=self.colorPixelFormat;p.depthAttachmentPixelFormat=self.depthStencilPixelFormat;p.rasterSampleCount=4;
-        auto attachment=p.colorAttachments[0];attachment.blendingEnabled=YES;attachment.sourceRGBBlendFactor=MTLBlendFactorSourceAlpha;attachment.destinationRGBBlendFactor=MTLBlendFactorOneMinusSourceAlpha;attachment.sourceAlphaBlendFactor=MTLBlendFactorOne;attachment.destinationAlphaBlendFactor=MTLBlendFactorOneMinusSourceAlpha;
-        _pipeline=[self.device newRenderPipelineStateWithDescriptor:p error:&error];
-        if(error)NSLog(@"Mii preview pipeline: %@",error.localizedDescription);
         MTLDepthStencilDescriptor *depth=[MTLDepthStencilDescriptor new];depth.depthCompareFunction=MTLCompareFunctionLessEqual;depth.depthWriteEnabled=YES;_opaqueDepth=[self.device newDepthStencilStateWithDescriptor:depth];depth.depthWriteEnabled=NO;_overlayDepth=[self.device newDepthStencilStateWithDescriptor:depth];
         _samplers=[NSMutableArray array];
         const MTLSamplerAddressMode modes[]={MTLSamplerAddressModeClampToEdge,MTLSamplerAddressModeRepeat,MTLSamplerAddressModeMirrorRepeat};
@@ -146,6 +169,9 @@ fragment float4 miiFragment(O o [[stage_in]], constant U &u [[buffer(1)]],
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(visibilityChanged) name:UIApplicationDidBecomeActiveNotification object:nil];
 #endif
         [self motionPreferenceChanged];
+        // Drawn once the shared pipeline is ready (KPMiiPreparePipeline); until then the view stays clear.
+        __weak KPMiiMetalPreview *weak=self;
+        KPMiiPreparePipeline(self.device,^(id<MTLRenderPipelineState> pipeline){KPMiiMetalPreview *view=weak;if(!view)return;view->_pipeline=pipeline;[view updateRunning];[view redraw];});
     }return self;
 }
 - (void)dealloc{
@@ -184,7 +210,7 @@ fragment float4 miiFragment(O o [[stage_in]], constant U &u [[buffer(1)]],
 - (void)faceFront{if(!self.animated)return;float yaw=std::remainder(self.yaw,float(2*M_PI));if(std::abs(yaw)<.01f){_yaw=0;return;}if(_reduceMotion||!_visible){self.yaw=0;return;}_frontFrom=yaw;_frontStart=CACurrentMediaTime();}
 - (void)installScene:(KPMiiGPUScene*)gpu {
     _scene=gpu?gpu->scene:nullptr;_blinkTexture=_smileTexture=nil;
-    if(!_scene||!self.device||!_pipeline||gpu->buffers.count!=_scene->parts.size()){_buffers=[NSMutableArray array];_textures=[NSMutableArray array];_lightMaps=[NSMutableArray array];_highlightMaps=[NSMutableArray array];_ring=[NSMutableDictionary dictionary];[self updateRunning];return;}
+    if(!_scene||!self.device||gpu->buffers.count!=_scene->parts.size()){_buffers=[NSMutableArray array];_textures=[NSMutableArray array];_lightMaps=[NSMutableArray array];_highlightMaps=[NSMutableArray array];_ring=[NSMutableDictionary dictionary];[self updateRunning];return;}
     _buffers=gpu->buffers;_textures=gpu->textures;_lightMaps=gpu->lightMaps;_highlightMaps=gpu->highlightMaps;_ring=gpu->ring;_blinkTexture=gpu->blinkTexture;_smileTexture=gpu->smileTexture;
     [self updateRunning];
 }
