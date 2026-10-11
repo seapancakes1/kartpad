@@ -125,17 +125,25 @@ static NSString *KPMiiRestartFirstMessage(){return [@"A ghost import or save res
 - (void)miiEditorSaved:(NSString*)description mii:(NSData*)mii slot:(NSUInteger)slot;
 @end
 static __weak id<KPMiiEditorListener> KPMiiSaveListener;
+// cropHead crops to the drawn pixels plus a margin. The crop gets pixels of its own: a CGImage
+// cropped in place keeps the whole canvas (1 MiB for a 512×512 portrait) behind a small head.
 static KPMiiImage *KPMiiImageFromPixels(const kartpad::mii::Image &image, BOOL cropHead=NO) {
-    NSData *data=[NSData dataWithBytes:image.rgba.data() length:image.rgba.size()];
-    CGDataProviderRef provider=CGDataProviderCreateWithCFData((__bridge CFDataRef)data);
-    CGColorSpaceRef color=CGColorSpaceCreateDeviceRGB();
-    CGImageRef cg=CGImageCreate(image.width,image.height,8,32,image.width*4,color,kCGImageAlphaLast,provider,nullptr,true,kCGRenderingIntentDefault);
-    CGColorSpaceRelease(color);CGDataProviderRelease(provider);
+    unsigned x0=0,y0=0,x1=image.width,y1=image.height;
     if(cropHead){
         unsigned left=image.width,top=image.height,right=0,bottom=0;
-        for(unsigned y=0;y<image.height;y++)for(unsigned x=0;x<image.width;x++)if(image.rgba[(y*image.width+x)*4+3]>4){left=std::min(left,x);right=std::max(right,x);top=std::min(top,y);bottom=std::max(bottom,y);}
-        if(left<=right){CGFloat pad=std::max(2.,std::round(std::max(image.width,image.height)*.05));CGRect rect=CGRectIntersection(CGRectMake(0,0,image.width,image.height),CGRectMake(left-pad,top-pad,right-left+1+2*pad,bottom-top+1+2*pad));CGImageRef crop=CGImageCreateWithImageInRect(cg,rect);CGImageRelease(cg);cg=crop;}
+        for(unsigned y=0;y<image.height;y++)for(unsigned x=0;x<image.width;x++)if(image.rgba[(y*image.width+x)*4+3]>4){
+            left=std::min(left,x);right=std::max(right,x);top=std::min(top,y);bottom=std::max(bottom,y);}
+        if(left<=right){
+            unsigned pad=unsigned(std::max(2.,std::round(std::max(image.width,image.height)*.05)));
+            x0=left>pad?left-pad:0;y0=top>pad?top-pad:0;x1=std::min(image.width,right+1+pad);y1=std::min(image.height,bottom+1+pad);
+        }
     }
+    const size_t rowBytes=size_t(x1-x0)*4;NSMutableData *data=[NSMutableData dataWithLength:rowBytes*(y1-y0)];
+    for(unsigned y=y0;y<y1;y++)memcpy((uint8_t*)data.mutableBytes+(y-y0)*rowBytes,image.rgba.data()+(size_t(y)*image.width+x0)*4,rowBytes);
+    CGDataProviderRef provider=CGDataProviderCreateWithCFData((__bridge CFDataRef)data);
+    CGColorSpaceRef color=CGColorSpaceCreateDeviceRGB();
+    CGImageRef cg=CGImageCreate(x1-x0,y1-y0,8,32,rowBytes,color,kCGImageAlphaLast,provider,nullptr,true,kCGRenderingIntentDefault);
+    CGColorSpaceRelease(color);CGDataProviderRelease(provider);
 #if TARGET_OS_OSX
     NSImage *result=[[NSImage alloc]initWithCGImage:cg size:NSMakeSize(CGImageGetWidth(cg),CGImageGetHeight(cg))];
 #else
@@ -193,8 +201,44 @@ static KPMiiImage *KPMiiFeatureImage(const kartpad::mii::Resources&r,unsigned fi
     if(field==9)a.Set(11,30);
     return KPMiiImageFromPixels(Portrait::Render(r,a),YES);
 }
-// Face shape and colours that feed the tiles; part of the thumbnail cache key so changing them re-renders the tiles.
-static NSString *KPMiiTileColors(const kartpad::mii::Appearance&a){return [NSString stringWithFormat:@"%u.%u.%u.%u.%u.%u.%u.%u",a.Clamped(7),a.Clamped(8),a.Clamped(12),a.Clamped(17),a.Clamped(22),a.Clamped(30),a.Clamped(34),a.Clamped(39)];}
+// The face shape and colours a field's tiles are drawn with (see KPMiiFeatureImage): part of the
+// tile cache key, so changing one re-renders only the tiles that show it.
+static NSString *KPMiiTileInputs(unsigned field,const kartpad::mii::Appearance&a){
+    switch(field){
+    case 7:return [NSString stringWithFormat:@"%u",a.Clamped(8)];
+    case 14:return [NSString stringWithFormat:@"%u",a.Clamped(17)];
+    case 20:return [NSString stringWithFormat:@"%u",a.Clamped(22)];
+    case 29:return [NSString stringWithFormat:@"%u",a.Clamped(30)];
+    case 33:return [NSString stringWithFormat:@"%u",a.Clamped(34)];
+    case 37:return [NSString stringWithFormat:@"%u",a.Clamped(39)];
+    default:return [NSString stringWithFormat:@"%u.%u.%u.%u",a.Clamped(7),a.Clamped(8),a.Clamped(12),a.Clamped(39)];
+    }
+}
+// Rendered feature tiles, most recently used kept within a pixel budget (pages of every feature
+// and a few colour choices). Not an NSCache, which under memory pressure drops each tile as it is
+// stored (see KPMiiPortraitStore). Emptied when the editor closes. Preview worker only.
+@interface KPMiiTileCache:NSObject
+- (KPMiiImage*)objectForKey:(NSString*)key;
+- (void)setObject:(KPMiiImage*)image forKey:(NSString*)key;
+- (void)removeAllObjects;
+@property(nonatomic,readonly) NSUInteger cost;
+@end
+@implementation KPMiiTileCache{NSMutableDictionary<NSString*,KPMiiImage*> *_images;NSMutableOrderedSet<NSString*> *_recent;NSMutableDictionary<NSString*,NSNumber*> *_costs;}
+static const NSUInteger KPMiiTileBudget=24*1024*1024;
+// Pixel bytes: KPMiiImageFromPixels sizes its images one point per pixel.
+static NSUInteger KPMiiImageCost(KPMiiImage *image){return NSUInteger(image.size.width*image.size.height*4);}
+- (instancetype)init{if((self=[super init])){_images=[NSMutableDictionary dictionary];_recent=[NSMutableOrderedSet orderedSet];_costs=[NSMutableDictionary dictionary];}return self;}
+- (KPMiiImage*)objectForKey:(NSString*)key{KPMiiImage *image=_images[key];if(image){[_recent removeObject:key];[_recent addObject:key];}return image;}
+- (void)setObject:(KPMiiImage*)image forKey:(NSString*)key{
+    if(_images[key]){_cost-=_costs[key].unsignedIntegerValue;[_recent removeObject:key];}
+    NSUInteger cost=KPMiiImageCost(image);_images[key]=image;_costs[key]=@(cost);_cost+=cost;[_recent addObject:key];
+    while(_cost>KPMiiTileBudget&&_recent.count>1){NSString *old=_recent.firstObject;_cost-=_costs[old].unsignedIntegerValue;[_images removeObjectForKey:old];[_costs removeObjectForKey:old];[_recent removeObjectAtIndex:0];}
+}
+- (void)removeAllObjects{[_images removeAllObjects];[_recent removeAllObjects];[_costs removeAllObjects];_cost=0;}
+@end
+static KPMiiTileCache *KPMiiTiles(){static KPMiiTileCache *tiles;static dispatch_once_t once;dispatch_once(&once,^{tiles=[KPMiiTileCache new];});return tiles;}
+// The editor closed: its tiles go (on the worker, after any render still running).
+static void KPMiiForgetTiles(){dispatch_async(KPMiiWorkQueue(),^{[KPMiiTiles() removeAllObjects];});}
 // What the editor shows of a draft: fields out of range at their nearest valid value. Edits start
 // from the draft itself, so a stored value changes only when its field is edited.
 static kartpad::mii::Appearance KPShown(NSData *draft){return kartpad::mii::Appearance::Decode(Bytes(draft)).InRange();}
@@ -1090,7 +1134,7 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
 }
 - (void)refreshPreview{
     auto appearance=kartpad::mii::Appearance::Decode(Bytes(self.draft));uint64_t revision=_revision.Next();_ticket->store(revision);auto ticket=_ticket;
-    unsigned field=self.feature,page=self.page;BOOL needsTiles=self.category>=2;NSString *colors=KPMiiTileColors(appearance);id<MTLDevice> device=self.preview.device;
+    unsigned field=self.feature,page=self.page;BOOL needsTiles=self.category>=2;NSString *inputs=KPMiiTileInputs(field,appearance);id<MTLDevice> device=self.preview.device;
     __weak KPMiiEditor *weak=self;
     if(!self.previewLoaded)self.previewMessage=@"Loading preview…";
     dispatch_async(KPMiiWorkQueue(),^{@autoreleasepool{
@@ -1104,11 +1148,11 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
             if(ticket->load()!=revision)return;
             KPMiiGPUScene *gpu=[[KPMiiGPUScene alloc]initWithScene:scene device:device];
             NSString *previewStatus=body?nil:@"Body missing. Import your game data again.";
-            static std::weak_ptr<kartpad::mii::Resources> previous;static NSMutableDictionary *cache;
-            if(previous.lock().get()!=resource.get()){cache=[NSMutableDictionary dictionary];previous=resource;}
+            static std::weak_ptr<kartpad::mii::Resources> previous;KPMiiTileCache *cache=KPMiiTiles();
+            if(previous.lock().get()!=resource.get()){[cache removeAllObjects];previous=resource;}
             NSMutableDictionary *images=[NSMutableDictionary dictionary];
-            if(needsTiles){auto ids=kartpad::mii::FeatureIds(field);for(size_t i=page*12;i<std::min(ids.size(),size_t(page*12+12));i++){NSString *key=[NSString stringWithFormat:@"%u:%u",field,ids[i]],*cacheKey=[NSString stringWithFormat:@"%@:%@",key,colors];if(ticket->load()!=revision)return;
-                if(!cache[cacheKey]){auto thumbnail=KPMiiFeatureImage(*resource,field,ids[i],appearance);if(thumbnail)cache[cacheKey]=thumbnail;}if(cache[cacheKey])images[key]=cache[cacheKey];}}
+            if(needsTiles){auto ids=kartpad::mii::FeatureIds(field);for(size_t i=page*12;i<std::min(ids.size(),size_t(page*12+12));i++){NSString *key=[NSString stringWithFormat:@"%u:%u",field,ids[i]],*cacheKey=[NSString stringWithFormat:@"%@:%@",key,inputs];if(ticket->load()!=revision)return;
+                KPMiiImage *tile=[cache objectForKey:cacheKey];if(!tile&&(tile=KPMiiFeatureImage(*resource,field,ids[i],appearance)))[cache setObject:tile forKey:cacheKey];if(tile)images[key]=tile;}}
             dispatch_async(dispatch_get_main_queue(),^{KPMiiEditor *editor=weak;if(!editor||!editor->_revision.Accept(revision))return;[editor.preview installScene:gpu];[editor.thumbnails removeAllObjects];[editor.thumbnails addEntriesFromDictionary:images];editor.previewLoaded=YES;editor.previewMessage=editor.preview.device?previewStatus:@"Preview unavailable.";[editor.canvas redraw];});
         }catch(const std::exception&error){NSString *message=[NSString stringWithUTF8String:error.what()];dispatch_async(dispatch_get_main_queue(),^{KPMiiEditor *editor=weak;if(!editor||!editor->_revision.Accept(revision))return;[editor.preview installScene:nil];editor.previewLoaded=YES;editor.previewMessage=message;[editor.canvas redraw];});}
     }});
@@ -1345,7 +1389,7 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
     if(![self dirty]){KPPlay(KPSound::Close);return YES;}
     NSAlert *alert=[NSAlert new];alert.messageText=[self saveQuestion];[alert addButtonWithTitle:@"Save"];[alert addButtonWithTitle:@"Keep Editing"];[alert addButtonWithTitle:@"Discard Changes"];KPPlay(KPSound::Dialog);NSInteger answer=[alert runModal];if(answer==NSAlertFirstButtonReturn){[self save];return self.allowClose;}KPPlay(answer==NSAlertThirdButtonReturn?KPSound::PagePrevious:KPSound::Close);return answer==NSAlertThirdButtonReturn;
 }
-- (void)windowWillClose:(NSNotification*)note{[[KPMiiSounds shared] suspendSoon];}
+- (void)windowWillClose:(NSNotification*)note{[[KPMiiSounds shared] suspendSoon];KPMiiForgetTiles();}
 - (void)quit{[self.window performClose:nil];}
 // A duplicate is a new Mii that skips the Male/Female screen and opens on Profile for renaming.
 - (instancetype)initWithData:(NSData*)data slot:(NSUInteger)slot duplicate:(BOOL)duplicate{
@@ -1359,7 +1403,7 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
 }
 - (void)viewDidLoad{[super viewDidLoad];self.view.backgroundColor=[UIColor colorWithDynamicProvider:^UIColor*(UITraitCollection *traits){return KPColor(traits.userInterfaceStyle==UIUserInterfaceStyleDark?KPDarkPalette.background:KPLightPalette.background);}];self.canvas=[KPMiiCanvas new];self.canvas.translatesAutoresizingMaskIntoConstraints=NO;[self.view addSubview:self.canvas];[NSLayoutConstraint activateConstraints:@[[self.canvas.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor],[self.canvas.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor],[self.canvas.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor],[self.canvas.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor]]];[self setup];self.modalInPresentation=YES;[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(keyboard:) name:UIKeyboardWillChangeFrameNotification object:nil];[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(contentSizeChanged:) name:UIContentSizeCategoryDidChangeNotification object:nil];}
 - (void)keyboard:(NSNotification*)note{CGRect keyboard=[self.view convertRect:[note.userInfo[UIKeyboardFrameEndUserInfoKey] CGRectValue] fromView:nil];CGFloat overlap=std::max(CGFloat(0),CGRectGetMaxY(self.canvas.frame)-keyboard.origin.y);for(UIView *view in self.canvas.subviews)if([view isKindOfClass:UIScrollView.class]){UIScrollView *scroll=(UIScrollView*)view;scroll.contentInset=UIEdgeInsetsMake(0,0,overlap,0);for(UITextField *field in self.nameFields)if(field.isFirstResponder)[scroll scrollRectToVisible:CGRectInset(field.frame,0,-10) animated:NO];}}
-- (void)viewDidDisappear:(BOOL)animated{[super viewDidDisappear:animated];[[KPMiiSounds shared] suspendSoon];}
+- (void)viewDidDisappear:(BOOL)animated{[super viewDidDisappear:animated];[[KPMiiSounds shared] suspendSoon];if(self.isBeingDismissed)KPMiiForgetTiles();}
 - (void)contentSizeChanged:(NSNotification*)note{for(KPMiiWiiButton *button in self.canvas.buttons)button.look=NSUIntegerMax;[self.canvas redraw];}
 - (void)dealloc{[NSNotificationCenter.defaultCenter removeObserver:self];}
 #endif
