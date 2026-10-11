@@ -12,18 +12,23 @@
 <title>KartPad Controller</title>
 <!--
   KartPad's phone controller. One page, two ways in:
-  - Over HTTPS (GitHub Pages), where browsers give a page the phone's motion, so it can steer by
-    tilting. The QR code on the Mac opens it with the Mac's address and this launch's key after the #
-    (never sent to the page's host). Joining opens the Mac's helper page in a second tab, which swaps
-    WebRTC details with KartPad (apple/macos/KartPadPhoneControllers.inc.mm) and closes; input then
-    goes straight to the Mac over a data channel.
+  - Over HTTPS, where a build of KartPad says it's published (KARTPAD_PHONE_PAGE_URL; see
+    docs/MULTIPLAYER.md). Browsers give such a page the phone's motion, so it can steer by tilting.
+    The QR code on the Mac opens it with the Mac's address and this launch's key after the # (never
+    sent to the page's host). Joining opens the Mac's helper page in a second tab with an offer
+    signed with the key, which swaps WebRTC details with KartPad
+    (apple/macos/KartPadPhoneControllers.inc.mm) and closes; input then goes straight to the Mac over
+    a data channel.
   - From the Mac itself (built into the app, and served at its own address with the key after the #),
     touch only, over a WebSocket.
-  Messages are those of runtime/include/kartpad/network/phone_pad.h. KartPad also says what the
-  player is doing (the menus, the start of a race, the race), and the page shows the controls for it:
-  a D-pad in the menus; in a race, Drift, Item and Trick with a stick, or tilt steering with Drift
-  and Item under the left thumb. In a race it accelerates by itself from GO; the start is the
-  player's, for a rocket start. The look follows KartPad's (apple/shared/KartPadStyle.h).
+  The key itself is never sent: joining proves it with HMAC-SHA256 (see "Joining" below). Messages
+  are those of runtime/include/kartpad/network/phone_pad.h, and VERSION is its ProtocolVersion: publish
+  this page again when that changes. KartPad also says what the
+  player is doing (the menus, the start of a race, the race, a fall), and the page shows the controls
+  for it: a D-pad in the menus; in a race, Drift under the right thumb and Item on the left, with a
+  stick or tilt steering. In a race it accelerates by itself from GO; the start and a fall are the
+  player's, for a rocket start or Lakitu's boost. The look follows KartPad's
+  (apple/shared/KartPadStyle.h).
 -->
 <style>
 :root {
@@ -46,9 +51,14 @@
   }
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-html, body { position: fixed; inset: 0; margin: 0; overflow: hidden; background: var(--bg); color: var(--text);
+html, body { position: fixed; inset: 0; margin: 0; overflow: hidden; color: var(--text);
   font: 600 16px/1.2 ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", Roboto, sans-serif;
   touch-action: none; overscroll-behavior: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+/* The pinstripes run the way the stage's do, and fill the whole page too: under the browser's bars,
+   and round the stage while the screen turns. */
+html { background: repeating-linear-gradient(var(--stripeDir, to bottom), var(--bg) 0, var(--bg) 2px, var(--stripe) 2px, var(--stripe) 4px) var(--bg); }
+html.turned { --stripeDir: to left; }
+html.turned.back { --stripeDir: to right; }
 #safe { position: fixed; visibility: hidden; pointer-events: none;
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
 /* Everything is drawn on the stage, always landscape: turned a quarter when the screen is upright. */
@@ -74,10 +84,9 @@ html, body { position: fixed; inset: 0; margin: 0; overflow: hidden; background:
 .key small { font-size: calc(var(--u) * 2.8); color: var(--dim); font-weight: 600; }
 .key svg { width: calc(var(--u) * 5.6); height: calc(var(--u) * 5.6); fill: none; stroke: currentColor; stroke-width: 2.2;
   stroke-linecap: round; stroke-linejoin: round; }
-/* A in a race: AUTO while it accelerates by itself; an outline during the countdown, before GO. */
+/* A with Hold: AUTO while a long press keeps it accelerating. */
 .k-a .auto { position: absolute; bottom: 17%; font-size: calc(var(--u) * 2.5); letter-spacing: .08em; line-height: 1;
   padding: .25em .55em; border-radius: 99px; border: 1.5px solid rgba(255, 255, 255, .85); opacity: 0; }
-#stage.starting .k-a .auto { opacity: .6; }
 .k-a.locked .auto { opacity: 1; background: #fff; color: var(--accBottom); }
 .k-a.locked { outline: calc(var(--u) * 1) solid rgba(92, 203, 243, .45); outline-offset: calc(var(--u) * .5); }
 .k-a { font-size: calc(var(--u) * 11); }
@@ -126,8 +135,48 @@ html, body { position: fixed; inset: 0; margin: 0; overflow: hidden; background:
 #menus .k-b { inset-inline-end: calc(var(--ie) + var(--u) * 41); bottom: calc(var(--sb) + var(--u) * 7);
   width: calc(var(--u) * 20); height: calc(var(--u) * 20); }
 
-/* A race with the stick: the stick anywhere on the left, the buttons on the right. Drift rests under
-   the thumb, Item above it, A beside it. */
+/* A race, with the stick or tilt: Drift under the right thumb, B beside it with A+B above (hold it
+   stopped to charge a mini-turbo), Trick over Drift; Item on the left. With Auto, A only shows for the
+   start and after a fall, in Drift's place, since accelerating is then the player's. With Hold, A sits
+   beside Drift all race, and the seams press two buttons. */
+.race .k-drift { inset-inline-end: calc(var(--ie) + var(--u) * 5); bottom: calc(var(--sb) + var(--u) * 7);
+  width: calc(var(--u) * 36); height: calc(var(--u) * 30); }
+.race .k-a { inset-inline-end: calc(var(--ie) + var(--u) * 8); bottom: calc(var(--sb) + var(--u) * 7);
+  width: calc(var(--u) * 30); height: calc(var(--u) * 30); }
+.race .k-b { inset-inline-end: calc(var(--ie) + var(--u) * 45); bottom: calc(var(--sb) + var(--u) * 7);
+  width: calc(var(--u) * 20); height: calc(var(--u) * 20); }
+.race .k-ab { inset-inline-end: calc(var(--ie) + var(--u) * 47); bottom: calc(var(--sb) + var(--u) * 32);
+  width: calc(var(--u) * 16); height: calc(var(--u) * 16); font-size: calc(var(--u) * 4); }
+.race .k-trick { inset-inline-end: calc(var(--ie) + var(--u) * 5); bottom: calc(var(--sb) + var(--u) * 42);
+  width: calc(var(--u) * 36); height: calc(var(--u) * 15); }
+.race .k-a, .race .seam { display: none; }
+#stage.amoment .race .k-a { display: flex; }
+#stage.amoment .race .k-drift, #stage.amoment .race .k-ab { display: none; }
+#stage.hold .race .k-drift { width: calc(var(--u) * 32); height: calc(var(--u) * 26); }
+#stage.hold .race .k-a { display: flex; inset-inline-end: calc(var(--ie) + var(--u) * 40.5);
+  width: calc(var(--u) * 26); height: calc(var(--u) * 26); font-size: calc(var(--u) * 9); }
+#stage.hold .race .k-b { inset-inline-end: calc(var(--ie) + var(--u) * 44.5); bottom: calc(var(--sb) + var(--u) * 37);
+  width: calc(var(--u) * 18); height: calc(var(--u) * 18); }
+#stage.hold .race .k-trick { bottom: calc(var(--sb) + var(--u) * 37); width: calc(var(--u) * 32); height: calc(var(--u) * 14); }
+#stage.hold .race .k-ab { display: none; }
+#stage.hold .race .seam { display: block; }
+.race .s-drift-a { inset-inline-end: calc(var(--ie) + var(--u) * 36.5); bottom: calc(var(--sb) + var(--u) * 10);
+  width: calc(var(--u) * 5); height: calc(var(--u) * 20); }
+.race .s-a-b { inset-inline-end: calc(var(--ie) + var(--u) * 45.5); bottom: calc(var(--sb) + var(--u) * 32);
+  width: calc(var(--u) * 16); height: calc(var(--u) * 5); }
+/* Item: the top throws it forward and the bottom back, as up or down on the stick does. */
+.k-item { justify-content: space-between; padding: calc(var(--u) * 2.2) 0;
+  --rule: linear-gradient(var(--btnStroke), var(--btnStroke)) center 32% / 46% 1px no-repeat,
+          linear-gradient(var(--btnStroke), var(--btnStroke)) center 68% / 46% 1px no-repeat;
+  background: var(--rule), linear-gradient(var(--btnTop), var(--btnBottom)); }
+.k-item.down { background: var(--rule), linear-gradient(var(--btnBottom), var(--btnTop)); }
+.k-item .aim { font-style: normal; font-size: calc(var(--u) * 4); line-height: 1; color: var(--icon); }
+.k-item::before { content: ""; position: absolute; left: 0; right: 0; height: 32%; opacity: 0; background: rgba(27, 154, 213, .3); }
+.k-item.aim-up::before { top: 0; opacity: 1; border-radius: inherit; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.k-item.aim-down::before { bottom: 0; opacity: 1; border-radius: inherit; border-top-left-radius: 0; border-top-right-radius: 0; }
+.k-item.aim-up .up, .k-item.aim-down .down { color: var(--accBottom); }
+
+/* The stick: anywhere on the left, under Item. */
 #stickzone { position: absolute; inset-inline-start: 0; top: calc(var(--u) * 16); bottom: 0;
   width: calc(var(--W) - var(--u) * 75 - var(--ie)); }
 #base, #knob { position: absolute; border-radius: 50%; pointer-events: none; transform: translate(-50%, -50%); direction: ltr; }
@@ -136,35 +185,12 @@ html, body { position: fixed; inset: 0; margin: 0; overflow: hidden; background:
 #knob { width: calc(var(--u) * 17); height: calc(var(--u) * 17); border: 1.25px solid var(--btnStroke);
   background: linear-gradient(var(--btnTop), var(--btnBottom)); box-shadow: 0 calc(var(--u) * .9) 0 var(--ledge); }
 #base.idle, #knob.idle { opacity: .45; }
-#raceStick .k-drift { inset-inline-end: calc(var(--ie) + var(--u) * 5); bottom: calc(var(--sb) + var(--u) * 7);
-  width: calc(var(--u) * 32); height: calc(var(--u) * 25); }
-#raceStick .k-a { inset-inline-end: calc(var(--ie) + var(--u) * 39.5); bottom: calc(var(--sb) + var(--u) * 7);
-  width: calc(var(--u) * 25); height: calc(var(--u) * 25); font-size: calc(var(--u) * 9); }
-#raceStick .k-item { inset-inline-end: calc(var(--ie) + var(--u) * 5); bottom: calc(var(--sb) + var(--u) * 34.5);
-  width: calc(var(--u) * 32); height: calc(var(--u) * 18); }
-#raceStick .k-b { inset-inline-end: calc(var(--ie) + var(--u) * 44); bottom: calc(var(--sb) + var(--u) * 35);
-  width: calc(var(--u) * 17); height: calc(var(--u) * 17); }
-#raceStick .k-trick { inset-inline-end: calc(var(--ie) + var(--u) * 5); bottom: calc(var(--sb) + var(--u) * 55);
-  width: calc(var(--u) * 32); height: calc(var(--u) * 13); }
-#raceStick .s-drift-a { inset-inline-end: calc(var(--ie) + var(--u) * 35); bottom: calc(var(--sb) + var(--u) * 10);
-  width: calc(var(--u) * 6.5); height: calc(var(--u) * 19); }
-#raceStick .s-drift-item { inset-inline-end: calc(var(--ie) + var(--u) * 8); bottom: calc(var(--sb) + var(--u) * 30);
-  width: calc(var(--u) * 26); height: calc(var(--u) * 6.5); }
+#raceStick .k-item { inset-inline-start: calc(var(--is) + var(--u) * 5); top: calc(var(--st) + var(--u) * 18);
+  width: calc(var(--u) * 40); height: calc(var(--u) * 30); }
 
-/* A race with tilt: Drift and Item under the left thumb, A, B and Trick under the right, the wheel
-   between them. */
-#raceTilt .k-drift { inset-inline-start: calc(var(--is) + var(--u) * 5); bottom: calc(var(--sb) + var(--u) * 7);
-  width: calc(var(--u) * 34); height: calc(var(--u) * 28); }
-#raceTilt .k-item { inset-inline-start: calc(var(--is) + var(--u) * 5); bottom: calc(var(--sb) + var(--u) * 37.5);
-  width: calc(var(--u) * 34); height: calc(var(--u) * 19); }
-#raceTilt .s-drift-item { inset-inline-start: calc(var(--is) + var(--u) * 8); bottom: calc(var(--sb) + var(--u) * 33);
-  width: calc(var(--u) * 28); height: calc(var(--u) * 6.5); }
-#raceTilt .k-a { inset-inline-end: calc(var(--ie) + var(--u) * 5); bottom: calc(var(--sb) + var(--u) * 7);
-  width: calc(var(--u) * 30); height: calc(var(--u) * 30); }
-#raceTilt .k-b { inset-inline-end: calc(var(--ie) + var(--u) * 38); bottom: calc(var(--sb) + var(--u) * 6);
-  width: calc(var(--u) * 18); height: calc(var(--u) * 18); }
-#raceTilt .k-trick { inset-inline-end: calc(var(--ie) + var(--u) * 5); bottom: calc(var(--sb) + var(--u) * 41);
-  width: calc(var(--u) * 30); height: calc(var(--u) * 15); }
+/* Tilt: Item alone under the left thumb, the wheel in the middle. */
+#raceTilt .k-item { inset-inline-start: calc(var(--is) + var(--u) * 5); bottom: calc(var(--sb) + var(--u) * 7);
+  width: calc(var(--u) * 40); height: calc(var(--u) * 46); }
 #wheel { position: absolute; left: 50%; top: 58%; width: calc(var(--u) * 38); height: calc(var(--u) * 38);
   margin: calc(var(--u) * -19) 0 0 calc(var(--u) * -19); pointer-events: none; }
 #wheel g { stroke: var(--icon); stroke-width: 6; fill: none; stroke-linecap: round; }
@@ -214,25 +240,28 @@ html, body { position: fixed; inset: 0; margin: 0; overflow: hidden; background:
     <div class="key round k-b" data-key="b" data-bit="2">B</div>
     <div class="key round primary k-a" data-key="a" data-bit="1">A</div>
   </div>
-  <div class="layer hidden" id="raceStick">
+  <div class="layer race hidden" id="raceStick">
     <div class="zone" id="stickzone"></div>
     <div id="base" class="idle"></div><div id="knob" class="idle"></div>
+    <div class="key k-item" data-key="l" data-bit="16"><i class="aim up">▲</i>Item<i class="aim down">▼</i></div>
     <div class="key k-trick" data-key="up" data-bit="256">Trick</div>
+    <div class="key round k-ab" data-bit="3">A+B</div>
     <div class="key round k-b" data-key="b" data-bit="2">B</div>
-    <div class="key k-item" data-key="l" data-bit="16">Item</div>
     <div class="key k-drift" data-key="r" data-bit="32">Drift</div>
     <div class="key round primary k-a" data-key="a" data-bit="1">A<span class="auto">AUTO</span></div>
     <div class="seam s-drift-a" data-bit="33"></div>
-    <div class="seam s-drift-item" data-bit="48"></div>
+    <div class="seam s-a-b" data-bit="3"></div>
   </div>
-  <div class="layer hidden" id="raceTilt">
+  <div class="layer race hidden" id="raceTilt">
     <svg id="wheel" viewBox="-50 -50 100 100"><g><circle r="43"/><circle r="9"/><path d="M-43 0H-9M9 0H43M0 9V43"/></g><g><path class="mark" d="M0-47V-36"/></g></svg>
-    <div class="key k-item" data-key="l" data-bit="16">Item</div>
-    <div class="key k-drift" data-key="r" data-bit="32">Drift</div>
-    <div class="seam s-drift-item" data-bit="48"></div>
+    <div class="key k-item" data-key="l" data-bit="16"><i class="aim up">▲</i>Item<i class="aim down">▼</i></div>
     <div class="key k-trick" data-key="up" data-bit="256">Trick</div>
+    <div class="key round k-ab" data-bit="3">A+B</div>
     <div class="key round k-b" data-key="b" data-bit="2">B</div>
+    <div class="key k-drift" data-key="r" data-bit="32">Drift</div>
     <div class="key round primary k-a" data-key="a" data-bit="1">A<span class="auto">AUTO</span></div>
+    <div class="seam s-drift-a" data-bit="33"></div>
+    <div class="seam s-a-b" data-bit="3"></div>
   </div>
   <div class="bar" id="barLeft">
     <div class="key" id="home" data-key="home" aria-label="HOME"><svg viewBox="0 0 24 24"><path d="M3.5 11.5 12 4l8.5 7.5M6 9.5V20h12V9.5"/></svg></div>
@@ -254,7 +283,7 @@ html, body { position: fixed; inset: 0; margin: 0; overflow: hidden; background:
   <div class="sheet hidden" id="message"><div class="card">
     <h1 id="messageTitle"></h1><p id="messageText"></p>
     <div class="row"><button class="btn primary" id="messageButton">Try Again</button></div>
-    <button class="btn hidden" id="touchButton">Use the Touch-Only Link</button>
+    <button class="btn hidden" id="touchButton">Use Touch Controls</button>
   </div></div>
   <div class="sheet hidden" id="tiltAsk"><div class="card">
     <h1>Steer by tilting?</h1>
@@ -291,7 +320,7 @@ const fragment = new URLSearchParams(location.hash.slice(1));
 const mac = secure ? fragment.get("mac") || "" : location.host;
 const key = secure ? fragment.get("k") || "" : location.hash.slice(1);
 const macOrigin = "http://" + mac;
-const tokenKey = "kartpad-phone-" + key;
+const phoneKey = "kartpad-phone-" + key;
 const canTilt = secure && typeof DeviceMotionEvent !== "undefined";
 const iOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (/Mac/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
 
@@ -339,10 +368,14 @@ function show(name) {
   for (const id of ["join", "message", "settings", "tiltAsk"]) $(id).classList.toggle("hidden", id !== name);
   placeStage();
 }
-function message(title, text, button, touch) {
+// button: its label ("" for none), which joins again unless action says otherwise.
+let messageAction = null;
+function message(title, text, button, touch, action) {
   $("messageTitle").textContent = title;
   $("messageText").textContent = text || "";
   $("messageButton").textContent = button || "Try Again";
+  $("messageButton").classList.toggle("hidden", button === "");
+  messageAction = action || null;
   $("touchButton").classList.toggle("hidden", !(touch && secure));
   show("message");
 }
@@ -404,6 +437,8 @@ function placeStage() {
   stage.style.height = H + "px";
   stage.style.transform = rotation === 90 ? "rotate(90deg) translate(0," + -H + "px)"
                         : rotation === -90 ? "rotate(-90deg) translate(" + -W + "px,0)" : "none";
+  document.documentElement.classList.toggle("turned", rotation !== 0);
+  document.documentElement.classList.toggle("back", rotation === -90);
   const s = getComputedStyle($("safe"));
   const [t, r, b, l] = [s.paddingTop, s.paddingRight, s.paddingBottom, s.paddingLeft].map((v) => parseFloat(v) || 0);
   const insets = rotation === 90 ? [r, t, b, l] : rotation === -90 ? [l, b, t, r] : [t, l, r, b];  // top, left, right, bottom
@@ -430,35 +465,40 @@ function onResize() {
   // Safari turned the screen during a race: rotation lock keeps it still.
   if (portrait !== wasPortrait && joined && sheet === null && tilt && layout() === "race" && !pref("lockTip", false)) {
     setPref("lockTip", true);
-    toast("Tip: turn on Rotation Lock.");
+    toast("Turn on Rotation Lock.");
   }
   wasPortrait = portrait;
   placeStage();
 }
 addEventListener("resize", onResize);
-addEventListener("orientationchange", () => setTimeout(onResize, 50));
+// Some browsers only have the new size a moment after turning.
+addEventListener("orientationchange", () => { setTimeout(onResize, 50); setTimeout(onResize, 400); });
+if (window.visualViewport) visualViewport.addEventListener("resize", onResize);
 $("forceTurn").onclick = () => { forced = true; placeStage(); };
 $("flip").onclick = () => { forcedRotation = -forcedRotation; setPref("rotation", forcedRotation); placeStage(); };
 
 // ---- What the player is doing, as KartPad says: "menus", "start" (the course intro and countdown),
-// "race", or "unknown" (KartPad can't tell, so the player switches).
+// "race", "fall" (off the course and back with Lakitu, until just after landing), or "unknown"
+// (KartPad can't tell, so the player switches).
 let view = "menus", manualRace = false;
 function layout() { return view === "unknown" ? (manualRace ? "race" : "menus") : view === "menus" ? "menus" : "race"; }
 function setView(next) {
-  if (!["menus", "start", "race", "unknown"].includes(next)) return;
+  if (!["menus", "start", "race", "unknown", "fall"].includes(next)) return;
   const was = view;
   view = next;
-  // Accelerating by itself starts at GO; the countdown is the player's, for a rocket start.
+  // Accelerating by itself is for the race. The countdown and a fall are the player's: a rocket start,
+  // and Lakitu's boost, both need A pressed at the right moment.
   if (next === "race" && was !== "race" && prefs.auto) aLocked = true;
   if (next !== "race") aLocked = false;
   applyLayout();
 }
 function applyLayout() {
-  const now = layout(), tilted = now === "race" && tilt;
+  const now = layout(), tilted = now === "race" && tilt, hold = !prefs.auto || view === "unknown";
   $("menus").classList.toggle("hidden", now !== "menus");
   $("raceStick").classList.toggle("hidden", !(now === "race" && !tilted));
   $("raceTilt").classList.toggle("hidden", !tilted);
-  stage.classList.toggle("starting", view === "start" && prefs.auto);
+  stage.classList.toggle("hold", hold);
+  stage.classList.toggle("amoment", !hold && (view === "start" || view === "fall"));
   stage.classList.toggle("lefty", prefs.lefty);
   $("tiltKey").classList.toggle("hidden", !(canTilt && now === "race"));
   $("tiltKey").classList.toggle("on", tilt);
@@ -467,7 +507,7 @@ function applyLayout() {
   $("layoutKey").textContent = manualRace ? "Menus" : "Race";
   // Fingers on controls that just went away let go.
   for (const [id, finger] of fingers) {
-    if (finger.el && finger.el.offsetParent === null) fingers.delete(id);
+    if (finger.el && finger.el.offsetParent === null) { fingers.delete(id); if (finger.kind === "item") showAim(finger.el, 0); }
     if (finger.kind === "stick" && (now !== "race" || tilted)) { fingers.delete(id); stick = null; stickX = stickY = 0; }
   }
   restStick();
@@ -475,8 +515,72 @@ function applyLayout() {
   send(true);
 }
 
+// ---- Joining (phone_pad.h, "Joining"). KartPad's hello carries a nonce, and the phone's first
+// message proves it has the key with HMAC-SHA256 over it; the link tab's signal proves it over the
+// offer. SHA-256 is here in plain JS, since plain-HTTP pages don't get crypto.subtle.
+const VERSION = 1;
+const SHA256_K = [
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2];
+function sha256(bytes) {
+  const n = bytes.length, total = (n + 72) & ~63, m = new Uint8Array(total), view = new DataView(m.buffer);
+  m.set(bytes);
+  m[n] = 0x80;
+  view.setUint32(total - 8, Math.floor(n / 0x20000000));
+  view.setUint32(total - 4, (n * 8) >>> 0);
+  const h = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+  const w = new Uint32Array(64), rotr = (x, k) => (x >>> k) | (x << (32 - k));
+  for (let at = 0; at < total; at += 64) {
+    for (let i = 0; i < 16; ++i) w[i] = view.getUint32(at + i * 4);
+    for (let i = 16; i < 64; ++i)
+      w[i] = w[i - 16] + (rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >>> 3)) + w[i - 7] +
+             (rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >>> 10));
+    let [a, b, c, d, e, f, g, hh] = h;
+    for (let i = 0; i < 64; ++i) {
+      const t1 = (hh + (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) + ((e & f) ^ (~e & g)) + SHA256_K[i] + w[i]) | 0;
+      const t2 = ((rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) | 0;
+      hh = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
+    }
+    [a, b, c, d, e, f, g, hh].forEach((v, i) => { h[i] = (h[i] + v) | 0; });
+  }
+  const out = new Uint8Array(32), outView = new DataView(out.buffer);
+  h.forEach((v, i) => outView.setUint32(i * 4, v >>> 0));
+  return out;
+}
+function hmacSha256(key, message) {
+  const block = new Uint8Array(64), inner = new Uint8Array(64 + message.length), outer = new Uint8Array(96);
+  block.set(key.length > 64 ? sha256(key) : key);
+  for (let i = 0; i < 64; ++i) { inner[i] = block[i] ^ 0x36; outer[i] = block[i] ^ 0x5c; }
+  inner.set(message, 64);
+  outer.set(sha256(inner), 64);
+  return sha256(outer);
+}
+const utf8 = (text) => new TextEncoder().encode(text);
+const hex = (bytes) => Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+const proof = (key, text) => hex(hmacSha256(utf8(key), utf8(text)));
+function joinMessage(key, id, nonce) {
+  const head = "join " + VERSION + " " + id;
+  return head + " " + proof(key, head + " " + nonce);
+}
+function signalMessage(key, id, offer) {
+  const head = "signal " + VERSION + " " + id;
+  return head + " " + proof(key, head + "\n" + offer) + "\n" + offer;
+}
+
 // ---- The link to the Mac
-let joined = false, wanted = false, seq = 0, lastSent = "", wakeLock = null;
+// This phone's id with KartPad, random and kept for the tab: it gets its player back on reconnecting.
+function phoneId() {
+  let id = stored(phoneKey);
+  if (!/^[0-9a-f]{32}$/.test(id || "")) { id = hex(crypto.getRandomValues(new Uint8Array(16))); store(phoneKey, id); }
+  return id;
+}
+let joined = false, wanted = false, seq = 0, lastSent = "", wakeLock = null, macVersion = 0;
 let ws = null, retry = 0, retryTimer = 0, failedInARow = 0;
 let pc = null, padChannel = null, controlChannel = null, offer = null, openTimer = 0;
 const pings = new Map(), rtts = [];
@@ -497,7 +601,7 @@ function onBinary(data) {
 function connect() {
   clearTimeout(retryTimer);
   if (ws) { ws.onclose = null; try { ws.close(); } catch (e) {} }
-  ws = new WebSocket("ws://" + location.host + "/ws?k=" + key + "&t=" + (stored(tokenKey) || ""));
+  ws = new WebSocket("ws://" + location.host + "/ws");
   ws.binaryType = "arraybuffer";
   setLive(false, "Connecting…");
   ws.onopen = () => { retry = 0; };
@@ -511,7 +615,7 @@ function connect() {
       wanted = false;
       joined = false;
       letGo();
-      message("Can’t reach KartPad", "Make sure this phone is on the same Wi‑Fi as the Mac, then scan the code in KartPad again (Controls → Add Phone Controller…).");
+      message("Can’t reach KartPad", "Join the Mac’s Wi‑Fi, then scan the code again.");
       return;
     }
     setLive(false, "Reconnecting…");
@@ -565,7 +669,7 @@ function join() {
   }
   if (!offer) return;
   wanted = true;
-  const helper = window.open(macOrigin + "/link#k=" + key + "&t=" + (stored(tokenKey) || "") + "&o=" + b64url(offer), "kartpad-link");
+  const helper = window.open(macOrigin + "/link#s=" + b64url(signalMessage(key, phoneId(), offer)), "kartpad-link");
   if (!helper) {
     message("Couldn’t open the link tab", "Allow pop-ups for this page, then try again.", "Try Again", true);
     return;
@@ -577,7 +681,11 @@ function join() {
 }
 window.addEventListener("message", async (event) => {
   if (!secure || event.origin !== macOrigin || !event.data || !pc) return;
-  if (event.data.t === "link-error") return failed("KartPad couldn’t link this phone (" + event.data.why + ").");
+  if (event.data.t === "link-error") {
+    if (event.data.why === "version") return mismatch(event.data.v);
+    if (event.data.why === "expired") return goodbye("expired");
+    return failed("KartPad couldn’t link this phone (" + event.data.why + ").");
+  }
   if (event.data.t !== "answer") return;
   setLive(false, "Connecting…");
   try { await pc.setRemoteDescription({type: "answer", sdp: event.data.sdp}); }
@@ -587,11 +695,11 @@ function failed(why) {
   wanted = false;
   joined = false;
   letGo();
-  message("Couldn’t connect", why + " Make sure the phone is on the same Wi‑Fi as the Mac.", "Try Again", true);
+  message("Couldn’t connect", why + " Join the Mac’s Wi‑Fi and try again.", "Try Again", true);
   prepare().catch(() => {});
 }
 // The WebRTC link went away (Wi‑Fi, a long screen lock, KartPad quit). Coming back needs a tap, since
-// it opens the helper tab again; the token keeps this phone's player for a minute.
+// it opens the helper tab again; its id keeps this phone's player for a minute.
 function lost() {
   const was = joined;
   joined = false;
@@ -606,17 +714,34 @@ function lost() {
 function onControl(text) {
   let m;
   try { m = JSON.parse(text); } catch (e) { return; }
-  if (m.t === "welcome") welcome(m);
+  if (m.t === "hello") hello(m);
+  else if (m.t === "welcome") welcome(m);
   else if (m.t === "player") player(m.player);
   else if (m.t === "color") document.documentElement.style.setProperty("--player", m.rgb);
   else if (m.t === "race") setView(m.view);
   else if (m.t === "rumble") rumble(m.on);
   else if (m.t === "bye") goodbye(m.reason);
 }
+// KartPad's hello, first on the WebSocket: join, proving the key with its nonce.
+function hello(m) {
+  macVersion = m.v;
+  if (m.v !== VERSION) mismatch(m.v);
+  else if (!secure && ws && ws.readyState === 1) ws.send(joinMessage(key, phoneId(), m.nonce));
+}
+// KartPad speaks another version of the protocol: say which side to update.
+function mismatch(v) {
+  wanted = false;
+  joined = false;
+  letGo();
+  if (secure) { closeLink(); prepare().catch(() => {}); }
+  else if (ws) { ws.onclose = null; ws.close(); ws = null; }
+  if (v > VERSION) message("This page is out of date", secure ? "Reload it, or use touch controls." : "Reload it.", "Reload", true,
+                           () => location.reload());
+  else message("Update KartPad", "KartPad on the Mac is older than this page.", "Try Again", true);
+}
 let askedTilt = false;
 function welcome(m) {
-  const first = !joined && stored(tokenKey) !== m.token;
-  store(tokenKey, m.token);
+  const first = !m.resumed;
   joined = true;
   failedInARow = 0;
   view = "menus";  // KartPad says what's on next
@@ -634,22 +759,28 @@ function goodbye(reason) {
   else if (ws) { ws.onclose = null; ws.close(); ws = null; }
   if (reason === "full") message("Four phones are already playing", "Ask someone to leave, then try again.");
   else if (reason === "replaced") message("Opened somewhere else", "This controller is now in another tab or window.", "Use It Here");
-  else if (reason === "removed") { store(tokenKey, null); message("Removed", "", "Join Again"); }
-  else if (reason === "left") { store(tokenKey, null); show("join"); }
+  else if (reason === "removed") { store(phoneKey, null); message("Removed", "", "Join Again"); }
+  else if (reason === "left") { store(phoneKey, null); show("join"); }
+  else if (reason === "version") mismatch(macVersion);
+  else if (reason === "expired") message("Link expired", "Scan the code in KartPad again.", "");
   else message("KartPad closed", "Open KartPad on the Mac and scan the code again.");
 }
 
 // ---- Sending: whenever anything changes, and every 50 ms so KartPad knows the phone is there.
-let buttons = 0;
+// WebRTC input isn't resent or kept in order, so there each change goes twice more soon after;
+// KartPad drops copies and late ones by seq.
+let buttons = 0, repeats = 0;
 function send(force) {
   if (!joined || !linkOpen()) return;
   let x = 0, y = 0;
   if (layout() === "race") {
     if (stick) { x = stickX; y = stickY; }
     else if (tilt) x = Math.round(tiltSteer * 127);
+    y = itemAim() || y;
   }
   const state = buttons + ":" + x + ":" + y;
-  if (!force && state === lastSent) return;
+  if (state !== lastSent) repeats = secure ? 2 : 0;
+  else if (!force) return;
   lastSent = state;
   const bytes = new Uint8Array(8);
   bytes[0] = 1; bytes[1] = seq = (seq + 1) & 255;
@@ -658,9 +789,12 @@ function send(force) {
   sendPad(bytes);
 }
 setInterval(() => send(true), 50);
+setInterval(() => { if (repeats > 0) { --repeats; send(true); } }, 20);
 function letGo() {
   fingers.clear();
   stick = null; stickX = stickY = 0;
+  aimUntil = 0;
+  for (const item of document.querySelectorAll(".k-item")) showAim(item, 0);
   aLocked = false;
   clearTimeout(aLockTimer);
   cancelHome();
@@ -697,6 +831,10 @@ function answerPing(id) {
   $("delay").textContent = "Link: " + middleDelay() + " ms (worst " + Math.round(Math.max(...rtts)) + " ms)";
 }
 
+// Screen wake locks are for HTTPS pages only. The plain-HTTP page has no good stand-in: a tiny muted
+// looping video no longer keeps a screen on (WebKit lets it sleep for looping or silent video, Chrome
+// for silent video that isn't big on screen), and an audible one takes over the phone's sound.
+// Touches keep it on while playing, and the page rejoins after a lock.
 async function keepAwake() {
   try { if (navigator.wakeLock && document.visibilityState === "visible") wakeLock = await navigator.wakeLock.request("screen"); } catch (e) {}
 }
@@ -791,7 +929,7 @@ async function setTilt(on) {
   if (on && typeof DeviceMotionEvent.requestPermission === "function") {
     let refused;
     try { refused = (await DeviceMotionEvent.requestPermission()) !== "granted"; } catch (e) { refused = true; }
-    if (refused) { on = false; toast("Motion access refused."); }
+    if (refused) { on = false; toast("Tilt is off. Motion access was denied."); }
   }
   tilt = on;
   prefs.tilt = on;
@@ -833,12 +971,13 @@ $("closeSettings").onclick = () => show(null);
 $("leave").onclick = () => { if (linkOpen()) sendControl(new Uint8Array([2])); else goodbye("left"); };
 syncSettings();
 
-// ---- Touch: each finger holds a button (or two, on a seam), the stick, the D-pad or HOME, and can
-// slide from one button to another.
+// ---- Touch: each finger holds a button (or two, on a seam or A+B), Item, the stick, the D-pad or
+// HOME, and can slide from one button to another.
 const keys = Array.from(document.querySelectorAll(".key[data-bit]"));
-const fingers = new Map();  // pointerId → {kind: "key" | "unlock" | "stick" | "dpad" | "home", bits, el}
+const fingers = new Map();  // pointerId → {kind: "key" | "unlock" | "item" | "stick" | "dpad" | "home" | "bar", bits, el, aim}
 let stick = null, stickX = 0, stickY = 0;  // stick: where it was touched, on the stage
-let aLocked = false, aLockTimer = 0, relock = false, homeTimer = 0, homeUntil = 0;
+let aLocked = false, aLockTimer = 0, homeTimer = 0, homeUntil = 0;
+let aimHeld = 0, aimUntil = 0;
 
 function keyAt(x, y) {
   const el = document.elementFromPoint(x, y);
@@ -857,37 +996,64 @@ function render() {
   let held = pressed;
   const racing = layout() === "race";
   if (aLocked && racing) held |= 1;
-  // Braking lets go of the accelerator while it's held.
+  // Braking lets go of the accelerator while it's held (then reverses); A+B holds both.
   if (aLocked && racing && (pressed & 2) && !(pressed & 1)) held &= ~1;
   buttons = held;
-  for (const k of keys) k.classList.toggle("down", (pressed & Number(k.dataset.bit)) !== 0 && !k.classList.contains("seam"));
+  for (const k of keys) {
+    const bits = Number(k.dataset.bit), multi = (bits & (bits - 1)) !== 0;
+    k.classList.toggle("down", !k.classList.contains("seam") && (multi ? (pressed & bits) === bits : (pressed & bits) !== 0));
+  }
   for (const a of document.querySelectorAll(".k-a")) a.classList.toggle("locked", aLocked && racing);
 }
 
-// A, the accelerator. In a race with Auto, a tap stops accelerating and the next one carries on
-// (holding it accelerates meanwhile). Otherwise a second's hold keeps it accelerating, and a tap
-// while it is stops it. In the menus it's just A.
+// A, the accelerator. With Auto it's held all race, and only shows for the start and after a fall,
+// where it's just A. With Hold, a second's hold keeps it accelerating, and a tap while it is stops it.
+// In the menus it's just A.
 function pressA() {
-  if (layout() !== "race" || view === "start") return true;
+  if (layout() !== "race" || view === "start" || view === "fall" || (prefs.auto && view === "race")) return true;
   if (aLocked) { aLocked = false; return false; }
-  if (prefs.auto && view === "race") { relock = true; return true; }
   clearTimeout(aLockTimer);
   aLockTimer = setTimeout(() => {
     for (const f of fingers.values()) if (f.bits & 1) { aLocked = true; buzz(30); render(); send(); return; }
   }, 1000);
   return true;
 }
-function releaseA() {
-  clearTimeout(aLockTimer);
-  if (relock) { relock = false; if (layout() === "race") aLocked = true; }
-}
-function pressKey(id, k) {
+function releaseA() { clearTimeout(aLockTimer); }
+function pressKey(id, k, x, y) {
   const bits = Number(k.dataset.bit);
   // A seam with A presses it, but only A itself switches accelerating off.
   if (bits === 1 && !pressA()) { fingers.set(id, {kind: "unlock", bits: 0, el: k}); return; }
   if (bits !== 1 && (bits & 1) && !aLocked) pressA();
-  fingers.set(id, {kind: "key", bits, el: k});
+  if (k.classList.contains("k-item")) {
+    const aim = aimAt(k, x, y);
+    fingers.set(id, {kind: "item", bits, el: k, aim});
+    showAim(k, aim);
+  } else {
+    fingers.set(id, {kind: "key", bits, el: k});
+  }
   buzz(8);
+}
+
+// Item, aimed like up or down on the stick: pressed or slid to its top it throws forward, to its
+// bottom it throws back. A held item goes when it's let go, so the aim stays a moment after.
+function aimAt(el, x, y) {
+  const share = (toStage(x, y).y - el.offsetTop) / el.offsetHeight;
+  return share < 0.32 ? -127 : share > 0.68 ? 127 : 0;
+}
+function showAim(el, aim) {
+  el.classList.toggle("aim-up", aim < 0);
+  el.classList.toggle("aim-down", aim > 0);
+}
+function itemAim() {
+  for (const f of fingers.values()) if (f.kind === "item" && f.aim) return f.aim;
+  return performance.now() < aimUntil ? aimHeld : 0;
+}
+function letGoOfItem(finger) {
+  showAim(finger.el, 0);
+  if (!finger.aim) return;
+  aimHeld = finger.aim;
+  aimUntil = performance.now() + 150;
+  setTimeout(() => { render(); send(); }, 160);
 }
 function dpadBits(x, y) {
   const r = $("dpad").getBoundingClientRect();
@@ -920,7 +1086,7 @@ function restStick() {
   const zone = $("stickzone");
   if (zone.offsetParent === null || stick) return;
   const left = zone.offsetLeft, top = zone.offsetTop;
-  const cx = left + zone.offsetWidth * (prefs.lefty ? 0.55 : 0.45), cy = top + zone.offsetHeight * 0.55;
+  const cx = left + zone.offsetWidth * (prefs.lefty ? 0.55 : 0.45), cy = top + zone.offsetHeight * 0.62;
   placeStick(cx, cy, cx, cy, true);
 }
 const radius = () => Math.min(W, H) * 0.18;
@@ -931,14 +1097,15 @@ document.addEventListener("pointerdown", (e) => {
   if (!joined || sheet !== null || !$("turn").classList.contains("hidden")) return;
   const target = document.elementFromPoint(e.clientX, e.clientY);
   const bar = target && target.closest && target.closest("#tiltKey, #gear, #layoutKey");
-  if (bar) { barKeys[bar.id](); return; }
+  // These act when let go (lift): a touch's lift, unlike its press, lets the page ask for motion access.
+  if (bar) { fingers.set(e.pointerId, {kind: "bar", bits: 0, el: bar}); return; }
   if (inside($("dpad"), e.clientX, e.clientY)) {
     fingers.set(e.pointerId, {kind: "dpad", bits: dpadBits(e.clientX, e.clientY)});
     buzz(8);
   } else {
     const k = keyAt(e.clientX, e.clientY);
     if (k && k.id === "home") startHome(e.pointerId, k);
-    else if (k) pressKey(e.pointerId, k);
+    else if (k) pressKey(e.pointerId, k, e.clientX, e.clientY);
     else if (!stick && inside($("stickzone"), e.clientX, e.clientY)) {
       const p = toStage(e.clientX, e.clientY);
       stick = {id: e.pointerId, x: p.x, y: p.y};
@@ -950,7 +1117,7 @@ document.addEventListener("pointerdown", (e) => {
 });
 document.addEventListener("pointermove", (e) => {
   const finger = fingers.get(e.pointerId);
-  if (!finger) return;
+  if (!finger || finger.kind === "bar") return;
   if (finger.kind === "stick") {
     const p = toStage(e.clientX, e.clientY);
     let dx = p.x - stick.x, dy = p.y - stick.y;
@@ -964,12 +1131,16 @@ document.addEventListener("pointermove", (e) => {
     finger.bits = bits;
   } else if (finger.kind === "home") {
     if (!inside(finger.el, e.clientX, e.clientY)) { cancelHome(); fingers.delete(e.pointerId); }
+  } else if (finger.kind === "item") {
+    // Held until let go, wherever the finger slides; sliding only aims it.
+    const aim = aimAt(finger.el, e.clientX, e.clientY);
+    if (aim !== finger.aim) { finger.aim = aim; showAim(finger.el, aim); buzz(6); }
   } else {
     const k = keyAt(e.clientX, e.clientY);
     if (k && k !== finger.el && k.id !== "home" && k.closest(".layer, .bar") === finger.el.closest(".layer, .bar")) {
       if ((finger.bits & 1) && !(Number(k.dataset.bit) & 1)) releaseA();
       if ((Number(k.dataset.bit) & 1) && (finger.bits & 1)) { finger.bits = Number(k.dataset.bit); finger.el = k; }
-      else pressKey(e.pointerId, k);
+      else pressKey(e.pointerId, k, e.clientX, e.clientY);
     }
   }
   render(); send();
@@ -978,8 +1149,13 @@ function lift(e) {
   const finger = fingers.get(e.pointerId);
   if (!finger) return;
   fingers.delete(e.pointerId);
+  if (finger.kind === "bar") {
+    if (e.type === "pointerup" && inside(finger.el, e.clientX, e.clientY)) barKeys[finger.el.id]();
+    return;
+  }
   if (finger.kind === "stick") { stick = null; stickX = 0; stickY = 0; restStick(); }
   else if (finger.kind === "home") cancelHome();
+  else if (finger.kind === "item") letGoOfItem(finger);
   else if (finger.kind === "key" && (finger.bits & 1)) releaseA();
   render(); send();
 }
@@ -990,17 +1166,17 @@ for (const type of ["touchstart", "touchmove", "gesturestart", "dblclick", "cont
 
 // ---- Off we go
 $("joinButton").onclick = join;
-$("messageButton").onclick = join;
+$("messageButton").onclick = () => (messageAction || join)();
 $("touchButton").onclick = () => { location.href = macOrigin + "/#" + key; };
 show("join");
 applyLayout();
 if (!mac || !key) {
   $("joinButton").classList.add("hidden");
-  $("joinNote").textContent = "Scan the QR code in KartPad on the Mac: Controls → Add Phone Controller…";
+  $("joinNote").textContent = "Scan the code in KartPad: HOME › Controllers › Connect a controller › Phone.";
 } else if (!secure) {
   ready(true);
 } else if (!window.RTCPeerConnection) {
-  message("Tilt isn’t available here", "This browser can’t make the direct link that tilt needs. The touch-only link still works.", "Try Again", true);
+  message("Tilt isn’t available here", "This browser doesn’t support tilt. Touch controls still work.", "Try Again", true);
   $("messageButton").classList.add("hidden");
 } else {
   prepare().catch((e) => { $("joinNote").textContent = "Couldn’t get ready: " + e; });
