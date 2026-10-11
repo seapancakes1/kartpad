@@ -658,7 +658,7 @@ static NSString *KPGameTitle(NSString *profile);                       // KartPa
   return [alert runModal] == NSAlertFirstButtonReturn;
 }
 
-// A change that applies at launch: Restart Now, or Later, which leaves Restart KartPad in the Game
+// A change that applies at launch: Restart Now, or Later, which leaves Apply Changes in the Game
 // menu until then.
 - (void)offerRestart:(NSString *)title message:(NSString *)message reason:(NSString *)reason {
   [self setRestartNeeded:YES for:reason];
@@ -801,7 +801,7 @@ static NSString *KPGameTitle(NSString *profile);                       // KartPa
 
 // Rebuilt each time the Player menu opens so the pending-restart state is
 // current. Everything else about Miis happens in the Miis window. The Game
-// menu shows Restart KartPad while a change waits for one.
+// menu shows Apply Changes while a change waits for one.
 - (void)menuNeedsUpdate:(NSMenu *)menu {
   if ([menu.title isEqualToString:@"Game"]) {
     self.restartItem.hidden = !self.restartPending;
@@ -812,7 +812,7 @@ static NSString *KPGameTitle(NSString *profile);                       // KartPa
   if (![menu.title isEqualToString:@"Player"]) return;
   [menu removeAllItems];
   if (KartPadHasPendingMiiChanges()) {
-    [menu addItem:[self playerMenuItem:@"Restart KartPad to Apply Mii Changes"
+    [menu addItem:[self playerMenuItem:@"Apply Mii Changes"
                                 action:@selector(restartKartPad:) enabled:YES]];
     [menu addItem:NSMenuItem.separatorItem];
   }
@@ -1425,7 +1425,7 @@ static void InstallMenu() {
   [gameMenu addItem:home];
   [gameMenu addItem:NSMenuItem.separatorItem];
   NSMenuItem *restart = [[NSMenuItem alloc]
-      initWithTitle:@"Restart KartPad to Apply Changes" action:@selector(restartKartPad:) keyEquivalent:@""];
+      initWithTitle:@"Apply Changes" action:@selector(restartKartPad:) keyEquivalent:@""];
   restart.target = Controller();
   Controller().restartItem = restart;
   [gameMenu addItem:restart];
