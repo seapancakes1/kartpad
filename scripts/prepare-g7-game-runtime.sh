@@ -107,7 +107,9 @@ cmake -S "${runtime_source}" -B "${runtime_build}" -G Ninja \
   -DMKW_TRANSLATED_SHARD_MANIFEST="${translation_root}/build_shards/shards.cmake" \
   -DMKW_KARTPAD_RUNTIME_INCLUDE="${repo_root}/runtime/include" \
   -DMKW_KARTPAD_REPO_ROOT="${repo_root}" \
-  -DMKW_TRANSLATED_COMPILE_JOBS=2
+  -DMKW_TRANSLATED_COMPILE_JOBS=2 \
+  ${KARTPAD_PHONE_PAGE_URL:+"-DKARTPAD_PHONE_PAGE_URL=${KARTPAD_PHONE_PAGE_URL}"} \
+  ${KARTPAD_QA_HOOKS:+"-DKARTPAD_QA_HOOKS=${KARTPAD_QA_HOOKS}"}
 cmake --build "${runtime_build}" --target "${product_target}" --parallel 4
 
 echo "Built translated Mario Kart Wii runtime: ${runtime_build}/${product_target}"
