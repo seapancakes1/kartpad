@@ -179,10 +179,8 @@ BOOL BackupFile(NSString *source, NSString *folder, NSString *name,
 } // namespace
 
 
-static NSString *EditorPath() {
-  return [SupportRoot() stringByAppendingPathComponent:@"PendingMiiEditor.plist"];
-}
-static NSString *EditorJournalPath() {
+// A commit's journal (CommitChanges), there only while one is being written or was interrupted.
+static NSString *JournalPath() {
   return [SupportRoot() stringByAppendingPathComponent:@"MiiEditorTransaction.plist"];
 }
 
@@ -196,8 +194,7 @@ static NSString *QueuePath() {
 }
 static BOOL OtherChangesPending() {
   NSFileManager *files = NSFileManager.defaultManager;
-  return [files fileExistsAtPath:EditorPath()] || [files fileExistsAtPath:EditorJournalPath()] ||
-         KartPadHasPendingSaveRestore() || [files fileExistsAtPath:PendingGhostPath()] ||
+  return [files fileExistsAtPath:JournalPath()] || KartPadHasPendingSaveRestore() || [files fileExistsAtPath:PendingGhostPath()] ||
          [files fileExistsAtPath:PendingPath()] || [files fileExistsAtPath:PendingIdentityPath()] ||
          [files fileExistsAtPath:PendingLicensePath()];
 }
@@ -635,29 +632,10 @@ BOOL KartPadStageMiiEditor(NSUInteger slot, NSData *expected, NSData *edited, NS
                                   : @{@"kind" : @"mii", @"mii" : edited};
   return QueueChange(queue, files, change, error);
 }
-// Rebase a staged name patch onto progress saved after the editor was opened.
-// Identity and the old linked name must still match; every other progress byte is retained.
-static NSData *RebaseEditorSave(NSData *before, NSData *after, NSData *current) {
-  auto old = Bytes(before), next = Bytes(after), latest = Bytes(current);
-  std::vector<uint8_t> output(latest.begin(), latest.end());
-  for (size_t slot = 0; slot < kartpad::mii::kRksysLicenseCount; slot++) {
-    size_t base = kartpad::mii::kRksysLicenseOffset + slot * kartpad::mii::kRksysLicenseSize;
-    size_t name = base + kartpad::mii::kRksysMiiNameOffset,
-           identity = base + kartpad::mii::kRksysCreateIdOffset;
-    if (std::equal(old.begin() + name, old.begin() + name + 20, next.begin() + name))
-      continue;
-    if (!std::equal(old.begin() + identity, old.begin() + identity + 8,
-                    latest.begin() + identity) ||
-        !std::equal(old.begin() + name, old.begin() + name + 20, latest.begin() + name))
-      return nil;
-    std::copy_n(next.begin() + name, 20, output.begin() + name);
-  }
-  kartpad::mii::UpdateRksysCrc(output);
-  return [NSData dataWithBytes:output.data() length:output.size()];
-}
 // Writes each change's new contents over its file, backing the old file up first. The changes are
 // journaled before any file is written, so an interrupted commit finishes on the next launch (see
-// ApplyEditor). The intents that asked for the changes are removed once every file is written.
+// FinishInterruptedCommit). The intents that asked for the changes are removed once every file is
+// written.
 static BOOL CommitChanges(NSArray<NSDictionary *> *records, NSArray<NSString *> *intents,
                           BOOL recovering, NSError **error) {
   NSFileManager *files = NSFileManager.defaultManager;
@@ -674,7 +652,7 @@ static BOOL CommitChanges(NSArray<NSDictionary *> *records, NSArray<NSString *> 
                                                                  format:NSPropertyListBinaryFormat_v1_0
                                                                 options:0
                                                                   error:error];
-    if (!journal || ![journal writeToFile:EditorJournalPath() options:NSDataWritingAtomic error:error])
+    if (!journal || ![journal writeToFile:JournalPath() options:NSDataWritingAtomic error:error])
       return NO;
   }
   NSUInteger written = 0;
@@ -694,24 +672,23 @@ static BOOL CommitChanges(NSArray<NSDictionary *> *records, NSArray<NSString *> 
   for (NSString *intent in intents)
     if ([files fileExistsAtPath:intent] && ![files removeItemAtPath:intent error:error])
       return NO;
-  return ![files fileExistsAtPath:EditorJournalPath()] ||
-         [files removeItemAtPath:EditorJournalPath() error:error];
+  return ![files fileExistsAtPath:JournalPath()] ||
+         [files removeItemAtPath:JournalPath() error:error];
 }
-// Applies an older version's editor transaction, or finishes an interrupted commit from its journal.
-static BOOL ApplyEditor(NSError **error) {
+// Finishes a commit that was interrupted, from its journal: every file it names must still hold
+// either its old or its new contents.
+static BOOL FinishInterruptedCommit(NSError **error) {
   NSFileManager *files = NSFileManager.defaultManager;
-  BOOL recovering = [files fileExistsAtPath:EditorJournalPath()];
-  NSString *intentPath = recovering ? EditorJournalPath() : EditorPath();
-  if (![files fileExistsAtPath:intentPath])
+  if (![files fileExistsAtPath:JournalPath()])
     return YES;
-  NSData *intent = [NSData dataWithContentsOfFile:intentPath options:0 error:error];
-  if (!intent)
+  NSData *journal = [NSData dataWithContentsOfFile:JournalPath() options:0 error:error];
+  if (!journal)
     return NO;
-  id records = [NSPropertyListSerialization propertyListWithData:intent
+  id records = [NSPropertyListSerialization propertyListWithData:journal
                                                          options:NSPropertyListImmutable
                                                           format:nil
                                                            error:error];
-  if (![records isKindOfClass:NSArray.class] || (!recovering && [records count] == 0)) {
+  if (![records isKindOfClass:NSArray.class]) {
     if (error)
       *error = ManagerError(51, "Invalid Mii transaction.");
     return NO;
@@ -720,7 +697,6 @@ static BOOL ApplyEditor(NSError **error) {
   for (NSDictionary *l in SaveLocations())
     [allowed addObject:l[@"path"]];
   NSMutableSet *seen = [NSMutableSet set];
-  NSMutableArray *rebased = [NSMutableArray array];
   for (id c in records) {
     if (![c isKindOfClass:NSDictionary.class] || ![allowed containsObject:c[@"path"]] ||
         [seen containsObject:c[@"path"]] || ![c[@"before"] isKindOfClass:NSData.class] ||
@@ -735,40 +711,15 @@ static BOOL ApplyEditor(NSError **error) {
            : (!ValidateSaveData(c[@"before"], error) || !ValidateSaveData(c[@"after"], error)))
       return NO;
     NSData *current = [NSData dataWithContentsOfFile:c[@"path"] options:0 error:error];
-    NSMutableDictionary *change = [c mutableCopy];
-    if (current && !recovering && !db && ![current isEqualToData:c[@"before"]]) {
-      if (!ValidateSaveData(current, error))
-        return NO;
-      NSData *after = RebaseEditorSave(c[@"before"], c[@"after"], current);
-      if (!after) {
-        if (error)
-          *error = ManagerError(51, "A linked license changed. The Mii edit was not applied.");
-        return NO;
-      }
-      change[@"before"] = current;
-      change[@"after"] = after;
-    } else if (!current || (![current isEqualToData:c[@"before"]] &&
-                            !(recovering && [current isEqualToData:c[@"after"]]))) {
+    if (!current || (![current isEqualToData:c[@"before"]] && ![current isEqualToData:c[@"after"]])) {
       if (error)
         *error =
             ManagerError(51, "Game data changed since the Mii edit. Nothing further was applied.");
       return NO;
     }
-    change[@"backup"] = @"RFL_DB";
-    for (NSDictionary *location in SaveLocations())
-      if ([location[@"path"] isEqual:c[@"path"]])
-        change[@"backup"] = location[@"backup"];
-    [rebased addObject:change];
   }
-  // A queued commit may change only saves; an editor transaction always changes the database.
-  if (!recovering && ![seen containsObject:DatabasePath()]) {
-    if (error)
-      *error = ManagerError(51, "Mii transaction has no database update.");
-    return NO;
-  }
-  // A journal comes from either kind of intent, and the commit had finished replaying it.
-  return CommitChanges(rebased, recovering ? @[ EditorPath(), QueuePath() ] : @[ EditorPath() ],
-                       recovering, error);
+  // The commit had finished replaying the queue, which goes once every file is written.
+  return CommitChanges(records, @[ QueuePath() ], YES, error);
 }
 // Replays the queue over the latest files and commits the files it changed.
 static BOOL ApplyQueue(NSError **error) {
@@ -1025,7 +976,7 @@ BOOL KartPadApplyPendingMiiDatabase(NSError **error) {
 }
 
 static BOOL ApplyLegacyChanges(NSError **error) {
-  if (!ApplyEditor(error)) return NO;
+  if (!FinishInterruptedCommit(error)) return NO;
   if (!KartPadApplyPendingSaveRestore(error)) return NO;
   if (!KartPadApplyPendingGhost(error)) return NO;
   NSString *pending = PendingPath();
@@ -1215,7 +1166,7 @@ BOOL KartPadCanQueueMiiChanges(void) { return !OtherChangesPending(); }
 // Waiting Mii and license changes, including an older version's. An interrupted commit's journal is
 // not one: it has already started writing files and must finish.
 static NSArray<NSString *> *DiscardablePaths() {
-  return @[ QueuePath(), EditorPath(), PendingPath(), PendingIdentityPath(), PendingLicensePath() ];
+  return @[ QueuePath(), PendingPath(), PendingIdentityPath(), PendingLicensePath() ];
 }
 
 BOOL KartPadCanDiscardPendingMiiChanges(void) {
