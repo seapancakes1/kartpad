@@ -835,7 +835,7 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
 // only while the trimmed name can be stored.
 - (void)ask:(NSString*)title message:(NSString*)message text:(NSString*)text action:(NSString*)action then:(void(^)(NSString *text))then{
     KPPlay(KPSound::Dialog);KPMiiNameWatcher *watcher=[KPMiiNameWatcher new];
-    NSString *(^problem)(NSString*)=^NSString*(NSString *name){return KPMiiNameProblem([name stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet],YES);};
+    NSString *(^problem)(NSString*)=^NSString*(NSString *name){return KPMiiNameProblem(name,YES);};
 #if TARGET_OS_OSX
     NSAlert *alert=[NSAlert new];alert.messageText=title;alert.informativeText=message?:@"";
     NSView *box=[[NSView alloc]initWithFrame:NSMakeRect(0,0,300,46)];
@@ -887,7 +887,7 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
     [self ask:[NSString stringWithFormat:@"Rename “%@”",record[@"name"]] message:@"Licenses that race as this Mii get the new name too." text:record[@"name"] action:@"Rename" then:^(NSString *name){
         NSError *error=nil;NSUInteger updated=0;
         if(!KartPadStagePlayerName(slot,name,&updated,&error)){[weak tell:@"Mii Couldn’t Be Renamed" message:error.localizedDescription];return;}
-        NSString *trimmed=[name stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        NSString *trimmed=NormalName(name);
         NSString *licenses=updated==0?@"":updated==1?@" Its license will use the new name.":[NSString stringWithFormat:@" Its %lu licenses will use the new name.",(unsigned long)updated];
         [weak changeScheduled:[NSString stringWithFormat:@"“%@” will be renamed “%@”.%@",record[@"name"],trimmed,licenses]];
     }];
@@ -1009,7 +1009,7 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
     [self ask:@"Rename License" message:[NSString stringWithFormat:@"%@. The license keeps its friend code, online account, records and progress.",KPLicenseTitle(license)] text:license[@"name"] action:@"Rename" then:^(NSString *name){
         NSError *error=nil;
         if(!KartPadStageLicenseRename(license[@"profileIdentifier"],[license[@"slot"] unsignedIntegerValue],license[@"createId"],name,&error)){[weak tell:@"License Couldn’t Be Renamed" message:error.localizedDescription];return;}
-        [weak changeScheduled:[NSString stringWithFormat:@"%@ will be renamed “%@”.",KPLicenseTitle(license),[name stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]]];
+        [weak changeScheduled:[NSString stringWithFormat:@"%@ will be renamed “%@”.",KPLicenseTitle(license),NormalName(name)]];
     }];
 }
 - (void)deleteLicense:(NSDictionary*)license{

@@ -121,9 +121,14 @@ BOOL ValidateSaveData(NSData *data, NSError **error) {
   return YES;
 }
 
+// A Mii or license name as it is stored: without surrounding spaces and line breaks. The editor,
+// the Miis screen and the staged changes all check and save this, so they agree on what's valid.
+NSString *NormalName(NSString *name) {
+  return [name ?: @"" stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+}
+
 NSData *PlayerNameData(NSString *name, NSError **error) {
-  NSString *trimmed = [name stringByTrimmingCharactersInSet:
-      NSCharacterSet.whitespaceAndNewlineCharacterSet];
+  NSString *trimmed = NormalName(name);
   if (trimmed.length == 0 || trimmed.length > 10) {
     if (error != nullptr) {
       *error = ManagerError(6,
@@ -606,7 +611,22 @@ NSData *KartPadExportMii(NSData *edited, NSError **error) {
   } catch (const std::exception& e) { if (error) *error = ManagerError(50, e.what()); return nil; }
 }
 
+// The edited Mii with its name as PlayerNameData gives it to its licenses (see NormalName); nil
+// when the name is blank.
+static NSData *NormalizedMii(NSData *mii, NSError **error) {
+  if (mii.length != kartpad::mii::kMiiBlockSize) return mii;  // Validation reports it.
+  NSString *text = [NSString stringWithUTF8String:kartpad::mii::ReadMiiName(Bytes(mii), 2).c_str()];
+  NSData *name = PlayerNameData(text, error);
+  if (name == nil || [NormalName(text) isEqualToString:text]) return name ? mii : nil;
+  NSMutableData *copy = mii.mutableCopy;
+  memset(static_cast<uint8_t *>(copy.mutableBytes) + 2, 0, kartpad::mii::kMiiNameByteSize);
+  memcpy(static_cast<uint8_t *>(copy.mutableBytes) + 2, name.bytes, name.length);
+  return copy;
+}
+
 BOOL KartPadStageMiiEditor(NSUInteger slot, NSData *expected, NSData *edited, NSError **error) {
+  edited = NormalizedMii(edited, error);
+  if (edited == nil) return NO;
   Workspace files;
   NSArray *queue = StagingQueue(files, error);
   if (!queue)

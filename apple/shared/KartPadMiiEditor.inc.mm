@@ -67,8 +67,10 @@ static BOOL KPMiiSetName(NSMutableData *data, NSString *name, NSUInteger offset)
 // the same everywhere. A name holds 10 UTF-16 units; NSString lengths count the same units.
 static NSString *const KPMiiNameRule=@"Up to 10 characters. Emoji and some symbols take up more than one.";
 static NSString *KPMiiNameCount(NSString *text){return [NSString stringWithFormat:@"%lu of 10 characters",(unsigned long)text.length];}
-// nil when the name can be stored. An empty name is only a problem where one is required.
+// nil when the name can be stored. An empty name is only a problem where one is required. The
+// name is checked as it is saved (NormalName), as the manager checks it.
 static NSString *KPMiiNameProblem(NSString *text,BOOL required){
+    text=NormalName(text);
     if(!text.length)return required?@"Enter a name.":nil;
     if(text.length>10)return @"This name is too long.";
     NSData *bytes=[text dataUsingEncoding:NSUTF16BigEndianStringEncoding];
@@ -1012,7 +1014,7 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
 #else
         NSString *text=[field text]?:@"";
 #endif
-        if(![text isEqual:KPMiiName(self.original,[field tag])])return YES;
+        if(![NormalName(text) isEqual:KPMiiName(self.original,[field tag])])return YES;
     }return NO;
 }
 - (void)rebuild{[self.canvas rebuild];}
@@ -1120,10 +1122,16 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
 #else
         NSString *text=[field text]?:@"";if([field markedTextRange]){self.validationField=[field tag];self.validationMessage=@"Finish entering this name first.";[self.canvas redraw];KPPlay(KPSound::Reject);return NO;}
 #endif
-        NSMutableData *data=self.draft.mutableCopy;NSString *problem=KPMiiNameProblem(text,[field tag]==2);
-        if(problem||!KPMiiSetName(data,text,[field tag])){
+        NSMutableData *data=self.draft.mutableCopy;NSString *problem=KPMiiNameProblem(text,[field tag]==2),*name=NormalName(text);
+        if(problem||!KPMiiSetName(data,name,[field tag])){
             self.validationField=[field tag];self.validationMessage=problem?:@"This name is too long.";[self.canvas redraw];KPPlay(KPSound::Reject);return NO;
         }
+        // The field shows the name as it is saved.
+#if TARGET_OS_OSX
+        if(![name isEqual:text])[field setStringValue:name];
+#else
+        if(![name isEqual:text])[field setText:name];
+#endif
         if(![data isEqual:self.draft]){auto a=kartpad::mii::Appearance::Decode(Bytes(data));[self applyAppearance:a];}
     }self.validationMessage=nil;return YES;
 }

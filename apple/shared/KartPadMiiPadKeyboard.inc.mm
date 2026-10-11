@@ -126,7 +126,9 @@ static KPPadKeyboard *KPPadActiveKeyboard;
 }
 - (void)type:(NSString*)text{
     NSTextView *editor=[self editor];if(!editor)return;
-    if(NSString *problem=KPMiiNameProblem([self.field.stringValue stringByAppendingString:text],NO)){self.problem=problem;KPPlay(KPSound::Reject);[self refresh];return;}
+    // The field holds at most 10 characters as typed; the rest is checked as the name is saved.
+    NSString *next=[self.field.stringValue stringByAppendingString:text];
+    if(NSString *problem=next.length>10?@"This name is too long.":KPMiiNameProblem(next,NO)){self.problem=problem;KPPlay(KPSound::Reject);[self refresh];return;}
     [editor insertText:text replacementRange:editor.selectedRange];KPPlay(KPSound::Key);
     self.problem=nil;if(self.shift&&!self.capsLock)self.shift=NO;[self refresh];
 }
@@ -146,7 +148,7 @@ static KPPadKeyboard *KPPadActiveKeyboard;
 - (void)finish:(BOOL)ok{
     NSTextField *field=self.field;NSWindow *window=field.window;BOOL alive=window.visible;
     if(ok&&alive){
-        NSString *problem=KPMiiNameProblem([field.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet],self.required);
+        NSString *problem=KPMiiNameProblem(field.stringValue,self.required);
         if(problem){self.problem=problem;KPPlay(KPSound::Reject);[self refresh];return;}
     }else if(alive&&![field.stringValue isEqual:self.original]){
         NSTextView *editor=[self editor];[editor setSelectedRange:NSMakeRange(0,editor.string.length)];

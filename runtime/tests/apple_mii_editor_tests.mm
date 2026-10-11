@@ -15,6 +15,17 @@ static std::vector<uint8_t> Vector(NSData *d) {
     auto p = (const uint8_t *)d.bytes;
     return {p, p + d.length};
 }
+// Writes a field's bits as a database can hold them, past the range Set allows.
+static void SetRaw(kartpad::mii::Appearance &a, size_t i, unsigned value) {
+    const auto &f = kartpad::mii::AppearanceFields[i];
+    uint32_t v = 0;
+    for (unsigned n = 0; n < f.bytes; n++)
+        v = (v << 8) | a.bytes[f.offset + n];
+    const uint32_t mask = ((1u << f.bits) - 1) << f.shift;
+    v = (v & ~mask) | ((value << f.shift) & mask);
+    for (unsigned n = 0; n < f.bytes; n++)
+        a.bytes[f.offset + f.bytes - 1 - n] = uint8_t(v >> (n * 8));
+}
 int main() {
     @autoreleasepool {
         using namespace kartpad::mii;
@@ -174,8 +185,50 @@ int main() {
         assert(KartPadMiiRecords(&error).count == 3);
         assert(KartPadApplyPendingMiiDatabase(&error));
         assert([liveDb isEqualToData:[NSData dataWithContentsOfFile:dbpath]]);
+        // Names are saved as the licenses get them: surrounding spaces dropped, never blank.
+        assert(KartPadDiscardPendingMiiChanges(&error));
+        db = CreateSeedDatabase({2, 1, 2, 3, 4, 5});
+        Write(dbpath, Data(db));
+        for (NSString *p in paths)
+            Write(p, Data(save));
+        expected = KartPadReadMii(0, &error);
+        edit = Appearance::Decode(Vector(expected));
+        WriteMiiName(edit.bytes, 2, "  ");
+        assert(!KartPadStageMiiEditor(0, expected, Data(edit.bytes), &error));
+        WriteMiiName(edit.bytes, 2, " Bob ");
+        assert(KartPadStageMiiEditor(0, expected, Data(edit.bytes), &error));
+        assert(ReadMiiName(Vector(KartPadReadMii(0, &error)), 2) == "Bob");
+        for (NSDictionary *license in KartPadLicenseRecords(&error))
+            assert([license[@"name"] isEqual:@"Bob"]);
+        assert(!KartPadStagePlayerName(0, @"   ", nullptr, &error));
+        assert(KartPadStagePlayerName(0, @" Ann", nullptr, &error));
+        assert(ReadMiiName(Vector(KartPadReadMii(0, &error)), 2) == "Ann");
+        assert(KartPadDiscardPendingMiiChanges(&error));
+        // A stored Mii with a field out of range opens as it is, an edit to another field keeps it,
+        // and a duplicate (a new Mii) takes the in-range value.
+        auto odd = Appearance::Decode(std::span(db).subspan(kMiiBlockOffset, 74));
+        SetRaw(odd, 8, 7);
+        std::copy(odd.bytes.begin(), odd.bytes.end(), db.begin() + kMiiBlockOffset);
+        UpdateDatabaseCrc(db);
+        Write(dbpath, Data(db));
+        expected = KartPadReadMii(0, &error);
+        assert([expected isEqualToData:Data(odd.bytes)] && KartPadMiiRecords(&error).count == 1);
+        edit = odd;
+        edit.Set(11, 60);
+        assert(KartPadStageMiiEditor(0, expected, Data(edit.bytes), &error));
+        auto staged = Appearance::Decode(Vector(KartPadReadMii(0, &error)));
+        assert(staged.Get(8) == 7 && staged.Get(11) == 60);
+        auto broken = staged;
+        SetRaw(broken, 17, 7);
+        assert(!KartPadStageMiiEditor(0, Data(staged.bytes), Data(broken.bytes), &error));
+        NSData *oddCopy = KartPadDuplicateMii(0, &error);
+        assert(Appearance::Decode(Vector(oddCopy)).Get(8) == 5);
+        assert(KartPadStageMiiEditor(NSNotFound, nil, oddCopy, &error));
+        assert(KartPadApplyPendingMiiDatabase(&error));
+        assert(Appearance::Decode(Vector(KartPadReadMii(0, &error))).Get(8) == 7);
+        assert(KartPadMiiRecords(&error).count == 2);
         std::filesystem::remove_all(temp);
         puts("Combined Mii/name staging, latest progress, backups, interrupted recovery, new "
-             "creation, duplication and stale rejection passed.");
+             "creation, duplication, stale rejection, name trimming and out-of-range fields passed.");
     }
 }
