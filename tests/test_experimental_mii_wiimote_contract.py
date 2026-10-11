@@ -9,13 +9,18 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 class ExperimentalMiiWiimoteContractTests(unittest.TestCase):
     def test_ios_menu_exposes_features_in_expected_submenus(self) -> None:
         source = (REPO / "apple/ios/KartPadRuntimeOverlayHost.mm").read_text()
+        browser = (REPO / "apple/shared/KartPadMiiBrowser.inc.mm").read_text()
         self.assertIn('actionWithTitle:@"Player Identity…"', source)
-        self.assertIn('actionWithTitle:@"Rename or Delete Licenses…"', source)
-        self.assertIn('@"Rename License…"', source)
-        self.assertIn('@"Choose Mii…"', source)
-        self.assertIn('actionWithTitle:@"Delete License…"', source)
-        self.assertIn('actionWithTitle:@"Remove Mii Appearance…"', source)
-        self.assertIn('actionWithTitle:@"Edit Mii Name…"', source)
+        # Player Identity opens the shared Miis screen, which carries the Mii and license actions
+        # the menu used to list: rename, relink and delete licenses; edit, rename, import and
+        # remove Miis.
+        self.assertIn('[weakSelf showMiiManager]', source)
+        manager = source.split('- (void)showMiiManager {', 1)[1].split('\n}\n', 1)[0]
+        self.assertIn('KartPadMakeMiiBrowser()', manager)
+        for title in ('@"Rename License…"', '@"Choose Mii…"', '@"Change Mii…"', '@"Delete License…"',
+                      '@"Use for a License…"', '@"Edit Mii"', '@"Rename…"', '@"Remove…"',
+                      '@"Import .mii…"'):
+            self.assertIn(title, browser)
         self.assertIn('menuWithTitle:@"Controls"', source)
         self.assertIn('actionWithTitle:@"Experimental Wii Remote + Nunchuk…"', source)
         self.assertLess(source.index('actionWithTitle:@"Player Identity…"'),
