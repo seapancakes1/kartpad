@@ -406,7 +406,8 @@ class SoundArchive {
                 duration = w.loop ? 1.0 : 1e9;
             double glide = v.portaTime ? v.portaTime * 0.01 : duration;
             float pan = std::clamp(v.pan, -1.f, 1.f);
-            float gainLeft = std::cos((pan + 1) * std::numbers::pi_v<float> / 4) * v.gain, gainRight = std::sin((pan + 1) * std::numbers::pi_v<float> / 4) * v.gain;
+            float gainLeft = std::cos((pan + 1) * std::numbers::pi_v<float> / 4) * v.gain,
+                gainRight = std::sin((pan + 1) * std::numbers::pi_v<float> / 4) * v.gain;
             size_t start = size_t(on * rate);
             double position = 0;
             for (size_t i = 0; start + i < limit; i++) {

@@ -48,8 +48,12 @@ public:
         redo_.clear();
     }
     bool CanUndo()const{return !undo_.empty();} bool CanRedo()const{return !redo_.empty();}
-    Appearance Undo(const Appearance& current){End();if(!CanUndo())return current;redo_.push_back(current);auto out=undo_.back();undo_.pop_back();return out;}
-    Appearance Redo(const Appearance& current){End();if(!CanRedo())return current;undo_.push_back(current);auto out=redo_.back();redo_.pop_back();return out;}
+    Appearance Undo(const Appearance& current){
+        End();if(!CanUndo())return current;redo_.push_back(current);auto out=undo_.back();undo_.pop_back();return out;
+    }
+    Appearance Redo(const Appearance& current){
+        End();if(!CanRedo())return current;undo_.push_back(current);auto out=redo_.back();redo_.pop_back();return out;
+    }
 };
 struct PreviewRevision {
     uint64_t current=0;

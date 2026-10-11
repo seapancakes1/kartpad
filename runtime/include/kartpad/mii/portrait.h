@@ -97,12 +97,18 @@ class Portrait {
                         float px=tx*texture->width-.5f,py=ty*texture->height-.5f;
                         int ix=int(std::floor(px)),iy=int(std::floor(py));float fx=px-ix,fy=py-iy;alpha=0;std::array<float,3> rgb{};
                         for(int j=0;j<2;j++)for(int i=0;i<2;i++){
-                            auto address=[](int index,unsigned size,unsigned wrap){if(!wrap)return unsigned(std::clamp(index,0,int(size)-1));int period=int(size)*(wrap==2?2:1);index=(index%period+period)%period;return unsigned(wrap==2&&index>=int(size)?period-1-index:index);};
-                            unsigned sx=address(ix+i,texture->width,texture->wrapS),sy=address(iy+j,texture->height,texture->wrapT);auto k=(sy*texture->width+sx)*4;
+                            auto address=[](int index,unsigned size,unsigned wrap){
+                                if(!wrap)return unsigned(std::clamp(index,0,int(size)-1));
+                                int period=int(size)*(wrap==2?2:1);index=(index%period+period)%period;
+                                return unsigned(wrap==2&&index>=int(size)?period-1-index:index);
+                            };
+                            unsigned sx=address(ix+i,texture->width,texture->wrapS),sy=address(iy+j,texture->height,texture->wrapT);
+                            auto k=(sy*texture->width+sx)*4;
                             float weight=(i?fx:1-fx)*(j?fy:1-fy)*texture->rgba[k+3]/255.f;alpha+=weight;
                             for(unsigned channel=0;channel<3;channel++)rgb[channel]+=texture->rgba[k+channel]*weight;
                         }
-                        for(unsigned channel=0;channel<3;channel++)shade[channel]=uint8_t(std::clamp(rgb[channel]/std::max(alpha,.0001f)*color[channel]/255.f,0.f,255.f));
+                        for(unsigned channel=0;channel<3;channel++)
+                            shade[channel]=uint8_t(std::clamp(rgb[channel]/std::max(alpha,.0001f)*color[channel]/255.f,0.f,255.f));
                     }
                     float z=u*a.z+v*b.z+w*c.z;
                     if(alpha>.01f&&z>coverage[y*512+x]+.0001f){coverage[y*512+x]=z;Pixel(x,y,z,shade,light,alpha);}
@@ -122,8 +128,14 @@ class Portrait {
                     u = 1 - u;
                 if (u < 0 || u >= 1 || v < 0 || v >= 1)
                     continue;
-                float px=u*image.width-.5f,py=v*image.height-.5f;int ix=int(std::floor(px)),iy=int(std::floor(py));float fx=px-ix,fy=py-iy,alpha=0;std::array<float,3> rgb{};
-                for(int j=0;j<2;j++)for(int i=0;i<2;i++){unsigned sx=std::clamp(ix+i,0,int(image.width)-1),sy=std::clamp(iy+j,0,int(image.height)-1);auto k=(sy*image.width+sx)*4;float weight=(i?fx:1-fx)*(j?fy:1-fy)*image.rgba[k+3]/255.f;alpha+=weight;for(unsigned c=0;c<3;c++)rgb[c]+=image.rgba[k+c]*weight;}
+                float px=u*image.width-.5f,py=v*image.height-.5f;int ix=int(std::floor(px)),iy=int(std::floor(py));
+                float fx=px-ix,fy=py-iy,alpha=0;std::array<float,3> rgb{};
+                for(int j=0;j<2;j++)
+                    for(int i=0;i<2;i++){
+                        unsigned sx=std::clamp(ix+i,0,int(image.width)-1),sy=std::clamp(iy+j,0,int(image.height)-1);
+                        auto k=(sy*image.width+sx)*4;float weight=(i?fx:1-fx)*(j?fy:1-fy)*image.rgba[k+3]/255.f;
+                        alpha+=weight;for(unsigned c=0;c<3;c++)rgb[c]+=image.rgba[k+c]*weight;
+                    }
                 if(alpha<.001f)continue;
                 Color tinted;for(unsigned c=0;c<3;c++)tinted[c]=uint8_t(std::clamp(rgb[c]/alpha*color[c]/255.f,0.f,255.f));
                 Pixel(x, y, 50, tinted, 1, alpha);
@@ -144,11 +156,20 @@ class Portrait {
   public:
     static Image FaceTexture(const Resources&r,const Appearance&a){
         auto texture=r.Texture(4,a.Clamped(9));auto skin=At(Skin,a.Clamped(8));
-        for(size_t i=0;i<texture.rgba.size();i+=4){float alpha=texture.rgba[i+1]/255.f;Color marking{texture.rgba[i],texture.rgba[i+3],texture.rgba[i+2]};for(unsigned c=0;c<3;c++)texture.rgba[i+c]=uint8_t(skin[c]*(1-alpha)+marking[c]*alpha);texture.rgba[i+3]=255;}return texture;
+        for(size_t i=0;i<texture.rgba.size();i+=4){
+            float alpha=texture.rgba[i+1]/255.f;Color marking{texture.rgba[i],texture.rgba[i+3],texture.rgba[i+2]};
+            for(unsigned c=0;c<3;c++)texture.rgba[i+c]=uint8_t(skin[c]*(1-alpha)+marking[c]*alpha);
+            texture.rgba[i+3]=255;
+        }
+        return texture;
     }
     static Image CapTexture(const Resources&r,const Appearance&a){
         auto texture=r.Texture(17,a.Clamped(11));auto shirt=At(Shirt,a.Clamped(3));
-        for(size_t i=0;i<texture.rgba.size();i+=4){for(unsigned c=0;c<3;c++)texture.rgba[i+c]=uint8_t(shirt[c]*(texture.rgba[i+c]/255.f+1)*.5f);texture.rgba[i+3]=255;}return texture;
+        for(size_t i=0;i<texture.rgba.size();i+=4){
+            for(unsigned c=0;c<3;c++)texture.rgba[i+c]=uint8_t(shirt[c]*(texture.rgba[i+c]/255.f+1)*.5f);
+            texture.rgba[i+3]=255;
+        }
+        return texture;
     }
     // RFL expressions (RFL_MakeTex.c): blink swaps in eye texture 26, smile eye texture 48. Both keep the
     // drawn angle by moving the rotation by the difference in per-texture rotation offsets, clamped to 0-7.
@@ -206,7 +227,11 @@ class Portrait {
     static Image AccessoryThumbnail(const Resources &r,unsigned field,unsigned value,unsigned colorIndex=0) {
         Portrait p;
         if(field==33){p.originY=256;p.MeshDraw(r.Shape(6,0),At(Glasses,colorIndex),1,0,0,0,false,&r.Texture(7,value),true);}
-        else if(field==37){const auto &texture=r.Texture(12,value);Color color=At(Hair,colorIndex);p.TextureDraw(texture,256,256,150,240,color,0,false,-.5f);p.TextureDraw(texture,256,256,150,240,color,0,true,.5f);}
+        else if(field==37){
+            const auto &texture=r.Texture(12,value);Color color=At(Hair,colorIndex);
+            p.TextureDraw(texture,256,256,150,240,color,0,false,-.5f);
+            p.TextureDraw(texture,256,256,150,240,color,0,true,.5f);
+        }
         return p.out;
     }
     // Face shape tile: the whole head outline in the given skin tone. The faceline mesh alone is open at
@@ -214,20 +239,42 @@ class Portrait {
     // close it, drawn in skin like a bald Mii. One framing for all eight shapes keeps jaws comparable.
     static Image FaceShapeThumbnail(const Resources &r,unsigned value,Color skin) {
         constexpr unsigned Bald=30;Portrait p;float low=0,high=0,radius=0;
-        auto bounds=[&](const Mesh&mesh,float x,float y,float z){for(auto&v:mesh.triangles){low=std::min(low,v.y+y);high=std::max(high,v.y+y);radius=std::max(radius,std::abs(v.x+x));}};
-        for(unsigned shape=0;shape<8;shape++){const auto&face=r.Shape(3,shape);bounds(face,0,0,0);for(unsigned group:{5u,8u})bounds(r.Shape(group,Bald),face.transforms[6],face.transforms[7],face.transforms[8]);}
+        auto bounds=[&](const Mesh&mesh,float x,float y,float z){
+            for(auto&v:mesh.triangles){
+                low=std::min(low,v.y+y);high=std::max(high,v.y+y);radius=std::max(radius,std::abs(v.x+x));
+            }
+        };
+        for(unsigned shape=0;shape<8;shape++){
+            const auto&face=r.Shape(3,shape);bounds(face,0,0,0);
+            for(unsigned group:{5u,8u})bounds(r.Shape(group,Bald),face.transforms[6],face.transforms[7],face.transforms[8]);
+        }
         p.pixelsPerUnit=std::min(470.f/std::max(1.f,high-low),470.f/std::max(1.f,radius*2));p.originY=256+(low+high)*.5f*p.pixelsPerUnit;
         const auto&face=r.Shape(3,value);p.MeshDraw(face,skin);
         for(unsigned group:{5u,8u})p.MeshDraw(r.Shape(group,Bald),skin,1,face.transforms[6],face.transforms[7],face.transforms[8]);
         constexpr int N=512,R=9;std::vector<uint8_t> solid(N*N),outside(N*N),row(N*N),eroded(N*N);
         for(int i=0;i<N*N;i++)solid[i]=p.out.rgba[i*4+3]>127;
         // Anything not reachable from the border is inside the head: fill pin holes between meshes.
-        std::vector<int> stack;for(int i=0;i<N;i++)for(int k:{i,(N-1)*N+i,i*N,i*N+N-1})if(!solid[k]&&!outside[k]){outside[k]=1;stack.push_back(k);}
-        while(!stack.empty()){int k=stack.back();stack.pop_back();int x=k%N,y=k/N;for(int n:{x>0?k-1:-1,x<N-1?k+1:-1,y>0?k-N:-1,y<N-1?k+N:-1})if(n>=0&&!solid[n]&&!outside[n]){outside[n]=1;stack.push_back(n);}}
-        for(int i=0;i<N*N;i++)if(!outside[i]){float alpha=p.out.rgba[i*4+3]/255.f;for(int c=0;c<3;c++)p.out.rgba[i*4+c]=uint8_t(p.out.rgba[i*4+c]*alpha+skin[c]*(1-alpha));p.out.rgba[i*4+3]=255;solid[i]=1;}
+        std::vector<int> stack;
+        for(int i=0;i<N;i++)for(int k:{i,(N-1)*N+i,i*N,i*N+N-1})if(!solid[k]&&!outside[k]){outside[k]=1;stack.push_back(k);}
+        while(!stack.empty()){
+            int k=stack.back();stack.pop_back();int x=k%N,y=k/N;
+            for(int n:{x>0?k-1:-1,x<N-1?k+1:-1,y>0?k-N:-1,y<N-1?k+N:-1})if(n>=0&&!solid[n]&&!outside[n]){outside[n]=1;stack.push_back(n);}
+        }
+        for(int i=0;i<N*N;i++)
+            if(!outside[i]){
+                float alpha=p.out.rgba[i*4+3]/255.f;
+                for(int c=0;c<3;c++)p.out.rgba[i*4+c]=uint8_t(p.out.rgba[i*4+c]*alpha+skin[c]*(1-alpha));
+                p.out.rgba[i*4+3]=255;solid[i]=1;
+            }
         // Outline = coverage minus its erosion (separable min filter).
-        for(int y=0;y<N;y++)for(int x=0;x<N;x++){uint8_t m=1;for(int k=-R;k<=R&&m;k++){int xx=x+k;m=xx>=0&&xx<N&&solid[y*N+xx];}row[y*N+x]=m;}
-        for(int y=0;y<N;y++)for(int x=0;x<N;x++){uint8_t m=1;for(int k=-R;k<=R&&m;k++){int yy=y+k;m=yy>=0&&yy<N&&row[yy*N+x];}eroded[y*N+x]=m;}
+        for(int y=0;y<N;y++)
+            for(int x=0;x<N;x++){
+                uint8_t m=1;for(int k=-R;k<=R&&m;k++){int xx=x+k;m=xx>=0&&xx<N&&solid[y*N+xx];}row[y*N+x]=m;
+            }
+        for(int y=0;y<N;y++)
+            for(int x=0;x<N;x++){
+                uint8_t m=1;for(int k=-R;k<=R&&m;k++){int yy=y+k;m=yy>=0&&yy<N&&row[yy*N+x];}eroded[y*N+x]=m;
+            }
         for(int i=0;i<N*N;i++)if(solid[i]&&!eroded[i]){p.out.rgba[i*4]=74;p.out.rgba[i*4+1]=52;p.out.rgba[i*4+2]=44;p.out.rgba[i*4+3]=255;}
         return p.out;
     }
@@ -237,8 +284,16 @@ class Portrait {
         auto get = [&](size_t f) { return a.Clamped(f); };
         auto face=r.Shape(3,get(7));auto faceTexture=FaceTexture(r,a);
         float low=0,high=82,radius=33;
-        auto bounds=[&](const Mesh &mesh,float x=0,float y=0,float z=0){for(auto&v:mesh.triangles){low=std::min(low,v.y+y);high=std::max(high,v.y+y);radius=std::max(radius,std::hypot(v.x+x,v.z+z));}};
-        bounds(face);for(unsigned group:{0u,5u,8u,16u}){bool beard=group==0;bounds(r.Shape(group,get(beard?38:11)),face.transforms[beard?3:6],face.transforms[beard?4:7],face.transforms[beard?5:8]);}
+        auto bounds=[&](const Mesh &mesh,float x=0,float y=0,float z=0){
+            for(auto&v:mesh.triangles){
+                low=std::min(low,v.y+y);high=std::max(high,v.y+y);radius=std::max(radius,std::hypot(v.x+x,v.z+z));
+            }
+        };
+        bounds(face);
+        for(unsigned group:{0u,5u,8u,16u}){
+            bool beard=group==0;
+            bounds(r.Shape(group,get(beard?38:11)),face.transforms[beard?3:6],face.transforms[beard?4:7],face.transforms[beard?5:8]);
+        }
         p.pixelsPerUnit=std::min(440.f/(high-low),440.f/(radius*2));p.originY=256+(low+high)*.5f*p.pixelsPerUnit;
         p.MeshDraw(face,{255,255,255},1,0,0,0,false,&faceTexture);
         p.MeshDraw(r.Shape(0, get(38)), At(Hair, get(39)), 1, face.transforms[3], face.transforms[4],

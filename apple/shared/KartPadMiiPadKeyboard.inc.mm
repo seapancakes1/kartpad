@@ -57,8 +57,10 @@ static KPPadKeyboard *KPPadActiveKeyboard;
     KPFill(c,well,KPP->panel,12);KPStroke(c,well,keyboard.problem?0xd93a2b:KPP->panelStroke,keyboard.problem?2:1,12);
     NSString *text=keyboard.field.stringValue?:@"";
     KPCenteredText([text stringByAppendingString:@"|"],CGRectInset(well,16,0),24,KPP->text,NO,NSTextAlignmentLeft);
-    KPText(keyboard.problem?:KPMiiNameCount(text),CGRectMake(KPPadKeyMargin+4,76,w-2*KPPadKeyMargin-8,18),12,keyboard.problem?0xd93a2b:KPP->secondaryText,NO,NSTextAlignmentLeft);
-    KPText(@"A  Type     B  Delete     X  Shift     Y  Space     LB / RB  Symbols     Start  OK",CGRectMake(KPPadKeyMargin,h-26,w-2*KPPadKeyMargin,16),11,KPP->secondaryText,NO,NSTextAlignmentCenter);
+    KPText(keyboard.problem?:KPMiiNameCount(text),CGRectMake(KPPadKeyMargin+4,76,w-2*KPPadKeyMargin-8,18),12,
+        keyboard.problem?0xd93a2b:KPP->secondaryText,NO,NSTextAlignmentLeft);
+    KPText(@"A  Type     B  Delete     X  Shift     Y  Space     LB / RB  Symbols     Start  OK",
+        CGRectMake(KPPadKeyMargin,h-26,w-2*KPPadKeyMargin,16),11,KPP->secondaryText,NO,NSTextAlignmentCenter);
 }
 - (void)keyDown:(NSEvent*)event{
     KPPadKeyboard *keyboard=self.keyboard;NSString *text=event.characters;
@@ -67,7 +69,9 @@ static KPPadKeyboard *KPPadActiveKeyboard;
     case 53:[keyboard finish:NO];return;
     case 36:case 76:[keyboard finish:YES];return;
     case 51:case 117:[keyboard erase];return;
-    case 123:case 124:case 125:case 126:KartPadMiiPadPress(event.keyCode==123?KartPadMiiPadLeft:event.keyCode==124?KartPadMiiPadRight:event.keyCode==125?KartPadMiiPadDown:KartPadMiiPadUp,YES);return;
+    case 123:case 124:case 125:case 126:KartPadMiiPadPress(event.keyCode==123?KartPadMiiPadLeft:event.keyCode==124
+        ?KartPadMiiPadRight:event.keyCode==125?KartPadMiiPadDown:KartPadMiiPadUp,YES);
+    return;
     default:break;
     }
     if(text.length&&[text characterAtIndex:0]>=0x20&&[text characterAtIndex:0]<0xF700)[keyboard type:text];else [super keyDown:event];
@@ -79,7 +83,8 @@ static KPPadKeyboard *KPPadActiveKeyboard;
     if(!self.shift)return character;
     NSString *upper=character.uppercaseString;return upper.length==1?upper:character;
 }
-- (KPPadKeyButton*)key:(CGRect)frame style:(KPStyle)style title:(NSString*(^)(void))title size:(CGFloat)size selected:(BOOL(^)(void))selected action:(void(^)(void))action{
+- (KPPadKeyButton*)key:(CGRect)frame style:(KPStyle)style title:(NSString*(^)(void))title size:(CGFloat)size
+    selected:(BOOL(^)(void))selected action:(void(^)(void))action{
     KPPadKeyButton *key=[[KPPadKeyButton alloc]initWithFrame:frame];
     key.paint=^(CGContextRef c,CGRect b,BOOL pressed,BOOL hovered){
         CGRect r=CGRectInset(b,1,1),face=CGRectMake(r.origin.x,r.origin.y,r.size.width,r.size.height-3);
@@ -94,25 +99,39 @@ static KPPadKeyboard *KPPadActiveKeyboard;
 }
 - (void)build{
     __weak KPPadKeyboard *weak=self;
-    const CGFloat gridW=10*KPPadKeyW+9*KPPadKeyGap,w=gridW+2*KPPadKeyMargin,bottomY=KPPadKeyTop+4*(KPPadKeyH+KPPadKeyGap),h=bottomY+KPPadKeyH+40;
-    self.panel=[[NSPanel alloc]initWithContentRect:NSMakeRect(0,0,w,h) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable backing:NSBackingStoreBuffered defer:NO];
+    const CGFloat gridW=10*KPPadKeyW+9*KPPadKeyGap,w=gridW+2*KPPadKeyMargin,
+        bottomY=KPPadKeyTop+4*(KPPadKeyH+KPPadKeyGap),h=bottomY+KPPadKeyH+40;
+    self.panel=[[NSPanel alloc]initWithContentRect:NSMakeRect(0,0,w,h)
+        styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable backing:NSBackingStoreBuffered defer:NO];
     self.panel.releasedWhenClosed=NO;self.panel.hidesOnDeactivate=YES;self.panel.delegate=self;
     self.panel.collectionBehavior=NSWindowCollectionBehaviorFullScreenAuxiliary|NSWindowCollectionBehaviorMoveToActiveSpace;
     self.canvas=[[KPPadKeyboardView alloc]initWithFrame:NSMakeRect(0,0,w,h)];self.canvas.keyboard=self;self.panel.contentView=self.canvas;
     self.keys=[NSMutableArray array];
     for(NSUInteger row=0;row<4;row++)for(NSUInteger column=0;column<10;column++){
-        NSString *(^character)(void)=^NSString*{NSString *keys=KPPadKeyRows(weak.page)[row];return [keys substringWithRange:NSMakeRange(column,1)];};
-        [self key:CGRectMake(KPPadKeyMargin+column*(KPPadKeyW+KPPadKeyGap),KPPadKeyTop+row*(KPPadKeyH+KPPadKeyGap),KPPadKeyW,KPPadKeyH) style:KPStyle::Plain
+        NSString *(^character)(void)=^NSString*{
+            NSString *keys=KPPadKeyRows(weak.page)[row];return [keys substringWithRange:NSMakeRange(column,1)];
+        };
+        [self key:CGRectMake(KPPadKeyMargin+column*(KPPadKeyW+KPPadKeyGap),KPPadKeyTop+row*(KPPadKeyH+KPPadKeyGap),KPPadKeyW,KPPadKeyH)
+            style:KPStyle::Plain
             title:^NSString*{return [weak label:character()];} size:18 selected:nil action:^{[weak type:[weak label:character()]];}];
     }
     // Shift, symbols, space, delete, Cancel and OK fill the bottom row.
     const CGFloat widths[]={76,76,160,76,68,68};CGFloat x=KPPadKeyMargin;
-    NSString *(^titles[])(void)={^NSString*{return weak.capsLock?@"⇪":@"⇧";},^NSString*{return weak.page?@"ABC":@"àé?";},^NSString*{return @"Space";},^NSString*{return @"⌫";},^NSString*{return @"Cancel";},^NSString*{return @"OK";}};
-    void(^actions[])(void)={^{[weak toggleShift];},^{[weak togglePage];},^{[weak type:@" "];},^{[weak erase];},^{[weak finish:NO];},^{[weak finish:YES];}};
+    NSString *(^titles[])(void)={^NSString*{
+        return weak.capsLock?@"⇪":@"⇧";
+    },^NSString*{
+        return weak.page?@"ABC":@"àé?";
+    },^NSString*{return @"Space";},^NSString*{return @"⌫";},^NSString*{return @"Cancel";},^NSString*{return @"OK";}
+    };
+    void(^actions[])(void)={^{
+        [weak toggleShift];
+    },^{[weak togglePage];},^{[weak type:@" "];},^{[weak erase];},^{[weak finish:NO];},^{[weak finish:YES];}};
     for(int i=0;i<6;i++){
-        KPPadKeyButton *key=[self key:CGRectMake(x,bottomY,widths[i],KPPadKeyH) style:i==5?KPStyle::Primary:KPStyle::Plain title:titles[i] size:i<2||i==3?18:14
+        KPPadKeyButton *key=[self key:CGRectMake(x,bottomY,widths[i],KPPadKeyH)
+            style:i==5?KPStyle::Primary:KPStyle::Plain title:titles[i] size:i<2||i==3?18:14
             selected:i==0?^BOOL{return weak.shift;}:(BOOL(^)(void))nil action:actions[i]];
-        if(i==0)[key setAccessibilityLabel:@"Shift"];if(i==1)[key setAccessibilityLabel:@"Symbols"];if(i==3)[key setAccessibilityLabel:@"Delete"];
+        if(i==0)[key setAccessibilityLabel:@"Shift"];if(i==1)[key setAccessibilityLabel:@"Symbols"];
+        if(i==3)[key setAccessibilityLabel:@"Delete"];
         x+=widths[i]+KPPadKeyGap;
     }
 }
@@ -128,7 +147,9 @@ static KPPadKeyboard *KPPadActiveKeyboard;
     NSTextView *editor=[self editor];if(!editor)return;
     // The field holds at most 10 characters as typed; the rest is checked as the name is saved.
     NSString *next=[self.field.stringValue stringByAppendingString:text];
-    if(NSString *problem=next.length>10?@"This name is too long.":KPMiiNameProblem(next,NO)){self.problem=problem;KPPlay(KPSound::Reject);[self refresh];return;}
+    if(NSString *problem=next.length>10?@"This name is too long.":KPMiiNameProblem(next,NO)){
+        self.problem=problem;KPPlay(KPSound::Reject);[self refresh];return;
+    }
     [editor insertText:text replacementRange:editor.selectedRange];KPPlay(KPSound::Key);
     self.problem=nil;if(self.shift&&!self.capsLock)self.shift=NO;[self refresh];
 }
@@ -180,11 +201,15 @@ static void KPPadKeyboardOpen(NSTextField *field,NSString *title,BOOL required,v
     // Over the bottom of the window the field is in (an alert's parent), above it and its alerts.
     NSWindow *parent=field.window.sheetParent?:field.window;NSRect frame=keyboard.panel.frame,area=parent.frame;
     if(frame.size.width>area.size.width||frame.size.height>area.size.height)area=parent.screen.visibleFrame;
-    frame.origin=NSMakePoint(NSMidX(area)-frame.size.width/2,area.origin.y+std::max(CGFloat(16),std::min(CGFloat(40),area.size.height-frame.size.height)));
+    frame.origin=NSMakePoint(NSMidX(area)-frame.size.width/2,
+        area.origin.y+std::max(CGFloat(16),std::min(CGFloat(40),area.size.height-frame.size.height)));
     [keyboard.panel setFrame:frame display:NO];
     keyboard.panel.level=std::max(parent.level,field.window.level)+1;
     __weak KPPadKeyboard *weak=keyboard;
-    keyboard.closing=[NSNotificationCenter.defaultCenter addObserverForName:NSWindowWillCloseNotification object:parent queue:nil usingBlock:^(NSNotification *note){[weak finish:NO];}];
+    keyboard.closing=[NSNotificationCenter.defaultCenter addObserverForName:NSWindowWillCloseNotification object:parent
+            queue:nil usingBlock:^(NSNotification *note){
+        [weak finish:NO];
+    }];
     [keyboard editor];
     [keyboard.panel makeKeyAndOrderFront:nil];
     // The first letter on the top row of letters.

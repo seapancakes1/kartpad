@@ -43,9 +43,16 @@ static AVAudioPCMBuffer *KPMiiSoundBuffer(const kartpad::audio::Pcm &pcm,AVAudio
     KPSound _pending;
     CFTimeInterval _pendingTime;
 }
-+ (instancetype)shared{static KPMiiSounds *sounds;static dispatch_once_t once;dispatch_once(&once,^{sounds=[KPMiiSounds new];});return sounds;}
++ (instancetype)shared{
+    static KPMiiSounds *sounds;static dispatch_once_t once;dispatch_once(&once,^{sounds=[KPMiiSounds new];});
+    return sounds;
+}
 - (BOOL)enabled{id value=[NSUserDefaults.standardUserDefaults objectForKey:KPMiiSoundsKey];return value?[value boolValue]:YES;}
-- (void)setEnabled:(BOOL)enabled{[NSUserDefaults.standardUserDefaults setBool:enabled forKey:KPMiiSoundsKey];if(!enabled){[_node stop];_currentUntil=0;_hasPending=NO;}[NSNotificationCenter.defaultCenter postNotificationName:KPMiiSoundsChangedNotification object:self];}
+- (void)setEnabled:(BOOL)enabled{
+    [NSUserDefaults.standardUserDefaults setBool:enabled forKey:KPMiiSoundsKey];
+    if(!enabled){[_node stop];_currentUntil=0;_hasPending=NO;}
+    [NSNotificationCenter.defaultCenter postNotificationName:KPMiiSoundsChangedNotification object:self];
+}
 // Output device and route changes stop the engine; start it again on the next sound or here.
 - (BOOL)resume{
     if(!_engine)return NO;
@@ -57,22 +64,28 @@ static AVAudioPCMBuffer *KPMiiSoundBuffer(const kartpad::audio::Pcm &pcm,AVAudio
 - (void)installEngine:(AVAudioEngine*)engine node:(AVAudioPlayerNode*)node{
     if(_engine)[NSNotificationCenter.defaultCenter removeObserver:self name:AVAudioEngineConfigurationChangeNotification object:_engine];
     [_engine stop];_engine=engine;_node=node;_currentUntil=0;
-    if(engine)[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(engineChanged:) name:AVAudioEngineConfigurationChangeNotification object:engine];
+    if(engine)
+        [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(engineChanged:)
+            name:AVAudioEngineConfigurationChangeNotification object:engine];
 }
 - (void)suspendSoon{
     uint64_t token=++_suspendToken;CFTimeInterval wait=std::max(0.,_currentUntil-CACurrentMediaTime())+1;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,int64_t(wait*NSEC_PER_SEC)),dispatch_get_main_queue(),^{if(token==self->_suspendToken)[self->_engine pause];});
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,int64_t(wait*NSEC_PER_SEC)),dispatch_get_main_queue(),^{
+        if(token==self->_suspendToken)[self->_engine pause];
+    });
 }
 // Renders and starts the engine on a background queue; a reimported archive (new size or date) renders again.
 - (void)prepare:(NSString*)archive{
     _suspendToken++;
     NSDictionary *attributes=archive?[NSFileManager.defaultManager attributesOfItemAtPath:archive error:nil]:nil;
     if(!attributes){_buffers=nil;_key=nil;[self installEngine:nil node:nil];return;}
-    NSString *key=[NSString stringWithFormat:@"%@|%@|%f",archive,attributes[NSFileSize],attributes.fileModificationDate.timeIntervalSince1970];
+    NSString *key=[NSString stringWithFormat:@"%@|%@|%f",archive,attributes[NSFileSize],
+        attributes.fileModificationDate.timeIntervalSince1970];
     if([key isEqual:_key]){if(_buffers&&self.enabled)[self resume];return;}
     if([key isEqual:_loadingKey])return;
     _loadingKey=key;
-    static dispatch_queue_t queue;static dispatch_once_t once;dispatch_once(&once,^{queue=dispatch_queue_create("dev.kartpad.mii-sounds",DISPATCH_QUEUE_SERIAL);});
+    static dispatch_queue_t queue;static dispatch_once_t once;
+    dispatch_once(&once,^{queue=dispatch_queue_create("dev.kartpad.mii-sounds",DISPATCH_QUEUE_SERIAL);});
     dispatch_async(queue,^{@autoreleasepool{
         NSMutableArray *buffers=[NSMutableArray array];
         AVAudioFormat *format=[[AVAudioFormat alloc]initStandardFormatWithSampleRate:32000 channels:2];
@@ -124,7 +137,8 @@ static void KPHaptic(KPSound sound){
     static UISelectionFeedbackGenerator *selection;static UINotificationFeedbackGenerator *notice;
     if(!selection){selection=[UISelectionFeedbackGenerator new];notice=[UINotificationFeedbackGenerator new];}
     switch(sound){
-    case KPSound::Tick:case KPSound::Press:case KPSound::Tab:case KPSound::Confirm:case KPSound::Left:case KPSound::Right:case KPSound::PageNext:case KPSound::PagePrevious:case KPSound::NewMii:
+    case KPSound::Tick:case KPSound::Press:case KPSound::Tab:case KPSound::Confirm:case KPSound::Left:case KPSound::Right:
+    case KPSound::PageNext:case KPSound::PagePrevious:case KPSound::NewMii:
         [selection selectionChanged];[selection prepare];break;
     case KPSound::Saved:[notice notificationOccurred:UINotificationFeedbackTypeSuccess];break;
     case KPSound::Reject:[notice notificationOccurred:UINotificationFeedbackTypeWarning];break;

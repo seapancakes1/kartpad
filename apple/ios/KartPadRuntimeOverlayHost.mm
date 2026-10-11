@@ -1795,9 +1795,11 @@ static NSString *const kKartPadPreferredGameKey = @"KartPadPreferredGame";
     dispatch_async(dispatch_get_main_queue(), ^{
       UIAlertController *alert = [UIAlertController
           alertControllerWithTitle:@"Pending Mii Changes Couldn’t Be Applied"
-                           message:[NSString stringWithFormat:@"%@\n\nBackups and pending changes have been retained. Fully close KartPad from the app switcher and reopen it to retry.%@",
+                           message:[NSString stringWithFormat:@"%@\n\nBackups and pending changes have been retained. "
+                                       @"Fully close KartPad from the app switcher and reopen it to retry.%@",
                                        self.pendingMiiFailure.localizedDescription,
-                                       discardable ? @" Discard Mii Changes drops the waiting Mii and license changes and starts the game." : @""]
+                                       discardable ? @" Discard Mii Changes drops the waiting Mii and license changes "
+                                                     @"and starts the game." : @""]
                     preferredStyle:UIAlertControllerStyleAlert];
       [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel
                                               handler:^(UIAlertAction *action) { (void)action; finish(NO); }]];
