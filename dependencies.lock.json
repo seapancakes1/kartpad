@@ -166,6 +166,61 @@
       "role": "Pinned maintained native TLS engine for Android guest networking"
     },
     {
+      "name": "libdatachannel macOS",
+      "repository": "https://github.com/paullouisageneau/libdatachannel",
+      "version": "0.24.6",
+      "artifact": "v0.24.6.tar.gz",
+      "url": "https://github.com/paullouisageneau/libdatachannel/archive/refs/tags/v0.24.6.tar.gz",
+      "bytes": 52656037,
+      "sha256": "22a66aebebd8dae561d8e5181da96f2fcc203e067c5b2186c07b39af913464c0",
+      "license": "MPL-2.0",
+      "role": "Pinned WebRTC data channels (no media, no WebSockets) for the Mac phone controllers' WebRTC link, fetched and built statically by cmake/KartPadPhoneLink.cmake"
+    },
+    {
+      "name": "libjuice macOS",
+      "repository": "https://github.com/paullouisageneau/libjuice",
+      "commit": "b89c792e3612faf2f12cf35bcc56857313a06be3",
+      "artifact": "b89c792e3612faf2f12cf35bcc56857313a06be3.tar.gz",
+      "url": "https://github.com/paullouisageneau/libjuice/archive/b89c792e3612faf2f12cf35bcc56857313a06be3.tar.gz",
+      "bytes": 108543,
+      "sha256": "713b22174e8cb2e06538fa9bac2650bda21b83c86f5128813ab4dcf8f5bea9ed",
+      "license": "MPL-2.0",
+      "role": "Pinned ICE (the commit libdatachannel 0.24.6 pins as a submodule) for the Mac phone controllers' WebRTC link, fetched and built statically by cmake/KartPadPhoneLink.cmake"
+    },
+    {
+      "name": "usrsctp macOS",
+      "repository": "https://github.com/paullouisageneau/usrsctp",
+      "commit": "fec583d54493f879d2ae44a743423bf8a04371ab",
+      "artifact": "fec583d54493f879d2ae44a743423bf8a04371ab.tar.gz",
+      "url": "https://github.com/paullouisageneau/usrsctp/archive/fec583d54493f879d2ae44a743423bf8a04371ab.tar.gz",
+      "bytes": 773875,
+      "sha256": "e5c114afe73c9a0ec419fab5f5b3f63f3ce57b09b90d06ea85e63dca8aed3e7c",
+      "license": "BSD-3-Clause",
+      "role": "Pinned SCTP for data channels (the commit libdatachannel 0.24.6 pins as a submodule) for the Mac phone controllers' WebRTC link, fetched and built statically by cmake/KartPadPhoneLink.cmake"
+    },
+    {
+      "name": "plog macOS",
+      "repository": "https://github.com/SergiusTheBest/plog",
+      "commit": "94899e0b926ac1b0f4750bfbd495167b4a6ae9ef",
+      "artifact": "94899e0b926ac1b0f4750bfbd495167b4a6ae9ef.tar.gz",
+      "url": "https://github.com/SergiusTheBest/plog/archive/94899e0b926ac1b0f4750bfbd495167b4a6ae9ef.tar.gz",
+      "bytes": 206598,
+      "sha256": "92a08bce559b5f28aa88d3fd9071567414b9f43a83fe2a05a6dd14f1da536072",
+      "license": "MIT",
+      "role": "Pinned logging used by libdatachannel (the commit libdatachannel 0.24.6 pins as a submodule) for the Mac phone controllers' WebRTC link, fetched and built statically by cmake/KartPadPhoneLink.cmake"
+    },
+    {
+      "name": "Mbed TLS macOS",
+      "repository": "https://github.com/Mbed-TLS/mbedtls",
+      "version": "3.6.7",
+      "artifact": "mbedtls-3.6.7.tar.bz2",
+      "url": "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.7/mbedtls-3.6.7.tar.bz2",
+      "bytes": 5473689,
+      "sha256": "a7e8bcbec0e6f761b4af24f25677626b35f762f68eef79c08677a363212d11f6",
+      "license": "Apache-2.0 OR GPL-2.0-or-later",
+      "role": "Pinned DTLS (options in cmake/kartpad_mbedtls_config.h) for the Mac phone controllers' WebRTC link, fetched and built statically by cmake/KartPadPhoneLink.cmake"
+    },
+    {
       "name": "AndroidX WorkManager",
       "repository": "https://android.googlesource.com/platform/frameworks/support",
       "version": "2.11.1",
