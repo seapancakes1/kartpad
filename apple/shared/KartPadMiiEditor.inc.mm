@@ -148,21 +148,24 @@ static std::shared_ptr<kartpad::mii::BodyResources> KPMiiLoadBody(){
 static KPMiiImage *KPMiiFeatureImage(const kartpad::mii::Resources&r,unsigned field,unsigned value,const kartpad::mii::Appearance&current){
     using namespace kartpad::mii;
     // Feature textures sit off-centre in their canvases; crop to the drawn pixels so tiles centre them.
-    if(field==14){Color first=value==9?Color{255,130,0}:value==20?Color{0,255,255}:Color{0,0,0};return KPMiiImageFromPixels(Portrait::ColorMask(r.Texture(1,value),first,Eyes[current.Get(17)]),YES);}
-    if(field==20){Image image=r.Texture(2,value);Color color=Hair[current.Get(22)];for(size_t i=0;i<image.rgba.size();i+=4)for(int c=0;c<3;c++)image.rgba[i+c]=color[c];return KPMiiImageFromPixels(image,YES);}
-    if(field==29)return KPMiiImageFromPixels(Portrait::ColorMask(r.Texture(11,value),Lip0[current.Get(30)],Lip1[current.Get(30)]),YES);
+    if(field==14){Color first=value==9?Color{255,130,0}:value==20?Color{0,255,255}:Color{0,0,0};return KPMiiImageFromPixels(Portrait::ColorMask(r.Texture(1,value),first,At(Eyes,current.Clamped(17))),YES);}
+    if(field==20){Image image=r.Texture(2,value);Color color=At(Hair,current.Clamped(22));for(size_t i=0;i<image.rgba.size();i+=4)for(int c=0;c<3;c++)image.rgba[i+c]=color[c];return KPMiiImageFromPixels(image,YES);}
+    if(field==29)return KPMiiImageFromPixels(Portrait::ColorMask(r.Texture(11,value),At(Lip0,current.Clamped(30)),At(Lip1,current.Clamped(30))),YES);
     if((field==33||field==37||field==38)&&value==0)return nil;
-    if((field==33||field==37)&&value)return KPMiiImageFromPixels(Portrait::AccessoryThumbnail(r,field,value,current.Get(field==33?34:39)),YES);
+    if((field==33||field==37)&&value)return KPMiiImageFromPixels(Portrait::AccessoryThumbnail(r,field,value,current.Clamped(field==33?34:39)),YES);
     // Face shapes share one framing (no per-tile crop) so their outlines can be compared.
-    if(field==7)return KPMiiImageFromPixels(Portrait::FaceShapeThumbnail(r,value,Skin[current.Get(8)]));
+    if(field==7)return KPMiiImageFromPixels(Portrait::FaceShapeThumbnail(r,value,At(Skin,current.Clamped(8))));
     // Other features sit on the Mii's own face shape so tiles match the preview.
     auto a=Appearance::Decode(CreateDefaultMii({0,0,0,0,0,0}));a.Set(field,value);
-    a.Set(7,current.Get(7));a.Set(8,current.Get(8));a.Set(12,current.Get(12));a.Set(39,current.Get(39));
+    a.Set(7,current.Clamped(7));a.Set(8,current.Clamped(8));a.Set(12,current.Clamped(12));a.Set(39,current.Clamped(39));
     if(field==9)a.Set(11,30);
     return KPMiiImageFromPixels(Portrait::Render(r,a),YES);
 }
 // Face shape and colours that feed the tiles; part of the thumbnail cache key so changing them re-renders the tiles.
-static NSString *KPMiiTileColors(const kartpad::mii::Appearance&a){return [NSString stringWithFormat:@"%u.%u.%u.%u.%u.%u.%u.%u",a.Get(7),a.Get(8),a.Get(12),a.Get(17),a.Get(22),a.Get(30),a.Get(34),a.Get(39)];}
+static NSString *KPMiiTileColors(const kartpad::mii::Appearance&a){return [NSString stringWithFormat:@"%u.%u.%u.%u.%u.%u.%u.%u",a.Clamped(7),a.Clamped(8),a.Clamped(12),a.Clamped(17),a.Clamped(22),a.Clamped(30),a.Clamped(34),a.Clamped(39)];}
+// What the editor shows of a draft: fields out of range at their nearest valid value. Edits start
+// from the draft itself, so a stored value changes only when its field is edited.
+static kartpad::mii::Appearance KPShown(NSData *draft){return kartpad::mii::Appearance::Decode(Bytes(draft)).InRange();}
 static void KPDrawImage(KPMiiImage *image,CGRect rect){
     CGSize size=image.size;if(size.width<=0||size.height<=0)return;
     CGFloat scale=std::min(rect.size.width/size.width,rect.size.height/size.height);
@@ -465,7 +468,7 @@ static NSView *KPPadNearest(NSArray<NSView*> *candidates,NSView *from,int dx,int
 @property(nonatomic) BOOL dragging;
 @end
 @implementation KPMiiBodySlider
-- (unsigned)value{return kartpad::mii::Appearance::Decode(Bytes(self.editor.draft)).Get(self.field);}
+- (unsigned)value{return kartpad::mii::Appearance::Decode(Bytes(self.editor.draft)).Clamped(self.field);}
 - (CGRect)track{CGFloat inset=48;return CGRectMake(inset,CGRectGetMidY(self.bounds)-7,self.bounds.size.width-2*inset,14);}
 - (void)setValueAt:(CGFloat)x{CGRect t=[self track];unsigned before=[self value];[self.editor setBody:self.field value:unsigned(lround(std::clamp((x-t.origin.x)/t.size.width,CGFloat(0),CGFloat(1))*127))];if([self value]/8!=before/8)KPPlay(KPSound::Tick);[self refresh];}
 - (void)step:(int)delta{unsigned before=[self value];self.editor->_history.Begin();[self.editor setBody:self.field value:unsigned(std::clamp(int(before)+delta,0,127))];self.editor->_history.End();KPPlay([self value]==before?KPSound::Reject:KPSound::Tick);[self refresh];}
@@ -529,9 +532,9 @@ static NSString *const KPMiiPreviewAnimationKey=@"KartPadMiiPreviewAnimation";
 static BOOL KPMiiPreviewAnimation(){id value=[NSUserDefaults.standardUserDefaults objectForKey:KPMiiPreviewAnimationKey];return value?[value boolValue]:YES;}
 static unsigned KPBirthdayDays(unsigned month){return kartpad::mii::BirthdayDays(month);}
 static NSArray<NSString*> *KPBirthdayMonths(){return @[@"Not set",@"January",@"February",@"March",@"April",@"May",@"June",@"July",@"August",@"September",@"October",@"November",@"December"];}
-static NSString *KPBirthdayLabel(const kartpad::mii::Appearance &a){return a.Get(1)&&a.Get(2)?[NSString stringWithFormat:@"%@ %u",KPBirthdayMonths()[a.Get(1)],a.Get(2)]:@"Not set";}
+static NSString *KPBirthdayLabel(const kartpad::mii::Appearance &a){return a.Clamped(1)&&a.Clamped(2)?[NSString stringWithFormat:@"%@ %u",KPBirthdayMonths()[a.Clamped(1)],a.Clamped(2)]:@"Not set";}
 // Field 1 is the month, field 2 the day (shown as “Day” until a month is chosen).
-static NSString *KPBirthdayPart(const kartpad::mii::Appearance &a,unsigned field){return field==1?KPBirthdayMonths()[a.Get(1)]:a.Get(1)&&a.Get(2)?[NSString stringWithFormat:@"%u",a.Get(2)]:@"Day";}
+static NSString *KPBirthdayPart(const kartpad::mii::Appearance &a,unsigned field){return field==1?KPBirthdayMonths()[a.Clamped(1)]:a.Clamped(1)&&a.Clamped(2)?[NSString stringWithFormat:@"%u",a.Clamped(2)]:@"Day";}
 static id KPLabelView(NSString *text,CGRect frame,CGFloat size=16,BOOL bold=NO,BOOL secondary=NO){
     KPMiiColor *color=KPColor(secondary?KPP->secondaryText:KPP->text);auto weight=bold?NSFontWeightSemibold:NSFontWeightRegular;
 #if TARGET_OS_OSX
@@ -543,7 +546,7 @@ static id KPLabelView(NSString *text,CGRect frame,CGFloat size=16,BOOL bold=NO,B
 }
 // Mingle (field 10) stores "doesn't mingle", so its switch is inverted.
 static BOOL KPToggleOn(const KPItem &item,const kartpad::mii::Appearance &a){return item.field==10?!a.Get(10):a.Get(item.field)!=0;}
-static NSString *KPBuildName(const kartpad::mii::Appearance &a){auto build=kartpad::mii::BuildFor(a.Get(5),a.Get(6));return build==kartpad::mii::MiiBuild::Small?@"Small build":build==kartpad::mii::MiiBuild::Medium?@"Medium build":@"Large build";}
+static NSString *KPBuildName(const kartpad::mii::Appearance &a){auto build=kartpad::mii::BuildFor(a.Clamped(5),a.Clamped(6));return build==kartpad::mii::MiiBuild::Small?@"Small build":build==kartpad::mii::MiiBuild::Medium?@"Medium build":@"Large build";}
 static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||field==17||field==22||field==30||field==34||field==39;}
 @implementation KPMiiCanvas
 #if TARGET_OS_OSX
@@ -578,7 +581,7 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
         [hint setText:message];[hint setTextColor:invalid?UIColor.systemRedColor:KPColor(KPP->secondaryText)];
 #endif
     }
-    auto a=kartpad::mii::Appearance::Decode(Bytes(self.editor.draft));BOOL sound=[KPMiiSounds shared].enabled;
+    auto a=KPShown(self.editor.draft);BOOL sound=[KPMiiSounds shared].enabled;
 #if TARGET_OS_OSX
     // The close button's dot marks unsaved changes, and the title names the Mii.
     if(NSWindow *window=self.editor.window){NSString *base=self.editor.slot!=NSNotFound?@"Edit Mii":self.editor.duplicating?@"Duplicate Mii":@"Create Mii",*name=KPMiiName(self.editor.draft,2);
@@ -691,7 +694,7 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
         CGFloat ay=_shortHeader?8:6;
         if(!_shortHeader)add(KPAction::Sound,CGRectMake(w-margin-136-12-96,6,96,40),@"Sound effects");
         add(KPAction::Undo,CGRectMake(w-margin-136,ay,40,40),@"Undo");add(KPAction::Redo,CGRectMake(w-margin-88,ay,40,40),@"Redo");add(KPAction::More,CGRectMake(w-margin-40,ay,40,40),@"More");
-        auto appearance=kartpad::mii::Appearance::Decode(Bytes(self.editor.draft));
+        auto appearance=KPShown(self.editor.draft);
         CGRect frame=CGRectInset(_panelRect,12,12);
 #if TARGET_OS_OSX
         // Every page fits its panel, so the form is a plain view.
@@ -918,7 +921,7 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
     if(message.length){if(_stacked)KPText(message,CGRectMake(margin,_footerY+4,_statusWidth,36),11,tone,NO,NSTextAlignmentLeft);else KPText(message,CGRectMake(margin+4,_footerY-25,_previewRect.size.width-8,18),compact?11:12,tone,NO,NSTextAlignmentLeft);}
 }
 - (void)drawItem:(NSUInteger)i context:(CGContextRef)c pressed:(BOOL)pressed{
-    if(i>=_items.size())return;KPUsePalette(self);const auto &item=_items[i];auto a=kartpad::mii::Appearance::Decode(Bytes(self.editor.draft));
+    if(i>=_items.size())return;KPUsePalette(self);const auto &item=_items[i];auto a=KPShown(self.editor.draft);
     CGRect r=CGRectMake(1,1,item.rect.size.width-2,item.rect.size.height-2),face=CGRectMake(r.origin.x,r.origin.y,r.size.width,r.size.height-3);
     if(item.action==KPAction::Sound){
         BOOL on=[KPMiiSounds shared].enabled;CGFloat side=26;CGRect box=CGRectMake(2,(r.size.height-side-3)/2+1,side,side+3);
@@ -955,7 +958,7 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
     case KPAction::Select:
         if(item.field==0){KPCenteredText(item.label,face,16,KPP->text,selected);break;}
         if(KPColorField(item.field)){
-            using namespace kartpad::mii;Color color=item.field==3?Shirt[item.value]:item.field==8?Skin[item.value]:item.field==17?Eyes[item.value]:item.field==30?Lip0[item.value]:item.field==34?Glasses[item.value]:Hair[item.value];
+            using namespace kartpad::mii;Color color=item.field==3?At(Shirt,item.value):item.field==8?At(Skin,item.value):item.field==17?At(Eyes,item.value):item.field==30?At(Lip0,item.value):item.field==34?At(Glasses,item.value):At(Hair,item.value);
             unsigned hex=(color[0]<<16)|(color[1]<<8)|color[2];CGRect chip=CGRectInset(face,5,5);KPFill(c,chip,hex,8);KPStroke(c,chip,0x000000,1,8,.16);
             if(selected){CGFloat luma=(.299*color[0]+.587*color[1]+.114*color[2])/255;CGFloat side=std::min(chip.size.width,chip.size.height)*.62;KPControlIcon(c,CGRectMake(CGRectGetMidX(chip)-side/2,CGRectGetMidY(chip)-side/2,side,side),KPGlyph::Check,0,luma>.62?0x263238:0xffffff);}
             break;
@@ -1036,7 +1039,7 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
 - (void)categoryChangedTo:(unsigned)category{
     if(![self commitNames])return;
     self.category=category;self.feature=kartpad::mii::PrimaryFeatures[category];self.section=0;
-    auto a=kartpad::mii::Appearance::Decode(Bytes(self.draft));self.page=kartpad::mii::FeaturePage(self.feature,a.Get(self.feature));
+    auto a=kartpad::mii::Appearance::Decode(Bytes(self.draft));self.page=kartpad::mii::FeaturePage(self.feature,a.Clamped(self.feature));
     self.preview.fullBody=category<=1;if(category>=2)[self.preview faceFront];[self rebuild];[self refreshPreview];
 }
 - (void)refreshPreview{
@@ -1070,15 +1073,16 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
     case KPAction::Category:if(![self commitNames])return;KPPlay(item.field==unsigned(self.category)?KPSound::Same:KPSound::Tab);[self categoryChangedTo:item.field];return;
     case KPAction::Page:KPPlay(item.value>0?KPSound::PageNext:KPSound::PagePrevious);self.page+=item.value;[self rebuild];[self refreshPreview];return;
     case KPAction::Section:if(![self commitNames])return;KPPlay(unsigned(item.value)==self.section?KPSound::Same:KPSound::Tab);self.section=unsigned(item.value);[self rebuild];return;
-    case KPAction::Mode:KPPlay(item.field==self.feature&&!self.section?KPSound::Same:KPSound::Tab);self.feature=item.field;self.section=0;self.page=kartpad::mii::FeaturePage(item.field,a.Get(item.field));[self rebuild];[self refreshPreview];return;
+    case KPAction::Mode:KPPlay(item.field==self.feature&&!self.section?KPSound::Same:KPSound::Tab);self.feature=item.field;self.section=0;self.page=kartpad::mii::FeaturePage(item.field,a.Clamped(item.field));[self rebuild];[self refreshPreview];return;
     case KPAction::Gender:KPPlay(self.gender==unsigned(item.value)?KPSound::Same:KPSound::Confirm);self.gender=item.value;[self makeLookAlikes];[self rebuild];return;
     case KPAction::Start:if(item.value){KPPlay(KPSound::Press);self.pickingLookAlike=YES;[self rebuild];return;}[self begin:[self scratch]];return;
     case KPAction::LookAlike:if(NSUInteger(item.value)<self.lookAlikes.count)[self begin:self.lookAlikes[item.value]];return;
     case KPAction::Shuffle:KPPlay(KPSound::PageNext);[self shuffle];[self rebuild];return;
     case KPAction::Back:KPPlay(KPSound::PagePrevious);self.pickingLookAlike=NO;[self rebuild];return;
-    case KPAction::Select:{BOOL changed=a.Get(item.field)!=unsigned(item.value);KPPlay(!changed?KPSound::Same:item.field==0?KPSound::Confirm:KPColorField(item.field)?KPSound::Tab:KPSound::Press);a.Set(item.field,item.value);[self applyAppearance:a];if(changed)[self.preview react];return;}
+    // Choosing what a field shows still stores it, which brings a field out of range into range.
+    case KPAction::Select:{BOOL changed=a.Clamped(item.field)!=unsigned(item.value);KPPlay(!changed?KPSound::Same:item.field==0?KPSound::Confirm:KPColorField(item.field)?KPSound::Tab:KPSound::Press);a.Set(item.field,item.value);[self applyAppearance:a];if(changed)[self.preview react];return;}
     case KPAction::Adjust:{
-        int value=int(a.Get(item.field))+item.value;auto f=kartpad::mii::AppearanceFields[item.field];
+        int value=int(a.Clamped(item.field))+item.value;auto f=kartpad::mii::AppearanceFields[item.field];
         // The first press plays the step; held repeats tick, and a hold that reaches the limit is rejected.
         CFTimeInterval now=CACurrentMediaTime();BOOL repeat=now-self.adjustTime<.4&&self.adjustField==item.field&&self.adjustDirection==item.value;self.adjustTime=now;self.adjustField=item.field;self.adjustDirection=item.value;
         if(value>=int(f.minimum)&&value<=int(f.maximum)){BOOL limit=value==int(f.minimum)||value==int(f.maximum);KPPlay(repeat?(limit?KPSound::Reject:KPSound::Tick):item.value>0?KPSound::Right:KPSound::Left);a.Set(item.field,value);[self applyAppearance:a];}else KPPlay(KPSound::Reject);
@@ -1101,7 +1105,7 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
     default:return;
     }
 }
-- (void)historyChanged{auto a=kartpad::mii::Appearance::Decode(Bytes(self.draft));self.page=kartpad::mii::FeaturePage(self.feature,a.Get(self.feature));[self rebuild];[self refreshPreview];}
+- (void)historyChanged{auto a=kartpad::mii::Appearance::Decode(Bytes(self.draft));self.page=kartpad::mii::FeaturePage(self.feature,a.Clamped(self.feature));[self rebuild];[self refreshPreview];}
 - (void)setBody:(unsigned)field value:(unsigned)value{auto a=kartpad::mii::Appearance::Decode(Bytes(self.draft));if(a.Get(field)==value)return;a.Set(field,value);[self applyAppearance:a];
 #if TARGET_OS_OSX
     [self.buildLabel setStringValue:KPBuildName(a)];
@@ -1144,7 +1148,7 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
 // The month or day menu drops from its button, with the current choice checked.
 - (void)birthday:(unsigned)field{
     if(![self commitNames])return;
-    auto a=kartpad::mii::Appearance::Decode(Bytes(self.draft));
+    auto a=KPShown(self.draft);
     KPMiiWiiButton *anchor=nil;for(KPMiiWiiButton *button in self.canvas.buttons){const auto &item=self.canvas->_items[button.index];if(item.action==KPAction::Birthday&&item.field==field)anchor=button;}
     if(!anchor)return;
     NSMenu *menu=[NSMenu new];menu.autoenablesItems=NO;menu.minimumWidth=anchor.bounds.size.width;
@@ -1175,12 +1179,12 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
 - (void)birthdayCancel:(id)sender{KPPlay(KPSound::Close);[self dismissViewControllerAnimated:YES completion:^{self.birthdayPicker=nil;}];}
 - (void)birthday{
     if(![self commitNames])return;[self.view endEditing:YES];
-    auto birthdayAppearance=kartpad::mii::Appearance::Decode(Bytes(self.draft));self.birthdayMonth=birthdayAppearance.Get(1);
+    self.birthdayMonth=KPShown(self.draft).Get(1);
     UIViewController *sheet=[UIViewController new];sheet.view.backgroundColor=UIColor.systemBackgroundColor;sheet.view.accessibilityViewIsModal=YES;sheet.modalPresentationStyle=UIModalPresentationPageSheet;sheet.preferredContentSize=CGSizeMake(420,300);
     if(@available(iOS 15.0,*)){sheet.sheetPresentationController.detents=@[UISheetPresentationControllerDetent.mediumDetent];sheet.sheetPresentationController.prefersGrabberVisible=YES;}
     UILabel *title=KPLabelView(@"Birthday",CGRectZero,20);title.textAlignment=NSTextAlignmentCenter;title.translatesAutoresizingMaskIntoConstraints=NO;[sheet.view addSubview:title];
     UIPickerView *picker=[UIPickerView new];self.birthdayPicker=picker;picker.delegate=self;picker.dataSource=self;picker.translatesAutoresizingMaskIntoConstraints=NO;picker.accessibilityLabel=@"Birthday month and day";[sheet.view addSubview:picker];
-    auto a=kartpad::mii::Appearance::Decode(Bytes(self.draft));[picker selectRow:a.Get(1) inComponent:0 animated:NO];[picker reloadComponent:1];[picker selectRow:a.Get(2)?a.Get(2)-1:0 inComponent:1 animated:NO];
+    auto a=KPShown(self.draft);[picker selectRow:a.Get(1) inComponent:0 animated:NO];[picker reloadComponent:1];[picker selectRow:a.Get(2)?a.Get(2)-1:0 inComponent:1 animated:NO];
     UIButton *cancel=[UIButton buttonWithType:UIButtonTypeSystem],*done=[UIButton buttonWithType:UIButtonTypeSystem];[cancel setTitle:@"Cancel" forState:UIControlStateNormal];[done setTitle:@"Done" forState:UIControlStateNormal];[cancel addTarget:self action:@selector(birthdayCancel:) forControlEvents:UIControlEventTouchUpInside];[done addTarget:self action:@selector(birthdayDone:) forControlEvents:UIControlEventTouchUpInside];
     for(UIButton *button in @[cancel,done]){button.translatesAutoresizingMaskIntoConstraints=NO;button.titleLabel.font=[UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];[sheet.view addSubview:button];}
     UILayoutGuide *safe=sheet.view.safeAreaLayoutGuide;[NSLayoutConstraint activateConstraints:@[[title.topAnchor constraintEqualToAnchor:safe.topAnchor constant:20],[title.centerXAnchor constraintEqualToAnchor:safe.centerXAnchor],[title.heightAnchor constraintEqualToConstant:30],[picker.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:8],[picker.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:12],[picker.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-12],[picker.bottomAnchor constraintEqualToAnchor:done.topAnchor constant:-8],[cancel.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:20],[done.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-20],[cancel.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor constant:-12],[done.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor constant:-12],[cancel.heightAnchor constraintEqualToConstant:44],[done.heightAnchor constraintEqualToConstant:44],[cancel.widthAnchor constraintEqualToConstant:90],[done.widthAnchor constraintEqualToConstant:90]]];

@@ -174,7 +174,7 @@ static const KPItem *KPPadItem(NSView *view){
 // For the page alone (the panel beside the preview): its choice, else its open part, else its first control.
 static NSView *KPPadEditorDefault(KPMiiEditor *editor,NSArray<NSView*> *controls,BOOL page=NO){
     if(page)controls=[controls filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSView *view,NSDictionary *b){return view.superview!=editor.canvas;}]];
-    auto a=kartpad::mii::Appearance::Decode(Bytes(editor.draft));NSView *tab=nil;
+    auto a=KPShown(editor.draft);NSView *tab=nil;
     for(NSView *view in controls){
         const KPItem *item=KPPadItem(view);if(!item)continue;
         if(item->action==KPAction::Select&&a.Get(item->field)==unsigned(item->value))return view;

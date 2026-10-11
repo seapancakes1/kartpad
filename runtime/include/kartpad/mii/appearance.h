@@ -1,6 +1,7 @@
 #pragma once
 #include "mii_database.h"
 #include "seed_mii_database.h"
+#include <algorithm>
 #include <array>
 #include <stdexcept>
 namespace kartpad::mii {
@@ -86,13 +87,28 @@ struct Appearance {
         for (unsigned n = 0; n < f.bytes; n++)
             bytes[f.offset + f.bytes - 1 - n] = uint8_t(v >> (n * 8));
     }
-    DatabaseResult Validate() const {
+    // The field clamped to its range. A database can hold Miis whose fields are out of range
+    // (other tools write them): drawing and the editor show the nearest valid value, and the
+    // stored value changes only when that field is edited.
+    unsigned Clamped(size_t i) const {
+        const auto &f = AppearanceFields.at(i);
+        return std::clamp(Get(i), f.minimum, f.maximum);
+    }
+    Appearance InRange() const {
+        Appearance a = *this;
+        for (size_t i = 0; i < AppearanceFields.size(); i++)
+            a.Set(i, Clamped(i));
+        return a;
+    }
+    // With previous (the Mii an edit replaces), a field may keep the out-of-range value it
+    // already had, so saving an edit never requires rewriting fields it didn't touch.
+    DatabaseResult Validate(const Appearance *previous = nullptr) const {
         if (auto result = ValidateMii(bytes); !result)
             return result;
         for (size_t i = 0; i < AppearanceFields.size(); i++) {
             auto v = Get(i);
             auto f = AppearanceFields[i];
-            if (v < f.minimum || v > f.maximum)
+            if ((v < f.minimum || v > f.maximum) && !(previous && previous->Get(i) == v))
                 return {false, std::string("Invalid ") + f.name};
         }
         for (unsigned o : {2u, 54u}) {
@@ -137,7 +153,8 @@ inline DatabaseResult ReplaceAppearance(std::span<uint8_t> database, size_t slot
     for (size_t i = 0; i < kMiiBlockSize; i++)
         if ((old[i] & ~mask[i]) != (replacement[i] & ~mask[i]))
             return {false, "Editing must preserve reserved Mii data."};
-    if (auto v = Appearance::Decode(replacement).Validate(); !v)
+    const auto before = Appearance::Decode(old);
+    if (auto v = Appearance::Decode(replacement).Validate(&before); !v)
         return v;
     std::copy(replacement.begin(), replacement.end(), old.begin());
     UpdateDatabaseCrc(database);

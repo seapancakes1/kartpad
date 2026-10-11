@@ -1,6 +1,18 @@
 #include "kartpad/mii/appearance.h"
+#include "kartpad/mii/portrait.h"
 #include <cassert>
 #include <iostream>
+// Writes a field's bits as a database can hold them, past the range Set allows.
+static void SetRaw(kartpad::mii::Appearance &a, size_t i, unsigned value) {
+    const auto &f = kartpad::mii::AppearanceFields[i];
+    uint32_t v = 0;
+    for (unsigned n = 0; n < f.bytes; n++)
+        v = (v << 8) | a.bytes[f.offset + n];
+    const uint32_t mask = ((1u << f.bits) - 1) << f.shift;
+    v = (v & ~mask) | ((value << f.shift) & mask);
+    for (unsigned n = 0; n < f.bytes; n++)
+        a.bytes[f.offset + f.bytes - 1 - n] = uint8_t(v >> (n * 8));
+}
 int main() {
     using namespace kartpad::mii;
     auto db = CreateSeedDatabase({2, 1, 2, 3, 4, 5});
@@ -62,6 +74,54 @@ int main() {
             failed = true;
         }
         assert(failed);
+    }
+    // Fields out of range: drawing and the editor read them clamped, an edit may keep them, and
+    // anything else must bring them into range.
+    for (size_t i = 0; i < AppearanceFields.size(); i++) {
+        const auto f = AppearanceFields[i];
+        const unsigned top = (1u << f.bits) - 1;
+        for (unsigned raw : {0u, top}) {
+            if (raw >= f.minimum && raw <= f.maximum)
+                continue;
+            auto odd = a;
+            SetRaw(odd, i, raw);
+            assert(odd.Get(i) == raw && odd.Clamped(i) == (raw < f.minimum ? f.minimum : f.maximum));
+            auto shown = odd.InRange();
+            assert(shown.Get(i) == odd.Clamped(i) && shown.Validate() && !odd.Validate());
+            for (size_t other = 0; other < AppearanceFields.size(); other++)
+                assert(other == i || shown.Get(other) == odd.Get(other));
+            // Birthday month, favorite color, height and weight out of range fail the database's
+            // own Mii check, so such Miis are never listed or edited.
+            if (!ValidateMii(odd.bytes)) {
+                assert(i == 1 || i == 3 || i == 5 || i == 6);
+                assert(!odd.Validate(&odd));
+                continue;
+            }
+            assert(odd.Validate(&odd));
+            auto edited = odd;
+            edited.Set(i == 11 ? 12 : 11, i == 11 ? 3 : 60);
+            assert(edited.Validate(&odd) && !edited.Validate(&a));
+        }
+    }
+    assert(At(Skin, 7) == Skin[5] && At(EyeRotation, 63) == EyeRotation[49] && At(Lip0, 3) == Lip0[2]);
+    {
+        // Saving an edit to a stored Mii with a field out of range keeps that field; the edit
+        // itself must stay in range.
+        auto oddDb = db;
+        auto stored = Appearance::Decode(std::span(oddDb).subspan(kMiiBlockOffset, 74));
+        SetRaw(stored, 8, 7);
+        std::copy(stored.bytes.begin(), stored.bytes.end(), oddDb.begin() + kMiiBlockOffset);
+        UpdateDatabaseCrc(oddDb);
+        auto edit = stored;
+        edit.Set(11, 60);
+        assert(ReplaceAppearance(oddDb, 0, stored.bytes, edit.bytes));
+        assert(Appearance::Decode(std::span(oddDb).subspan(kMiiBlockOffset, 74)).Get(8) == 7);
+        auto worse = edit;
+        SetRaw(worse, 17, 7);
+        assert(!ReplaceAppearance(oddDb, 0, edit.bytes, worse.bytes));
+        auto fixed = edit;
+        fixed.Set(8, 2);
+        assert(ReplaceAppearance(oddDb, 0, edit.bytes, fixed.bytes));
     }
     auto original = a;
     a.Set(11, 60);

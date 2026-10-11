@@ -326,7 +326,11 @@ BOOL ApplyMiiChange(Workspace& files, NSDictionary *change, NSError **error) {
     return NO;
   }
   try {
-    const auto validation = kartpad::mii::Appearance::Decode(Bytes(mii)).Validate();
+    // An edit may keep the out-of-range fields the Mii already had (see ReplaceAppearance).
+    const auto previous = expected != nil ? kartpad::mii::Appearance::Decode(Bytes(expected))
+                                          : kartpad::mii::Appearance{};
+    const auto validation = kartpad::mii::Appearance::Decode(Bytes(mii)).Validate(
+        expected != nil ? &previous : nullptr);
     if (!validation) {
       if (error != nullptr) *error = ManagerError(50, validation.message);
       return NO;
@@ -588,10 +592,11 @@ NSData *KartPadDuplicateMii(NSUInteger slot, NSError **error) {
   if (!identity)
     return nil;
   // The copy keeps every appearance and profile byte but takes a fresh Mii ID and this
-  // console's ID (0x18-0x1F), so the database accepts it as a separate Mii.
-  NSMutableData *copy = source.mutableCopy;
-  [copy replaceBytesInRange:NSMakeRange(0x18, 8) withBytes:(const uint8_t *)identity.bytes + 0x18];
-  return copy;
+  // console's ID (0x18-0x1F), so the database accepts it as a separate Mii. Being a new Mii, it
+  // takes fields out of range at the values the editor shows for them.
+  auto copy = kartpad::mii::Appearance::Decode(Bytes(source)).InRange();
+  std::copy_n(static_cast<const uint8_t *>(identity.bytes) + 0x18, 8, copy.bytes.begin() + 0x18);
+  return [NSData dataWithBytes:copy.bytes.data() length:copy.bytes.size()];
 }
 NSData *KartPadExportMii(NSData *edited, NSError **error) {
   try {

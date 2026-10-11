@@ -1,7 +1,18 @@
-#include "kartpad/mii/portrait.h"
+#include "kartpad/mii/scene.h"
 #include <cassert>
 #include <fstream>
 #include <iostream>
+// Writes a field's bits as a database can hold them, past the range Set allows.
+static void SetRaw(kartpad::mii::Appearance &a, size_t i, unsigned value) {
+    const auto &f = kartpad::mii::AppearanceFields[i];
+    uint32_t v = 0;
+    for (unsigned n = 0; n < f.bytes; n++)
+        v = (v << 8) | a.bytes[f.offset + n];
+    const uint32_t mask = ((1u << f.bits) - 1) << f.shift;
+    v = (v & ~mask) | ((value << f.shift) & mask);
+    for (unsigned n = 0; n < f.bytes; n++)
+        a.bytes[f.offset + f.bytes - 1 - n] = uint8_t(v >> (n * 8));
+}
 int main(int argc, char **argv) {
     using namespace kartpad::mii;
     assert(argc == 2);
@@ -73,6 +84,40 @@ int main(int argc, char **argv) {
                 Portrait::Render(r, b);
             }
     }
+    // A Mii whose fields are out of range (a database can hold one) draws exactly as its nearest
+    // valid values, in the portrait, the face masks and the preview scene, without reading past a
+    // palette, rotation table or resource catalog.
+    auto same = [&](const Appearance &odd) {
+        auto shown = odd.InRange();
+        assert(Portrait::Render(r, odd).rgba == Portrait::Render(r, shown).rgba);
+        for (auto e : {Portrait::Expression::Normal, Portrait::Expression::Blink, Portrait::Expression::Smile})
+            assert(Portrait::FaceMask(r, odd, e).rgba == Portrait::FaceMask(r, shown, e).rgba);
+        auto scene = PreviewScene::Build(r, odd), expected = PreviewScene::Build(r, shown);
+        assert(scene.parts.size() == expected.parts.size());
+        for (size_t i = 0; i < scene.parts.size(); i++)
+            assert(scene.parts[i].color == expected.parts[i].color &&
+                   scene.parts[i].texture.rgba == expected.parts[i].texture.rgba &&
+                   scene.parts[i].mesh.triangles.size() == expected.parts[i].mesh.triangles.size());
+    };
+    auto everything = a;
+    unsigned outOfRange = 0;
+    for (size_t field = 0; field < AppearanceFields.size(); field++) {
+        const auto f = AppearanceFields[field];
+        for (unsigned raw : {0u, (1u << f.bits) - 1}) {
+            if (raw >= f.minimum && raw <= f.maximum)
+                continue;
+            auto odd = a;
+            SetRaw(odd, field, raw);
+            same(odd);
+            SetRaw(everything, field, raw);
+            outOfRange++;
+        }
+    }
+    same(everything);
+    // Glasses on, so their color and texture are looked up too.
+    SetRaw(everything, 33, 15);
+    same(everything);
     std::cout << shapes << " shapes and " << textures
-              << " textures; malformed archive/cache bounds and portrait catalog passed.\n";
+              << " textures; malformed archive/cache bounds, portrait catalog and " << outOfRange
+              << " out-of-range fields passed.\n";
 }

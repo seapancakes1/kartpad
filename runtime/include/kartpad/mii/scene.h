@@ -38,8 +38,9 @@ struct PreviewScene {
         parts.push_back(std::move(part));
     }
     static PreviewScene Build(const Resources &r,const Appearance&a,const BodyResources *body=nullptr){
-        PreviewScene s;auto g=[&](size_t f){return a.Get(f);};
-        Color skin=Skin[g(8)],shirt=Shirt[g(3)];
+        // Fields out of range draw as their nearest valid value (Appearance::Clamped).
+        PreviewScene s;auto g=[&](size_t f){return a.Clamped(f);};
+        Color skin=At(Skin,g(8)),shirt=At(Shirt,g(3));
         s.bottom=0;
         if(body){
             // The game picks the body by build and places the head at the neck plus the miiDispParam offset,
@@ -57,9 +58,9 @@ struct PreviewScene {
         const auto&face=r.Shape(3,g(7));
         auto faceTexture=Portrait::FaceTexture(r,a);
         s.Add(face,{255,255,255},1,0,0,0,false,&faceTexture);
-        s.Add(r.Shape(0,g(38)),Hair[g(39)],1,face.transforms[3],face.transforms[4],face.transforms[5]);
+        s.Add(r.Shape(0,g(38)),At(Hair,g(39)),1,face.transforms[3],face.transforms[4],face.transforms[5]);
         s.Add(r.Shape(5,g(11)),skin,1,face.transforms[6],face.transforms[7],face.transforms[8],g(13));
-        s.Add(r.Shape(8,g(11)),Hair[g(12)],1,face.transforms[6],face.transforms[7],face.transforms[8],g(13));
+        s.Add(r.Shape(8,g(11)),At(Hair,g(12)),1,face.transforms[6],face.transforms[7],face.transforms[8],g(13));
         if(!r.Shape(16,g(11)).triangles.empty()){
             auto cap=Portrait::CapTexture(r,a);
             s.Add(r.Shape(16,g(11)),{255,255,255},1,face.transforms[6],face.transforms[7],face.transforms[8],g(13),&cap);
@@ -69,7 +70,7 @@ struct PreviewScene {
         auto mask=Portrait::FaceMask(r,a);size_t before=s.parts.size();s.Add(r.Shape(9,g(7)),{255,255,255},1,0,0,.02f,false,&mask,true);s.parts.back().translucent=true;
         if(s.parts.size()>before){s.maskPart=before;s.blinkMask=Portrait::FaceMask(r,a,Portrait::Expression::Blink);s.smileMask=Portrait::FaceMask(r,a,Portrait::Expression::Smile);}
         if(!r.Shape(14,g(26)).triangles.empty()){s.Add(r.Shape(14,g(26)),{0,0,0},scale,face.transforms[0],y,face.transforms[2]+.05f,false,&r.Texture(15,g(26)),true);s.parts.back().translucent=true;}
-        if(g(33)){s.Add(r.Shape(6,0),Glasses[g(34)],.4f+.15f*g(35),face.transforms[0],5+face.transforms[1]+(11-int(g(36)))*1.5f,2+face.transforms[2],false,&r.Texture(7,g(33)),true);s.parts.back().translucent=true;s.parts.back().doubleSided=true;}
+        if(g(33)){s.Add(r.Shape(6,0),At(Glasses,g(34)),.4f+.15f*g(35),face.transforms[0],5+face.transforms[1]+(11-int(g(36)))*1.5f,2+face.transforms[2],false,&r.Texture(7,g(33)),true);s.parts.back().translucent=true;s.parts.back().doubleSided=true;}
         for(const auto &part:s.parts)for(const auto &v:part.mesh.triangles){
             s.top=std::max(s.top,v.y);s.bottom=std::min(s.bottom,v.y);
             s.radius=std::max(s.radius,std::hypot(v.x,v.z));

@@ -30,6 +30,11 @@ inline constexpr std::array<unsigned, 50> EyeRotation = {
     29, 29, 28, 28, 29, 29, 29, 28, 28, 29, 29, 29, 29, 29, 28, 28};
 inline constexpr std::array<unsigned, 24> BrowRotation = {
     26, 26, 27, 25, 26, 25, 26, 25, 28, 25, 26, 24, 27, 27, 26, 26, 25, 25, 26, 26, 27, 26, 25, 27};
+// Every palette and rotation lookup goes through this: an index past the table (a Mii field out of
+// range) takes the last entry instead of reading past it.
+template <class T, size_t N> constexpr const T &At(const std::array<T, N> &table, size_t index) {
+    return table[std::min(index, N - 1)];
+}
 class Portrait {
     Image out{512, 512, std::vector<uint8_t>(512 * 512 * 4, 0)};
     std::vector<float> depth = std::vector<float>(512 * 512, -1e9f);
@@ -138,22 +143,22 @@ class Portrait {
 
   public:
     static Image FaceTexture(const Resources&r,const Appearance&a){
-        auto texture=r.Texture(4,a.Get(9));auto skin=Skin[a.Get(8)];
+        auto texture=r.Texture(4,a.Clamped(9));auto skin=At(Skin,a.Clamped(8));
         for(size_t i=0;i<texture.rgba.size();i+=4){float alpha=texture.rgba[i+1]/255.f;Color marking{texture.rgba[i],texture.rgba[i+3],texture.rgba[i+2]};for(unsigned c=0;c<3;c++)texture.rgba[i+c]=uint8_t(skin[c]*(1-alpha)+marking[c]*alpha);texture.rgba[i+3]=255;}return texture;
     }
     static Image CapTexture(const Resources&r,const Appearance&a){
-        auto texture=r.Texture(17,a.Get(11));auto shirt=Shirt[a.Get(3)];
+        auto texture=r.Texture(17,a.Clamped(11));auto shirt=At(Shirt,a.Clamped(3));
         for(size_t i=0;i<texture.rgba.size();i+=4){for(unsigned c=0;c<3;c++)texture.rgba[i+c]=uint8_t(shirt[c]*(texture.rgba[i+c]/255.f+1)*.5f);texture.rgba[i+3]=255;}return texture;
     }
     // RFL expressions (RFL_MakeTex.c): blink swaps in eye texture 26, smile eye texture 48. Both keep the
     // drawn angle by moving the rotation by the difference in per-texture rotation offsets, clamped to 0-7.
     enum class Expression { Normal, Blink, Smile };
     static Image FaceMask(const Resources &r, const Appearance &a, Expression expression = Expression::Normal) {
-        auto get = [&](size_t f) { return a.Get(f); };
+        auto get = [&](size_t f) { return a.Clamped(f); };
         unsigned eyeType = get(14), eyeRotate = get(15);
         if (expression != Expression::Normal) {
             unsigned changed = expression == Expression::Blink ? 26 : 48;
-            int rotate = int(eyeRotate) + int(EyeRotation[eyeType]) - int(EyeRotation[changed]);
+            int rotate = int(eyeRotate) + int(At(EyeRotation, eyeType)) - int(At(EyeRotation, changed));
             eyeType = changed; eyeRotate = unsigned(std::clamp(rotate, 0, 7));
         }
         Portrait mask;
@@ -166,11 +171,11 @@ class Portrait {
         float eyeWidth = (342.f / 64) * scale(get(18)) * unit,
               eyeHeight = 4.5f * scale(get(18)) * unit;
         float eyeX = .88961464f * get(19) * unit, eyeY = (18.451525f + vertical * get(16)) * unit;
-        float eyeAngle = ((eyeRotate + EyeRotation[eyeType]) % 32) * 11.25f;
+        float eyeAngle = ((eyeRotate + At(EyeRotation, eyeType)) % 32) * 11.25f;
         Color eyeFirst = eyeType == 9    ? Color{255, 130, 0}
                          : eyeType == 20 ? Color{0, 255, 255}
                                          : Color{0, 0, 0};
-        auto eye = ColorMask(r.Texture(1, eyeType), eyeFirst, Eyes[get(17)]);
+        auto eye = ColorMask(r.Texture(1, eyeType), eyeFirst, At(Eyes, get(17)));
         mask.TextureDraw(eye, 256 - eyeX, eyeY, eyeWidth, eyeHeight,
                          {255, 255, 255}, eyeAngle, false, -.5f);
         mask.TextureDraw(eye, 256 + eyeX, eyeY, eyeWidth, eyeHeight,
@@ -178,13 +183,13 @@ class Portrait {
         float browWidth = (324.f / 64) * scale(get(23)) * unit,
               browHeight = 4.5f * scale(get(23)) * unit;
         float browX = .88961464f * get(25) * unit, browY = (16.549807f + vertical * get(24)) * unit;
-        float browAngle = ((get(21) + BrowRotation[get(20)]) % 32) * 11.25f;
+        float browAngle = ((get(21) + At(BrowRotation, get(20))) % 32) * 11.25f;
         const auto &brow = r.Texture(2, get(20));
         mask.TextureDraw(brow, 256 - browX, browY, browWidth, browHeight,
-                         Hair[get(22)], browAngle, false, -.5f);
+                         At(Hair, get(22)), browAngle, false, -.5f);
         mask.TextureDraw(brow, 256 + browX, browY, browWidth, browHeight,
-                         Hair[get(22)], -browAngle, true, .5f);
-        auto mouth = ColorMask(r.Texture(11, get(29)), Lip0[get(30)], Lip1[get(30)]);
+                         At(Hair, get(22)), -browAngle, true, .5f);
+        auto mouth = ColorMask(r.Texture(11, get(29)), At(Lip0, get(30)), At(Lip1, get(30)));
         mask.TextureDraw(mouth, 256, (29.25885f + vertical * get(32)) * unit,
                          (396.f / 64) * scale(get(31)) * unit, 4.5f * scale(get(31)) * unit,
                          {255, 255, 255});
@@ -192,16 +197,16 @@ class Portrait {
             float width = 4.5f * scale(get(40)) * unit, height = 9.f * scale(get(40)) * unit,
                   y = (31.763554f + vertical * get(41)) * unit;
             const auto &mustache = r.Texture(12, get(37));
-            mask.TextureDraw(mustache, 256, y, width, height, Hair[get(39)], 0, false, -.5f);
-            mask.TextureDraw(mustache, 256, y, width, height, Hair[get(39)], 0, true, .5f);
+            mask.TextureDraw(mustache, 256, y, width, height, At(Hair, get(39)), 0, false, -.5f);
+            mask.TextureDraw(mustache, 256, y, width, height, At(Hair, get(39)), 0, true, .5f);
         }
         return mask.out;
     }
     // colorIndex selects the Glasses (field 33) or Hair (field 37) palette entry.
     static Image AccessoryThumbnail(const Resources &r,unsigned field,unsigned value,unsigned colorIndex=0) {
         Portrait p;
-        if(field==33){p.originY=256;p.MeshDraw(r.Shape(6,0),Glasses[std::min<size_t>(colorIndex,Glasses.size()-1)],1,0,0,0,false,&r.Texture(7,value),true);}
-        else if(field==37){const auto &texture=r.Texture(12,value);Color color=Hair[std::min<size_t>(colorIndex,Hair.size()-1)];p.TextureDraw(texture,256,256,150,240,color,0,false,-.5f);p.TextureDraw(texture,256,256,150,240,color,0,true,.5f);}
+        if(field==33){p.originY=256;p.MeshDraw(r.Shape(6,0),At(Glasses,colorIndex),1,0,0,0,false,&r.Texture(7,value),true);}
+        else if(field==37){const auto &texture=r.Texture(12,value);Color color=At(Hair,colorIndex);p.TextureDraw(texture,256,256,150,240,color,0,false,-.5f);p.TextureDraw(texture,256,256,150,240,color,0,true,.5f);}
         return p.out;
     }
     // Face shape tile: the whole head outline in the given skin tone. The faceline mesh alone is open at
@@ -226,23 +231,21 @@ class Portrait {
         for(int i=0;i<N*N;i++)if(solid[i]&&!eroded[i]){p.out.rgba[i*4]=74;p.out.rgba[i*4+1]=52;p.out.rgba[i*4+2]=44;p.out.rgba[i*4+3]=255;}
         return p.out;
     }
+    // Fields out of range draw as their nearest valid value, as everywhere else.
     static Image Render(const Resources &r, const Appearance &a) {
-        if (auto valid = a.Validate(); !valid)
-            throw std::invalid_argument(valid.message);
         Portrait p;
-        auto get = [&](size_t f) { return a.Get(f); };
-        Color shirt=Shirt[get(3)];
+        auto get = [&](size_t f) { return a.Clamped(f); };
         auto face=r.Shape(3,get(7));auto faceTexture=FaceTexture(r,a);
         float low=0,high=82,radius=33;
         auto bounds=[&](const Mesh &mesh,float x=0,float y=0,float z=0){for(auto&v:mesh.triangles){low=std::min(low,v.y+y);high=std::max(high,v.y+y);radius=std::max(radius,std::hypot(v.x+x,v.z+z));}};
         bounds(face);for(unsigned group:{0u,5u,8u,16u}){bool beard=group==0;bounds(r.Shape(group,get(beard?38:11)),face.transforms[beard?3:6],face.transforms[beard?4:7],face.transforms[beard?5:8]);}
         p.pixelsPerUnit=std::min(440.f/(high-low),440.f/(radius*2));p.originY=256+(low+high)*.5f*p.pixelsPerUnit;
         p.MeshDraw(face,{255,255,255},1,0,0,0,false,&faceTexture);
-        p.MeshDraw(r.Shape(0, get(38)), Hair[get(39)], 1, face.transforms[3], face.transforms[4],
+        p.MeshDraw(r.Shape(0, get(38)), At(Hair, get(39)), 1, face.transforms[3], face.transforms[4],
                    face.transforms[5]);
-        p.MeshDraw(r.Shape(5, get(11)), Skin[get(8)], 1, face.transforms[6], face.transforms[7],
+        p.MeshDraw(r.Shape(5, get(11)), At(Skin, get(8)), 1, face.transforms[6], face.transforms[7],
                    face.transforms[8], get(13));
-        p.MeshDraw(r.Shape(8, get(11)), Hair[get(12)], 1, face.transforms[6], face.transforms[7],
+        p.MeshDraw(r.Shape(8, get(11)), At(Hair, get(12)), 1, face.transforms[6], face.transforms[7],
                    face.transforms[8], get(13));
         const auto &cap = r.Shape(16, get(11));
         if (!cap.triangles.empty()) {
@@ -251,7 +254,7 @@ class Portrait {
                        get(13), &texture);
         }
         float noseScale = .4f + get(27) * .175f;
-        p.MeshDraw(r.Shape(13, get(26)), Skin[get(8)], noseScale, face.transforms[0],
+        p.MeshDraw(r.Shape(13, get(26)), At(Skin, get(8)), noseScale, face.transforms[0],
                    face.transforms[1] + (8 - int(get(28))) * 1.5f, face.transforms[2]);
         const auto &noseLine = r.Shape(14, get(26));
         if (!noseLine.triangles.empty()) {
@@ -264,7 +267,7 @@ class Portrait {
         p.MeshDraw(r.Shape(9, get(7)), {255, 255, 255}, 1, 0, 0, 0, false, &maskImage,true);
         if (get(33)) {
             const auto &glassTexture = r.Texture(7, get(33));
-            p.MeshDraw(r.Shape(6, 0), Glasses[get(34)], .4f + .15f * get(35), face.transforms[0],
+            p.MeshDraw(r.Shape(6, 0), At(Glasses, get(34)), .4f + .15f * get(35), face.transforms[0],
                        5 + face.transforms[1] + (11 - int(get(36))) * 1.5f, 2 + face.transforms[2],
                        false, &glassTexture,true);
         }
