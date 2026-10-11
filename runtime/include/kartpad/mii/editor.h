@@ -7,11 +7,8 @@ inline constexpr unsigned BirthdayDays(unsigned month) {
     constexpr unsigned days[]={0,31,29,31,30,31,30,31,31,30,31,30,31};
     return month<=12?days[month]:0;
 }
-enum class EditorCategory { Profile, Body, Face, Hair, Eyebrows, Eyes, Nose, Mouth, FacialHair, Glasses };
 inline constexpr std::array<const char *, 10> EditorCategories = {
     "Profile", "Body", "Face", "Hair", "Eyebrows", "Eyes", "Nose", "Mouth", "Facial hair", "Glasses"};
-inline constexpr std::array<unsigned, 46> EditorFieldCategories = {
-    0,0,0,0,0,1,1,2,2,2,0,3,3,3,5,5,5,5,5,5,4,4,4,4,4,4,6,6,6,7,7,7,7,9,9,9,9,8,8,8,8,8,8,8,8,8};
 // Tile IDs are explicit. Presentation and persistence never share an implicit index.
 // Lists run in Mii Channel order: page by page, rows left to right, 12 tiles per page.
 // Hair, eyebrows, eyes, nose and mouth IDs are not sequential on the Wii; face shape, face

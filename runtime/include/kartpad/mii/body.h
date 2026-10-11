@@ -33,7 +33,6 @@ struct BodyModel {
     std::vector<BodyMatrix> World(const BodyPose&pose)const{std::vector<BodyMatrix> world(joints.size());for(size_t i=0;i<joints.size();i++){auto local=BodyMatrix::SRT(pose.at(i));world[i]=joints[i].parent>=0?world.at(size_t(joints[i].parent))*local:local;}return world;}
     // Idle pose at a fractional frame, blending neighbouring frames and wrapping at the loop.
     BodyPose IdlePose(float frame)const{if(idle.empty())return stand;float count=float(idle.size()),f=std::fmod(std::fmod(frame,count)+count,count);size_t a=size_t(f)%idle.size(),b=(a+1)%idle.size();float t=f-std::floor(f);BodyPose out(joints.size());for(size_t j=0;j<joints.size();j++)for(int k=0;k<9;k++)out[j][k]=idle[a][j][k]+(idle[b][j][k]-idle[a][j][k])*t;return out;}
-    Mesh Skin(const BodyPart&part,const std::vector<BodyMatrix>&world)const{Mesh mesh=part.mesh;for(size_t i=0;i<part.local.size();i++){const auto&m=world.at(part.joint[i]);const auto&q=part.local[i];auto p=m.Apply({q.x,q.y,q.z}),n=m.Apply({q.nx,q.ny,q.nz},true);auto&v=mesh.triangles[i];v.x=p[0];v.y=p[1];v.z=p[2];v.nx=n[0];v.ny=n[1];v.nz=n[2];}return mesh;}
 };
 // MKW has no continuous body scaling: height + weight picks one of three body models.
 // Game rule (RMCP01 0x80525FF4): sum > 150 is large, sum > 104 is medium, otherwise small.

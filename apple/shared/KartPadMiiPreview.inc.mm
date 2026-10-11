@@ -132,12 +132,10 @@ static void KPMiiPreparePipeline(id<MTLDevice> device,void(^ready)(id<MTLRenderP
 @property(nonatomic) BOOL fullBody;
 // Idle animation: game "wait" loop on the body, RFL blink and smile on the face, and a gentle head sway.
 @property(nonatomic) BOOL animated;
-@property(nonatomic,copy) void (^rotationChanged)(float);
 - (void)installScene:(KPMiiGPUScene*)scene;
 - (void)react;
 - (void)faceFront;
 - (void)noteInteraction;
-- (kartpad::mii::Image)renderImageWithWidth:(unsigned)width height:(unsigned)height;
 @end
 @implementation KPMiiMetalPreview
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -225,9 +223,9 @@ static void KPMiiPreparePipeline(id<MTLDevice> device,void(^ready)(id<MTLRenderP
 - (void)setFullBody:(BOOL)value {_fullBody=value;[self redraw];}
 - (void)setClearColor:(MTLClearColor)value {[super setClearColor:value];[self redraw];}
 #if TARGET_OS_OSX
-- (void)mouseDragged:(NSEvent*)event{[self noteInteraction];self.yaw+=event.deltaX*.015f;if(self.rotationChanged)self.rotationChanged(self.yaw);}
+- (void)mouseDragged:(NSEvent*)event{[self noteInteraction];self.yaw+=event.deltaX*.015f;}
 #else
-- (void)pan:(UIPanGestureRecognizer*)gesture {[self noteInteraction];CGPoint delta=[gesture translationInView:self];self.yaw+=delta.x*.015f;[gesture setTranslation:CGPointZero inView:self];if(self.rotationChanged)self.rotationChanged(self.yaw);}
+- (void)pan:(UIPanGestureRecognizer*)gesture {[self noteInteraction];CGPoint delta=[gesture translationInView:self];self.yaw+=delta.x*.015f;[gesture setTranslation:CGPointZero inView:self];}
 #endif
 - (void)mtkView:(MTKView*)view drawableSizeWillChange:(CGSize)size { [self redraw]; }
 static simd_float4x4 KPMiiMatrix(const std::array<float,12>&m){simd_float4x4 out=matrix_identity_float4x4;for(int c=0;c<4;c++)out.columns[c]={m[c],m[4+c],m[8+c],c==3?1.f:0.f};return out;}
@@ -277,13 +275,5 @@ static simd_float4x4 KPMiiRotation(float yaw,float pitch,float roll){
     id<MTLCommandBuffer> command=[_queue commandBuffer];[command addCompletedHandler:^(id<MTLCommandBuffer>){dispatch_semaphore_signal(inFlight);}];auto encoder=[command renderCommandEncoderWithDescriptor:pass];
     [self encodeScene:encoder width:self.drawableSize.width height:self.drawableSize.height];
     [encoder endEncoding];[command presentDrawable:drawable];[command commit];_ringIndex++;
-}
-- (kartpad::mii::Image)renderImageWithWidth:(unsigned)width height:(unsigned)height {
-    if(!_pipeline||!width||!height||width>2048||height>2048)throw std::runtime_error("Mii render unavailable.");
-    auto outputDescriptor=[MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm width:width height:height mipmapped:NO];outputDescriptor.usage=MTLTextureUsageRenderTarget;outputDescriptor.storageMode=MTLStorageModeShared;auto output=[self.device newTextureWithDescriptor:outputDescriptor];
-    auto msaaDescriptor=[MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm width:width height:height mipmapped:NO];msaaDescriptor.textureType=MTLTextureType2DMultisample;msaaDescriptor.sampleCount=4;msaaDescriptor.usage=MTLTextureUsageRenderTarget;msaaDescriptor.storageMode=MTLStorageModePrivate;auto msaa=[self.device newTextureWithDescriptor:msaaDescriptor];
-    msaaDescriptor.pixelFormat=MTLPixelFormatDepth32Float;auto depth=[self.device newTextureWithDescriptor:msaaDescriptor];auto pass=[MTLRenderPassDescriptor renderPassDescriptor];pass.colorAttachments[0].texture=msaa;pass.colorAttachments[0].resolveTexture=output;pass.colorAttachments[0].loadAction=MTLLoadActionClear;pass.colorAttachments[0].storeAction=MTLStoreActionMultisampleResolve;pass.colorAttachments[0].clearColor=self.clearColor;pass.depthAttachment.texture=depth;pass.depthAttachment.loadAction=MTLLoadActionClear;pass.depthAttachment.clearDepth=1;
-    dispatch_semaphore_wait(_inFlight,DISPATCH_TIME_FOREVER);auto command=[_queue commandBuffer];auto encoder=[command renderCommandEncoderWithDescriptor:pass];[self encodeScene:encoder width:width height:height];[encoder endEncoding];[command commit];[command waitUntilCompleted];_ringIndex++;dispatch_semaphore_signal(_inFlight);if(command.status==MTLCommandBufferStatusError)throw std::runtime_error("Mii rendering failed.");
-    kartpad::mii::Image image{width,height,std::vector<uint8_t>(width*height*4)};[output getBytes:image.rgba.data() bytesPerRow:width*4 fromRegion:MTLRegionMake2D(0,0,width,height) mipmapLevel:0];for(size_t i=0;i<image.rgba.size();i+=4)std::swap(image.rgba[i],image.rgba[i+2]);return image;
 }
 @end
