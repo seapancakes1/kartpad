@@ -265,7 +265,8 @@ static bool KPOverlayWantsKeys() {
     // Wii-blue glow around the face, as the Wii pointer lights what it rests on.
     CGContextSaveGState(c);
     CGContextSetShadowWithColor(c, CGSizeZero, 10, KPColor(KPP->accentTop, 0.85).CGColor);
-    KPStroke(c, CGRectInset(face, -3.5, -3.5), KPP->accentTop, 3.5, self.radius + 3.5);
+    // It reaches a point under the face, so no seam shows between it and the face's lit rim.
+    KPStroke(c, CGRectInset(face, -3.5, -3.5), KPP->accentTop, 4.5, self.radius + 3.5);
     CGContextRestoreGState(c);
   }
   if (self.face) self.face(c, face, state);

@@ -105,8 +105,9 @@ static void KPButtonFace(CGContextRef c,CGRect r,KPStyle style,BOOL selected,BOO
     unsigned bottom=accent?KPP->accentBottom:highlight?KPP->selectedBottom:style==KPStyle::Tab?KPP->tabBottom:KPP->buttonBottom;
     if(pressed)std::swap(top,bottom);
     KPGradientFill(c,body,radius,top,bottom);
+    // The lit rim runs round the ledge too, so it is as thick at the bottom as on the other sides.
     BOOL lit=hovered&&enabled&&!pressed&&!highlight;
-    KPStroke(c,body,accent||highlight?KPP->accentStroke:lit?KPP->accentTop:KPP->buttonStroke,highlight||lit?2.5:1.25,radius);
+    KPStroke(c,lit?r:body,accent||highlight?KPP->accentStroke:lit?KPP->accentTop:KPP->buttonStroke,highlight||lit?2.5:1.25,radius);
     if(!pressed)KPStroke(c,CGRectInset(body,highlight?4:3,highlight?4:3),0xffffff,1,radius-3,KPP->gloss*(accent?.45:1));
     CGContextRestoreGState(c);KPP=theme;
 }
