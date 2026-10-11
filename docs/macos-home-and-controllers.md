@@ -61,10 +61,14 @@ so you can tell which one is yours.
 on. A changes one ("Press a button for Accelerate"), X adds a second button,
 Reset puts them back. Changes save by themselves.
 
-**Settings.** Picture, Sound, Controls, Game and Advanced, as big rows: left and
-right change a switch, choice or level in place (they never jump out of a row),
-LB and RB change category, and B goes from the rows back to the categories,
-then out.
+**Settings.** Picture, Sound, Controls, Game and Advanced, as big rows: A flips
+a switch or opens a row, left and right step a choice or level, LB and RB change
+category. Left from a switch (or a choice already at its first step) goes back
+to the categories, and so does B before it leaves Settings.
+
+**The game is silent** while one of these screens holds it, so a setting that
+briefly lets the game run to apply (picture quality, volume) doesn't play a blip
+of it. KartPad's own menu sounds still play.
 Every setting from before is here, under plain names. Advanced keeps the
 technical tools (private server, controller compatibility, diagnostics, the
 classic Settings window).
@@ -129,6 +133,10 @@ button press.
   hands presses to the screen on top. While Controllers waits for a press on a
   particular controller (Change controller, Player Order) it reads each pad's
   A, B and Start itself and sets `KPPadListening`, which keeps the reader quiet.
+- **Sound.** `WaitWhileOverlayOpen` holds the game's audio output
+  (`AudioBackend::SetHeld`: gain 0, and what queued meanwhile is dropped on
+  release) for as long as a screen holds the game, including the frames a
+  settings change lets through. The menu sounds use their own AVAudioEngine.
 - **Moving the focus** (`KPUINearest`) follows TV menus: only controls clearly
   that way count, left and right stay on their row, one in line beats one off
   to the side, then the nearest wins. Pressing back the opposite way returns to

@@ -1,7 +1,7 @@
 // Settings, as a screen over the game: five plain-word categories down the side (Picture, Sound,
-// Controls, Game, Advanced) and big rows a controller can work. Left and right change a row in place
-// (a switch, a choice, a level), A presses it, LB and RB change category, and B goes from the rows
-// back to the categories before it leaves. Every row writes the same
+// Controls, Game, Advanced) and big rows a controller can work. A flips a switch or opens a row;
+// left and right step a choice or a level in place. Left from a switch (or a choice already at its
+// first step) goes back to the categories, as B does before it leaves. LB and RB change category. Every row writes the same
 // Config.toml keys and user defaults as the classic Settings window (KartPadMacSettings.inc.mm),
 // which stays one row away under Advanced. A change that needs a restart says so on its row, and
 // HOME offers the restart. Included by KartPadMacShell.mm after KartPadControllersScreen.inc.mm.
@@ -183,7 +183,8 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
     [KPOverlay() focus:self.rowButtons[next - self.first] sound:YES];
     return YES;
   }
-  // From a tab, Right goes to its rows; from a row that has nothing to change, Left goes back to the tab.
+  // From a tab, Right goes to its rows. From a row, Left steps a choice or level down, and goes back to
+  // the tab from a switch, a button row, or a choice already at its first step.
   if (onTab && button == KartPadMiiPadRight) {
     if (focus.tag2 != self.category) [self showCategory:focus.tag2 focusRows:NO];
     [KPOverlay() focus:self.rowButtons.firstObject sound:YES];
@@ -201,7 +202,8 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
   }
   if (onRow && button == KartPadMiiPadLeft) {
     KPSettingRow *row = [self rowAt:focus.tag2];
-    if (row.kind == KPRowAction) [KPOverlay() focus:self.tabs[self.category] sound:YES];
+    const BOOL atStart = (row.kind == KPRowChoice && row.index() <= 0) || (row.kind == KPRowSlider && row.level() <= 0.001f);
+    if (row.kind == KPRowAction || row.kind == KPRowSwitch || atStart) [KPOverlay() focus:self.tabs[self.category] sound:YES];
     else [self adjust:focus.tag2 by:-1];
     return YES;
   }
@@ -225,16 +227,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
   KPSettingRow *row = [self rowAt:visible];
   if (row == nil) return NO;
   switch (row.kind) {
-    case KPRowSwitch: {
-      const BOOL on = row.on(), want = direction > 0;
-      if (on == want) {
-        KPUIPlay(KPUISound::Same);
-        return YES;
-      }
-      row.setOn(want);
-      KPUIPlay(want ? KPUISound::Confirm : KPUISound::Same);
-      break;
-    }
+    case KPRowSwitch: return NO;  // only A flips a switch
     case KPRowChoice: {
       const NSInteger next = row.index() + direction;
       if (next < 0 || next >= (NSInteger)row.choices.count) {
@@ -357,7 +350,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
     const CGFloat part = gauge.size.height * KPSettingsVisibleRows / count, at = gauge.size.height * self.first / count;
     KPFill(c, CGRectMake(gauge.origin.x, gauge.origin.y + at, 6, part), KPP->accentBottom, 3);
   }
-  KPTextWeight(@"Ⓐ Change    ◀ ▶ Adjust    LB / RB Category    Ⓑ Back", CGRectMake(s.origin.x + 52, s.origin.y + 672, 1176, 26), 16,
+  KPTextWeight(@"Ⓐ Select    ◀ ▶ Adjust    LB / RB Category    Ⓑ Back", CGRectMake(s.origin.x + 52, s.origin.y + 672, 1176, 26), 16,
                KPP->secondaryText, NSFontWeightMedium, NSTextAlignmentRight);
 }
 
