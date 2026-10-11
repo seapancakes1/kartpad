@@ -225,6 +225,29 @@ int main(int argc, char **argv) {
     // A false conditional skips its note; an endless loop stops at the length cap.
     SoundArchive skipped(Archive({0xf0, 0x90, 0x00, 0x00, 0x01, 0xa2, 0x3c, 0x7f, 0x30, 0xff}, Square()));
     assert(skipped.Render("SE_TEST").samples.empty());
+    // Sequence variables are 16-bit and wrap as on the Wii. Each case sets var0, applies the
+    // operations, and plays a note only if var0 then equals the value given. -32768 / -1 (which
+    // traps on x86-64 in 32-bit arithmetic) wraps to -32768; dividing by zero changes nothing.
+    auto equals = [](int16_t start, std::vector<std::pair<uint8_t, int16_t>> operations, int16_t value) {
+        auto word = [](std::vector<uint8_t> &cmd, uint8_t sub, int16_t v) {
+            cmd.insert(cmd.end(), {0xf0, sub, 0x00, uint8_t(uint16_t(v) >> 8), uint8_t(v)});
+        };
+        std::vector<uint8_t> cmd;
+        word(cmd, 0x80, start);
+        for (auto [sub, v] : operations) word(cmd, sub, v);
+        word(cmd, 0x90, value);
+        cmd.insert(cmd.end(), {0xa2, 0x3c, 0x7f, 0x30, 0xff});
+        return !SoundArchive(Archive(cmd, Square())).Render("SE_TEST").samples.empty();
+    };
+    assert(equals(5, {}, 5) && !equals(5, {}, 6));
+    assert(equals(32767, {{0x81, 1}}, -32768) && !equals(32767, {{0x81, 1}}, 32767));
+    assert(equals(-32768, {{0x82, 1}}, 32767));
+    assert(equals(300, {{0x83, 300}}, 24464));
+    assert(equals(-32768, {{0x84, -1}}, -32768));
+    assert(equals(5, {{0x84, 0}}, 5));
+    std::vector<std::pair<uint8_t, int16_t>> doubling(16, {0x83, 2});
+    doubling.push_back({0x84, -1});
+    assert(equals(-32768, doubling, 0));
     SoundArchive endless(Archive({0xd4, 0x00, 0x3c, 0x7f, 0x30, 0xfc, 0xff}, Square()));
     assert(std::abs(endless.Render("SE_TEST", 1.0).Seconds() - 1.0) < 0.05);
     // A sequence that never waits is rejected rather than spinning.

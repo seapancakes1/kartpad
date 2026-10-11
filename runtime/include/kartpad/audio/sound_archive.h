@@ -76,7 +76,8 @@ class SoundArchive {
         size_t base, bankData;
         std::vector<size_t> waves;
         double tempo = 120, timebase = 48;
-        std::map<unsigned, int> variables;
+        // NW4R sequence variables are 16-bit (SeqSoundHandle::WriteVariable takes an s16).
+        std::map<unsigned, int16_t> variables;
         bool flag = true;
         std::vector<Voice> voices;
     };
@@ -235,6 +236,8 @@ class SoundArchive {
             t.portaOn = false;
     }
 
+    static int16_t Wrap16(int v) { return int16_t(uint16_t(unsigned(v))); }
+
     static uint32_t VarLen(const Reader &r, size_t &p) {
         uint32_t v = 0;
         for (int i = 0; i < 4; i++) {
@@ -345,13 +348,17 @@ class SoundArchive {
             int v = last(s16);
             if (sub < 0x80 || sub > 0x95)
                 throw std::invalid_argument("Unsupported sequence command.");
-            int current = s.variables.count(index) ? s.variables[index] : 0;
+            // As on the Wii, the operands are 16-bit, the arithmetic is done in int (where two
+            // 16-bit values can't overflow, and -32768 / -1 is 32768) and the result wraps back to
+            // 16 bits. Dividing by zero leaves the variable unchanged.
+            v = Wrap16(v);
+            const int current = s.variables.count(index) ? s.variables[index] : 0;
             if (!skip) {
-                if (sub == 0x80) s.variables[index] = v;
-                else if (sub == 0x81) s.variables[index] = current + v;
-                else if (sub == 0x82) s.variables[index] = current - v;
-                else if (sub == 0x83) s.variables[index] = current * v;
-                else if (sub == 0x84 && v) s.variables[index] = current / v;
+                if (sub == 0x80) s.variables[index] = int16_t(v);
+                else if (sub == 0x81) s.variables[index] = Wrap16(current + v);
+                else if (sub == 0x82) s.variables[index] = Wrap16(current - v);
+                else if (sub == 0x83) s.variables[index] = Wrap16(current * v);
+                else if (sub == 0x84 && v) s.variables[index] = Wrap16(current / v);
                 else if (sub >= 0x90) {
                     const bool result[] = {current == v, current >= v, current > v, current <= v, current < v, current != v};
                     s.flag = result[sub - 0x90];
