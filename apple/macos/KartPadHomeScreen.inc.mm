@@ -60,6 +60,8 @@ static void KPWriteVolume(float volume, bool muted) {
   KartPadRequestSettingsReload();
 }
 
+static CGRect KPHomeVolumeTrack(CGRect r) { return CGRectMake(r.origin.x + 70, CGRectGetMidY(r) - 6, r.size.width - 160, 12); }
+
 #pragma mark Faces shared by the screens
 
 // A tile's icon square, centred (the Miis tile puts its faces there instead).
@@ -236,7 +238,7 @@ static KPScreen *KPMakeMiisScreen();
   } action:^{ [KPOverlay() present:(KPScreen *)KPMakeControllersScreen(-1)]; }];
   self.controllers.label = @"Controllers";
 
-  // Volume: left and right change it in steps, A mutes.
+  // Volume: left and right change it in steps, A mutes, and the pointer drags it along the track.
   self.volume = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
     KPHomeScreen *home = weakSelf;
     KPButtonFace(c, r, KPStyle::Plain, NO, state.enabled, state.pressed, state.focused);
@@ -244,7 +246,7 @@ static KPScreen *KPMakeMiisScreen();
     const float volume = home.shownVolume;
     KPDrawGlyph(c, muted ? KPUIGlyph::SpeakerOff : KPUIGlyph::Speaker, CGRectMake(r.origin.x + 20, CGRectGetMidY(r) - 17, 34, 34),
                 muted ? KPP->secondaryText : KPP->accentBottom, volume);
-    const CGRect track = CGRectMake(r.origin.x + 70, CGRectGetMidY(r) - 6, r.size.width - 160, 12);
+    const CGRect track = KPHomeVolumeTrack(r);
     KPFill(c, CGRectOffset(track, 0, -1), KPP->ledge, 6);
     KPFill(c, track, KPP->well, 6);
     KPStroke(c, track, KPP->buttonStroke, 1, 6);
@@ -277,6 +279,18 @@ static KPScreen *KPMakeMiisScreen();
     home.shownMute = NO;
     KPWriteVolume(next, false);
     KPUIPlay(direction < 0 ? KPUISound::Left : KPUISound::Right);
+    home.volume.needsDisplay = YES;
+    return YES;
+  };
+  self.volume.slide = ^BOOL(CGPoint point, CGRect face, BOOL began) {
+    KPHomeScreen *home = weakSelf;
+    float next;
+    if (!KPSliderLevel(KPHomeVolumeTrack(face), point, began, &next)) return NO;
+    if (next == home.shownVolume && !home.shownMute) return YES;
+    if (std::floor(next * 20) != std::floor(home.shownVolume * 20) || home.shownMute) KPUIPlay(KPUISound::Tick);
+    home.shownVolume = next;
+    home.shownMute = NO;
+    KPWriteVolume(next, false);
     home.volume.needsDisplay = YES;
     return YES;
   };
@@ -577,7 +591,7 @@ static KPScreen *KPMakeMiisScreen();
     return;
   }
   if ([other isEqualToString:kKartPadRetroProfile] && !KPRetroRewindReady()) {
-    KPAsk(@"Set Up Retro Rewind First", [NSString stringWithFormat:@"Choose your Retro Rewind %@ folder (RetroRewind6). This step needs a mouse.", @KARTPAD_RR_VERSION],
+    KPAsk(@"Set Up Retro Rewind First", @"Choose the RetroRewind6 folder. Needs a mouse.",
           @[@"Choose Folder…", @"Cancel"], 0, -1, ^(NSInteger choice) {
             if (choice != 0) return;
             [KPOverlay() closeAll];

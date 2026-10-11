@@ -57,6 +57,12 @@ static std::string KPFloatText(float value) {
 @property(nonatomic, strong) KPUIButton *done;
 @end
 
+// Where a level row draws its track (unpressed), for the drawing and the pointer alike.
+static CGRect KPSettingsSliderTrack(CGRect r) {
+  const CGFloat controlWidth = 300, right = CGRectGetMaxX(r) - 20, mid = CGRectGetMidY(r) - 1.5;
+  return CGRectMake(right - controlWidth, mid - 6, controlWidth - 70, 12);
+}
+
 @implementation KPSettingsScreen
 static constexpr NSInteger KPSettingsVisibleRows = 7;
 
@@ -101,6 +107,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
     row.margin = 6;
     row.focusScale = 1.012;
     row.adjust = ^BOOL(int direction) { return [weakSelf adjust:i by:direction]; };
+    row.slide = ^BOOL(CGPoint point, CGRect face, BOOL began) { return [weakSelf slide:i to:point face:face began:began]; };
     [self.rowButtons addObject:row];
   }
   self.done = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
@@ -254,6 +261,19 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
   return YES;
 }
 
+// A level row's track follows the pointer.
+- (BOOL)slide:(NSInteger)visible to:(CGPoint)point face:(CGRect)r began:(BOOL)began {
+  KPSettingRow *row = [self rowAt:visible];
+  float next;
+  if (row.kind != KPRowSlider || !KPSliderLevel(KPSettingsSliderTrack(r), point, began, &next)) return NO;
+  const float now = row.level();
+  if (std::fabs(next - now) < 0.005f) return YES;
+  if (std::floor(next * 20) != std::floor(now * 20)) KPUIPlay(KPUISound::Tick);
+  row.setLevel(next);
+  [self refreshRows];
+  return YES;
+}
+
 - (void)press:(NSInteger)visible {
   KPSettingRow *row = [self rowAt:visible];
   if (row == nil) return;
@@ -311,7 +331,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
     }
     case KPRowSlider: {
       const float level = row.level();
-      const CGRect track = CGRectMake(right - controlWidth, mid - 6, controlWidth - 70, 12);
+      const CGRect track = CGRectOffset(KPSettingsSliderTrack(r), 0, dy);
       KPFill(c, CGRectOffset(track, 0, -1), KPP->ledge, 6);
       KPFill(c, track, KPP->well, 6);
       KPStroke(c, track, KPP->buttonStroke, 1, 6);

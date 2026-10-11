@@ -81,6 +81,9 @@ struct KPUIState {
 @property(nonatomic, copy) void (^activate)(void);
 // Left and right change the control in place (a slider, a choice) rather than moving the focus.
 @property(nonatomic, copy) BOOL (^adjust)(int direction);
+// A slider's track under the pointer: called with the press (began) and each drag after it, in design
+// points with the face rect. YES on the press takes the drag; NO leaves the press a click.
+@property(nonatomic, copy) BOOL (^slide)(CGPoint point, CGRect face, BOOL began);
 @property(nonatomic) BOOL enabled, focused, pressed;
 @property(nonatomic) KPUISound sound;
 @property(nonatomic) CGFloat margin, radius, focusScale;
@@ -190,9 +193,17 @@ static bool KPOverlayWantsKeys() {
 
 #pragma mark KPUIButton
 
+// The level (0 to 1, in hundredths) a point on a slider's track picks. The press must land on the
+// track, give or take a knob's width; the drag after it can go anywhere.
+static bool KPSliderLevel(CGRect track, CGPoint point, BOOL began, float *level) {
+  if (began && (point.x < track.origin.x - 12 || point.x > CGRectGetMaxX(track) + 12)) return false;
+  *level = std::round(std::clamp<CGFloat>((point.x - track.origin.x) / track.size.width, 0, 1) * 100) / 100;
+  return true;
+}
+
 @implementation KPUIButton {
   NSTrackingArea *_tracking;
-  BOOL _inside;
+  BOOL _inside, _sliding;
   CGFloat _faceRadius;  // the corner radius the face last drew with (0 before it has drawn)
 }
 - (instancetype)initWithFrame:(NSRect)frame {
@@ -307,15 +318,34 @@ static bool KPOverlayWantsKeys() {
   if (!self.enabled) return;
   [KPOverlay() pointerUsed];
   if (self.screen == KPOverlay().top) [KPOverlay() focus:self sound:NO];
+  if (self.slide && self.slide([self designPoint:event], self.faceRect, YES)) {
+    _sliding = YES;
+    return;
+  }
   _inside = YES;
   self.pressed = YES;
 }
+// Where the pointer is in design points, undoing the focus pop (a scale about the centre) the face is drawn with.
+- (CGPoint)designPoint:(NSEvent *)event {
+  const NSPoint local = [self convertPoint:event.locationInWindow fromView:nil];
+  const CGFloat k = self.layer && self.layer.transform.m11 > 0 ? self.layer.transform.m11 : 1;
+  const CGFloat cx = NSMidX(self.bounds), cy = NSMidY(self.bounds);
+  return CGPointMake((cx + (local.x - cx) / k) / self.scale, (cy + (local.y - cy) / k) / self.scale);
+}
 - (void)mouseDragged:(NSEvent *)event {
+  if (_sliding) {
+    if (self.slide) self.slide([self designPoint:event], self.faceRect, NO);
+    return;
+  }
   _inside = NSPointInRect([self convertPoint:event.locationInWindow fromView:nil], self.bounds);
   self.pressed = _inside;
 }
 - (void)mouseUp:(NSEvent *)event {
   (void)event;
+  if (_sliding) {
+    _sliding = NO;
+    return;
+  }
   const BOOL fire = self.pressed && _inside;
   self.pressed = NO;
   if (fire) [self fire];

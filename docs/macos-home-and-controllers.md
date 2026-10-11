@@ -27,7 +27,7 @@ underneath (online the race keeps going, and HOME says so). HOME has:
   but its window shows a "Starting Retro Rewind" card the whole time, so it
   doesn't look like the app closed.
 - **Miis** and **Controllers**.
-- **Volume** on a row of its own: left and right change it, A mutes.
+- **Volume** on a row of its own: left and right change it, A mutes, and the pointer drags it along the track.
 - Along the top: **Full Screen** (or **Window**), the ⚙ button for
   **Settings**, **Quit**, and **Restart to apply** when a change needs one
   (switching games, Mii changes, new game files, display settings).
@@ -215,6 +215,8 @@ echo "shot home" >> /path/to/qa/commands.txt # /path/to/qa/home.png
 Commands: `home`, `close`, `screen settings|controllers|miis|pair-wii|pair-phone`,
 `pad up|down|left|right|a|b|x|y|lb|rb|start`, `focus LABEL`, `click LABEL` (a
 mouse click on a control: what the window's hit test finds, then the click),
+`drag FROM TO LABEL` (a mouse drag across a control between fractions of its
+width; logs the audio levels after),
 `where` (the focused control), `navmap` (where each direction leads from every
 control on the screen), `vpad add|press N BUTTON|release N BUTTON|remove N`
 (SDL virtual controllers, to check choosing controllers by pressing and joining),

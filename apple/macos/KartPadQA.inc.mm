@@ -4,7 +4,7 @@
 // it with KARTPAD_MUTED=1 KARTPAD_BACKGROUND=1 so it stays silent and never takes the focus.
 //   home | close | screen settings|controllers|miis|pair-wii|pair-phone | pad up|down|left|right|a|b|x|y|lb|rb|start
 //   shot NAME | resize W H | fullscreen | appearance light|dark|system | restart | quit | wait SECONDS
-//   focus LABEL | click LABEL | where | navmap | roster | vpad add|press|release|remove | key NAME
+//   focus LABEL | click LABEL | drag FROM TO LABEL | where | navmap | roster | vpad add|press|release|remove | key NAME
 //   move IDENTIFIER|vpadN SLOT | phone start|status|background-input|remove N
 // Included by KartPadMacShell.mm at the end.
 
@@ -293,6 +293,37 @@ static void KPQARun(NSString *line) {
       if (type == NSEventTypeLeftMouseDown) [hit mouseDown:event];
       else [hit mouseUp:event];
     }
+  } else if ([command isEqualToString:@"drag"]) {
+    // A mouse drag across a control by its label, from and to fractions of its width (at mid-height).
+    NSArray<NSString *> *words = [line componentsSeparatedByString:@" "];
+    NSString *label = words.count > 3 ? [[words subarrayWithRange:NSMakeRange(3, words.count - 3)] componentsJoinedByString:@" "] : @"";
+    KPUIButton *target = nil;
+    for (KPUIButton *button in KPOverlay().top.focusables)
+      if ([button.label isEqualToString:label]) target = button;
+    NSWindow *window = KPOverlay().host.window;
+    if (target == nil || window == nil) {
+      KPQALog([NSString stringWithFormat:@"drag %@: no such control", label]);
+      return;
+    }
+    const CGFloat from = words[1].doubleValue, to = words[2].doubleValue;
+    auto at = [&](CGFloat f) {
+      return [target convertPoint:NSMakePoint(target.bounds.size.width * f, NSMidY(target.bounds)) toView:nil];
+    };
+    const int steps = 12;
+    for (int i = 0; i <= steps + 1; ++i) {
+      const NSEventType type = i == 0 ? NSEventTypeLeftMouseDown : i <= steps ? NSEventTypeLeftMouseDragged : NSEventTypeLeftMouseUp;
+      const NSPoint point = at(i == 0 ? from : from + (to - from) * std::min(i, steps) / steps);
+      NSEvent *event = [NSEvent mouseEventWithType:type location:point modifierFlags:0 timestamp:NSProcessInfo.processInfo.systemUptime
+                                      windowNumber:window.windowNumber context:nil eventNumber:0 clickCount:1
+                                          pressure:type == NSEventTypeLeftMouseUp ? 0 : 1];
+      if (type == NSEventTypeLeftMouseDown) [target mouseDown:event];
+      else if (type == NSEventTypeLeftMouseDragged) [target mouseDragged:event];
+      else [target mouseUp:event];
+    }
+    const RuntimeUserConfig config = RuntimeConfigFile::LoadConfigFile();
+    KPQALog([NSString stringWithFormat:@"drag %@ %.2f→%.2f: volume=%.2f muted=%d music=%.2f", label, from, to,
+                                       config.audioVolume.value_or(1), (int)config.audioMuted.value_or(false),
+                                       config.audioMusicVolume.value_or(1)]);
   }
 }
 
