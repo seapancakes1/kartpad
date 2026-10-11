@@ -43,9 +43,11 @@ static KPMiiFont *KPStyleFont(CGFloat size,CGFloat weight){
     fonts[key]=font;return font;
 }
 // Mii Channel palette: silver gloss on pinstriped white, Wii-blue selection. Dark keeps the blue on graphite.
-struct KPPalette{unsigned background,stripe,panel,panelStroke,well,buttonTop,buttonBottom,buttonStroke,tabTop,tabBottom,selectedTop,selectedBottom,accentTop,accentBottom,accentStroke,text,secondaryText,icon,switchOff;CGFloat gloss,shadow;unsigned ledge,accentLedge;};
-static const KPPalette KPLightPalette{0xf2f4f5,0xe8ecee,0xfbfcfc,0xc9d1d6,0xe6ecef,0xffffff,0xdfe5e8,0xb3bdc3,0xfafbfc,0xd3dade,0xebf8fe,0xbde8fa,0x5ccbf3,0x1b9ad5,0x1784bc,0x3a4348,0x6a747a,0x5a646a,0xc3cbd0,.9,.20,0xb0bbc1,0x14709f};
-static const KPPalette KPDarkPalette{0x15181b,0x191d20,0x22272b,0x363d43,0x191d21,0x3c4349,0x2a3035,0x4c555c,0x3f464c,0x2b3136,0x1f4b5f,0x163748,0x4cc6f2,0x168ac4,0x63d0f5,0xe6ebee,0x9aa5ab,0xc3cbd0,0x4a535a,.13,.55,0x0c0e10,0x0d5880};
+// Caution (amber, a tint behind a "restart to apply") and danger (red, a choice that loses something)
+// are lighter in dark so they still read on graphite.
+struct KPPalette{unsigned background,stripe,panel,panelStroke,well,buttonTop,buttonBottom,buttonStroke,tabTop,tabBottom,selectedTop,selectedBottom,accentTop,accentBottom,accentStroke,text,secondaryText,icon,switchOff;CGFloat gloss,shadow;unsigned ledge,accentLedge,caution,cautionInk,danger;};
+static const KPPalette KPLightPalette{0xf2f4f5,0xe8ecee,0xfbfcfc,0xc9d1d6,0xe6ecef,0xffffff,0xdfe5e8,0xb3bdc3,0xfafbfc,0xd3dade,0xebf8fe,0xbde8fa,0x5ccbf3,0x1b9ad5,0x1784bc,0x3a4348,0x6a747a,0x5a646a,0xc3cbd0,.9,.20,0xb0bbc1,0x14709f,0xf0a030,0xc6731a,0xd0342c};
+static const KPPalette KPDarkPalette{0x15181b,0x191d20,0x22272b,0x363d43,0x191d21,0x3c4349,0x2a3035,0x4c555c,0x3f464c,0x2b3136,0x1f4b5f,0x163748,0x4cc6f2,0x168ac4,0x63d0f5,0xe6ebee,0x9aa5ab,0xc3cbd0,0x4a535a,.13,.55,0x0c0e10,0x0d5880,0xf0a030,0xf2a64a,0xff6b5e};
 static const KPPalette *KPP=&KPLightPalette;
 static void KPUsePalette(id view){
 #if TARGET_OS_OSX
@@ -90,12 +92,17 @@ static void KPGradientFill(CGContextRef c,CGRect r,CGFloat radius,unsigned top,u
 }
 // Art tiles hold feature artwork; they stay light in dark mode so black eyes and dark hair remain visible.
 enum class KPStyle{Plain,Primary,Tab,Tile,Art,Round,Card};
-// Wii channel face: a rounded rectangle on a solid ledge, a soft vertical gradient and a double rim.
+// The corner radius of the first face drawn since this was set below zero. The Mac's focus ring reads
+// it, so the ring's corners follow the face's whatever its style.
+static CGFloat KPFaceRadiusDrawn=-1;
+// Wii channel face: a rounded rectangle on a solid ledge, a soft vertical gradient and a double rim
+// whose inner, white line fades out towards the bottom, where it would show against the grey.
 // Pressing drops the face onto its ledge.
 // Hovering (Mac pointer, iPad trackpad) lights the rim in Wii blue, like the Wii pointer highlight.
 static void KPButtonFace(CGContextRef c,CGRect r,KPStyle style,BOOL selected,BOOL enabled,BOOL pressed,BOOL hovered=NO){
     const KPPalette *theme=KPP;if(style==KPStyle::Art){KPP=&KPLightPalette;style=KPStyle::Tile;}
     CGFloat ledge=3,radius=style==KPStyle::Card?14:style==KPStyle::Round?10:style==KPStyle::Tile?10:8;
+    if(KPFaceRadiusDrawn<0)KPFaceRadiusDrawn=radius;
     CGRect body=CGRectMake(r.origin.x,r.origin.y,r.size.width,r.size.height-ledge);
     BOOL accent=style==KPStyle::Primary||(selected&&style==KPStyle::Tab),highlight=selected&&!accent;
     CGContextSaveGState(c);if(!enabled)CGContextSetAlpha(c,.42);
@@ -108,7 +115,15 @@ static void KPButtonFace(CGContextRef c,CGRect r,KPStyle style,BOOL selected,BOO
     // The lit rim runs round the ledge too, so it is as thick at the bottom as on the other sides.
     BOOL lit=hovered&&enabled&&!pressed&&!highlight;
     KPStroke(c,lit?r:body,accent||highlight?KPP->accentStroke:lit?KPP->accentTop:KPP->buttonStroke,highlight||lit?2.5:1.25,radius);
-    if(!pressed)KPStroke(c,CGRectInset(body,highlight?4:3,highlight?4:3),0xffffff,1,radius-3,KPP->gloss*(accent?.45:1));
+    if(!pressed){
+        const CGRect gloss=CGRectInset(body,highlight?4.5:3.5,highlight?4.5:3.5);const CGFloat round=std::max(CGFloat(0),radius-3.5);
+        CGPathRef path=CGPathCreateWithRoundedRect(gloss,round,round,nullptr);
+        CGContextSaveGState(c);CGContextAddPath(c,path);CGContextSetLineWidth(c,1);CGContextReplacePathWithStrokedPath(c);CGContextClip(c);CGPathRelease(path);
+        const CGFloat alpha=KPP->gloss*(accent?.45:1),colors[]={1,1,1,alpha,1,1,1,alpha,1,1,1,0};const CGFloat stops[]={0,.45,.9};
+        CGColorSpaceRef space=CGColorSpaceCreateDeviceRGB();CGGradientRef gradient=CGGradientCreateWithColorComponents(space,colors,stops,3);
+        CGContextDrawLinearGradient(c,gradient,CGPointMake(0,gloss.origin.y),CGPointMake(0,CGRectGetMaxY(gloss)),0);
+        CGGradientRelease(gradient);CGColorSpaceRelease(space);CGContextRestoreGState(c);
+    }
     CGContextRestoreGState(c);KPP=theme;
 }
 // On/off indicator in the same rounded-rectangle language as the buttons.

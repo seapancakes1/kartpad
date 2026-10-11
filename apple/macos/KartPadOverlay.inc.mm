@@ -193,6 +193,7 @@ static bool KPOverlayWantsKeys() {
 @implementation KPUIButton {
   NSTrackingArea *_tracking;
   BOOL _inside;
+  CGFloat _faceRadius;  // the corner radius the face last drew with (0 before it has drawn)
 }
 - (instancetype)initWithFrame:(NSRect)frame {
   if ((self = [super initWithFrame:frame])) {
@@ -261,15 +262,26 @@ static bool KPOverlayWantsKeys() {
   (void)size;
   const CGRect face = self.faceRect;
   const KPUIState state{self.focused, self.pressed, self.enabled};
+  // The ring's corners follow the face's: those of the button face it draws, or for a face drawn
+  // another way (an empty player's dashed outline), the button's radius.
+  const CGFloat radius = _faceRadius > 0 ? _faceRadius : self.radius;
   if (self.focused && self.enabled) {
     // Wii-blue glow around the face, as the Wii pointer lights what it rests on.
     CGContextSaveGState(c);
     CGContextSetShadowWithColor(c, CGSizeZero, 10, KPColor(KPP->accentTop, 0.85).CGColor);
     // It reaches a point under the face, so no seam shows between it and the face's lit rim.
-    KPStroke(c, CGRectInset(face, -3.5, -3.5), KPP->accentTop, 4.5, self.radius + 3.5);
+    KPStroke(c, CGRectInset(face, -3.5, -3.5), KPP->accentTop, 4.5, radius + 3.5);
     CGContextRestoreGState(c);
   }
+  KPFaceRadiusDrawn = -1;
   if (self.face) self.face(c, face, state);
+  const CGFloat drawn = KPFaceRadiusDrawn >= 0 ? KPFaceRadiusDrawn : self.radius;
+  KPFaceRadiusDrawn = -1;
+  if (drawn != radius) {
+    _faceRadius = drawn;
+    // Drawn focused before the face had told its radius: once more with the ring's corners right.
+    if (self.focused) dispatch_async(dispatch_get_main_queue(), ^{ self.needsDisplay = YES; });
+  }
 }
 - (void)updateTrackingAreas {
   [super updateTrackingAreas];
@@ -998,7 +1010,7 @@ static KPUIButton *KPUINearest(NSArray<KPUIButton *> *candidates, KPUIButton *fr
       KPDialogScreen *dialog = weakSelf;
       const BOOL primary = i == dialog.primary;
       KPButtonFace(c, r, primary ? KPStyle::Primary : KPStyle::Plain, NO, state.enabled, state.pressed, state.focused);
-      const unsigned ink = primary ? 0xffffff : i == dialog.destructive ? 0xd0342c : KPP->text;
+      const unsigned ink = primary ? 0xffffff : i == dialog.destructive ? KPP->danger : KPP->text;
       KPTextWeight(dialog.choices[i], CGRectMake(r.origin.x, CGRectGetMidY(r) - 16, r.size.width, 32), 23, ink,
                    NSFontWeightSemibold);
     } action:^{
@@ -1042,7 +1054,6 @@ static KPUIButton *KPUINearest(NSArray<KPUIButton *> *candidates, KPUIButton *fr
   KPFill(c, card, KPP->panel, 28);
   CGContextRestoreGState(c);
   KPStroke(c, card, KPP->panelStroke, 1.5, 28);
-  KPFill(c, CGRectMake(card.origin.x, card.origin.y + 22, 6, 54), KPP->accentBottom, 3);
   KPTextWeight(self.heading, CGRectMake(card.origin.x + 40, card.origin.y + 30, card.size.width - 80, 44), 31, KPP->text,
                NSFontWeightBold, NSTextAlignmentLeft);
   KPTextWeight(self.message, CGRectMake(card.origin.x + 40, card.origin.y + 92, card.size.width - 80, card.size.height - 92 - 104), 21,
@@ -1078,7 +1089,6 @@ struct KPMenuItem {
 
 @interface KPMenuScreen : KPScreen
 @property(nonatomic, copy) NSString *heading, *message;
-@property(nonatomic) unsigned stripe;
 - (void)add:(NSString *)title detail:(NSString *)detail glyph:(int)glyph enabled:(BOOL)enabled run:(void (^)(void))run;
 @end
 
@@ -1146,7 +1156,6 @@ static void KPDrawGlyphIndex(CGContextRef c, int glyph, CGRect rect, unsigned in
   KPFill(c, card, KPP->panel, 28);
   CGContextRestoreGState(c);
   KPStroke(c, card, KPP->panelStroke, 1.5, 28);
-  KPFill(c, CGRectMake(card.origin.x, card.origin.y + 26, 6, 46), self.stripe ?: KPP->accentBottom, 3);
   KPTextWeight(self.heading, CGRectMake(card.origin.x + 34, card.origin.y + 28, card.size.width - 68, 44), 29, KPP->text,
                NSFontWeightBold, NSTextAlignmentLeft);
   if (self.message.length)

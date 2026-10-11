@@ -417,9 +417,9 @@ static void KPSetupSearch(void (^progress)(NSString *place), void (^found)(KPSet
     }
   }
   if (self.message.length)
-    KPTextWeight(self.message, CGRectMake(s.origin.x + 200, s.origin.y + 650, 880, 30), 17, 0xd0342c, NSFontWeightSemibold);
-  KPTextWeight(@"Ⓐ Choose    Ⓑ Back", CGRectMake(s.origin.x + 52, s.origin.y + 680, 1176, 24), 15,
-               KPP->secondaryText, NSFontWeightMedium, NSTextAlignmentRight);
+    KPTextWeight(self.message, CGRectMake(s.origin.x + 200, s.origin.y + 650, 880, 30), 17, KPP->danger, NSFontWeightSemibold);
+  KPDrawHints(c, CGRectMake(s.origin.x + 52, s.origin.y + 680, 1176, 24), {{KartPadMiiPadConfirm, @"Choose"}, {KartPadMiiPadBack, @"Back"}},
+              15, NSTextAlignmentRight);
 }
 @end
 

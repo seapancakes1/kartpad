@@ -1150,6 +1150,7 @@ static void KPOpenMiisFromController() { [Controller() showMiis:nil]; }
 
 #include "KartPadOverlay.inc.mm"
 #include "KartPadUIGlyphs.inc.mm"
+#include "KartPadHints.inc.mm"
 #include "KartPadControllerArt.inc.mm"
 #include "KartPadHomeScreen.inc.mm"
 #include "KartPadRetroDownload.inc.mm"

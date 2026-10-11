@@ -445,7 +445,6 @@ enum : unsigned { KPPressConfirm = 1, KPPressBack = 2, KPPressStart = 4 };
     return;
   }
   KPMenuScreen *menu = [[KPMenuScreen alloc] initWithFrame:NSZeroRect];
-  menu.stripe = KPPlayerColors[slot];
   __weak KPControllersScreen *weakSelf = self;
   NSDictionary *mii = [roster miiRecordFor:device];
   menu.heading = [NSString stringWithFormat:@"%@ · %@", KPPlayerName(slot), mii[@"name"] ?: device.name];
@@ -504,18 +503,20 @@ enum : unsigned { KPPressConfirm = 1, KPPressBack = 2, KPPressStart = 4 };
   const CGRect s = self.safe;
   KPTextWeight(@"Controllers", CGRectMake(s.origin.x + 56, s.origin.y + 26, 600, 50), 38, KPP->text, NSFontWeightBold,
                NSTextAlignmentLeft);
-  NSString *subtitle = @"Press any button to see which card is yours.", *hint = @"Ⓐ Options    Ⓨ Find    Ⓑ Back";
+  NSString *subtitle = @"Press any button to see which card is yours.";
+  NSString *const press = KPButtonWord(KPJoinDevice(), KartPadMiiPadConfirm);
+  std::vector<KPHint> hints = {{KartPadMiiPadConfirm, @"Options"}, {KartPadMiiPadRedo, @"Find"}, {KartPadMiiPadBack, @"Back"}};
   unsigned ink = KPP->secondaryText;
   if (self.mode == KPControllersAssigning) {
-    subtitle = [NSString stringWithFormat:@"Press Ⓐ on the controller for %@.", KPPlayerName(self.target)];
-    hint = @"Ⓑ Cancel";
+    subtitle = [NSString stringWithFormat:@"Press %@ on the controller for %@.", press, KPPlayerName(self.target)];
+    hints = {{KartPadMiiPadBack, @"Cancel"}};
     ink = KPP->accentBottom;
   } else if (self.mode == KPControllersOrdering) {
     const NSUInteger next = self.ordered.count;
-    subtitle = next == 0 ? @"Everyone press Ⓐ in turn. The first is Player 1."
+    subtitle = next == 0 ? [NSString stringWithFormat:@"Everyone press %@ in turn. The first is Player 1.", press]
              : next < (NSUInteger)KPPlayerCount && self.finishAt == 0 ? [NSString stringWithFormat:@"Next: %@", KPPlayerName((int)next)]
                                                                    : @"Everyone's in!";
-    hint = @"Start when everyone's in    Ⓑ Cancel";
+    hints = {{KPNoButton, @"Start when everyone's in"}, {KartPadMiiPadBack, @"Cancel"}};
     ink = KPP->accentBottom;
   }
   KPTextWeight(subtitle, CGRectMake(s.origin.x + 58, s.origin.y + 78, 640, 26), 18, ink, NSFontWeightMedium, NSTextAlignmentLeft);
@@ -525,8 +526,7 @@ enum : unsigned { KPPressConfirm = 1, KPPressBack = 2, KPPressStart = 4 };
   if (resting)
     KPTextWeight(@"Not playing", CGRectMake(s.origin.x + 58, s.origin.y + 536, 800, 26), 18, KPP->secondaryText, NSFontWeightSemibold,
                  NSTextAlignmentLeft);
-  KPTextWeight(hint, CGRectMake(s.origin.x + 56, s.origin.y + 670, 1168, 26), 16, KPP->secondaryText, NSFontWeightMedium,
-               NSTextAlignmentRight);
+  KPDrawHints(c, CGRectMake(s.origin.x + 56, s.origin.y + 670, 1168, 26), hints, 16, NSTextAlignmentRight);
 }
 
 // A player waiting for a controller while choosing by pressing: the one being chosen pulses.
@@ -556,9 +556,17 @@ enum : unsigned { KPPressConfirm = 1, KPPressBack = 2, KPPressStart = 4 };
   CGContextFillEllipseInRect(c, CGRectInset(button, -14, -14));
   KPSetInk(c, color);
   CGContextFillEllipseInRect(c, button);
-  KPTextWeight(@"A", CGRectMake(button.origin.x, CGRectGetMidY(button) - size * 0.33, size, size * 0.66), size * 0.5, KPPlayerInk[slot],
-               NSFontWeightHeavy);
-  KPTextWeight(@"Press Ⓐ", CGRectMake(r.origin.x + 10, r.origin.y + 236, r.size.width - 20, 32), 24, KPP->text, NSFontWeightBold);
+  // Labelled as the pad in hand labels it (✕ on a PlayStation pad).
+  NSString *label = KPHintLabel(KPJoinDevice(), KartPadMiiPadConfirm);
+  if (KPHintIsShape(label)) {
+    KPDrawHintBadge(c, label, CGRectInset(button, size * 0.12, size * 0.12), size * 0.55, color, KPPlayerInk[slot]);
+  } else {
+    const CGFloat type = label.length <= 2 ? size * 0.5 : size * 0.24;
+    KPTextWeight(label, CGRectMake(button.origin.x, CGRectGetMidY(button) - type * 0.66, size, type * 1.32), type, KPPlayerInk[slot],
+                 NSFontWeightHeavy);
+  }
+  KPTextWeight([@"Press " stringByAppendingString:KPButtonWord(KPJoinDevice(), KartPadMiiPadConfirm)],
+               CGRectMake(r.origin.x + 10, r.origin.y + 236, r.size.width - 20, 32), 24, KPP->text, NSFontWeightBold);
   KPTextWeight(@"on the controller for this player", CGRectMake(r.origin.x + 26, r.origin.y + 272, r.size.width - 52, 50), 16,
                KPP->secondaryText, NSFontWeightRegular);
 }
@@ -616,7 +624,8 @@ enum : unsigned { KPPressConfirm = 1, KPPressBack = 2, KPPressStart = 4 };
     KPDrawGlyph(c, KPUIGlyph::Plus, CGRectMake(CGRectGetMidX(r) - 34, r.origin.y + 112 + dy, 68, 68), KPP->buttonStroke);
     KPTextWeight(@"No controller", CGRectMake(r.origin.x + 10, r.origin.y + 206 + dy, r.size.width - 20, 30), 22, KPP->secondaryText,
                  NSFontWeightSemibold);
-    KPTextWeight(@"Press Ⓐ to join", CGRectMake(r.origin.x + 26, r.origin.y + 242 + dy, r.size.width - 52, 30), 16,
+    KPTextWeight([NSString stringWithFormat:@"Press %@ to join", KPButtonWord(KPJoinDevice(), KartPadMiiPadConfirm)],
+                 CGRectMake(r.origin.x + 26, r.origin.y + 242 + dy, r.size.width - 52, 30), 16,
                  KPP->secondaryText, NSFontWeightRegular);
     return;
   }
@@ -648,7 +657,8 @@ enum : unsigned { KPPressConfirm = 1, KPPressBack = 2, KPPressStart = 4 };
   KPDrawControllerArt(c, CGRectMake(r.origin.x + 10, r.origin.y + 8 + dy, 92, r.size.height - 19), device.family, art, device.systemName);
   KPTextWeight(device.name, CGRectMake(r.origin.x + 110, r.origin.y + 12 + dy, r.size.width - 120, 26), 18, KPP->text,
                NSFontWeightSemibold, NSTextAlignmentLeft);
-  KPTextWeight(device.isKeyboard ? @"Menus only" : @"Press Ⓐ to join", CGRectMake(r.origin.x + 110, r.origin.y + 40 + dy, r.size.width - 150, 22),
+  KPTextWeight(device.isKeyboard ? @"Menus only" : [NSString stringWithFormat:@"Press %@ to join", KPButtonWord(device, KartPadMiiPadConfirm)],
+               CGRectMake(r.origin.x + 110, r.origin.y + 40 + dy, r.size.width - 150, 22),
                15, KPP->secondaryText, NSFontWeightRegular, NSTextAlignmentLeft);
   KPDrawBattery(c, CGRectMake(CGRectGetMaxX(r) - 44, r.origin.y + 38 + dy, 30, 24), device);
 }
@@ -949,17 +959,19 @@ static const SDL_Scancode KPDefaultKeys[12] = {
   if (device.slot >= 0) KPFill(c, CGRectMake(s.origin.x + 52, s.origin.y + 34, 8, 40), KPPlayerColors[device.slot], 4);
   KPTextWeight(@"Buttons", CGRectMake(s.origin.x + 72, s.origin.y + 26, 400, 50), 36, KPP->text, NSFontWeightBold, NSTextAlignmentLeft);
   KPTextWeight(who, CGRectMake(s.origin.x + 74, s.origin.y + 76, 700, 26), 18, KPP->secondaryText, NSFontWeightMedium, NSTextAlignmentLeft);
-  NSString *line;
-  unsigned ink = KPP->secondaryText;
+  const CGRect lineRect = CGRectMake(s.origin.x + 690, s.origin.y + 500, 540, 56);
   if (self.capturing >= 0) {
     const NSInteger left = std::max<NSInteger>(0, 8 - (NSInteger)(NSProcessInfo.processInfo.systemUptime - self.captureStarted));
-    line = [NSString stringWithFormat:@"Press a %@ for %@  (%ld)", device.isKeyboard ? @"key" : @"button",
-            KPActionTitles()[self.capturing], (long)left];
-    ink = KPP->accentBottom;
+    KPTextWeight([NSString stringWithFormat:@"Press a %@ for %@  (%ld)", device.isKeyboard ? @"key" : @"button",
+                  KPActionTitles()[self.capturing], (long)left], lineRect, 20, KPP->accentBottom, NSFontWeightSemibold);
+  } else if (self.status) {
+    KPTextWeight(self.status, lineRect, 20, KPP->secondaryText, NSFontWeightSemibold);
   } else {
-    line = self.status ?: (device.isKeyboard ? @"Ⓐ Change    Ⓑ Back" : @"Ⓐ Change    Ⓧ Add a second button    Ⓑ Back");
+    // The buttons of the controller being set up, whichever was used last.
+    KPDrawHints(c, CGRectMake(lineRect.origin.x, lineRect.origin.y, lineRect.size.width, 28),
+                {{KartPadMiiPadConfirm, @"Change"}, {KartPadMiiPadUndo, @"Add a second button"}, {KartPadMiiPadBack, @"Back"}}, 18,
+                NSTextAlignmentCenter, device);
   }
-  KPTextWeight(line, CGRectMake(s.origin.x + 690, s.origin.y + 500, 540, 56), 20, ink, NSFontWeightSemibold);
   if (device.isKeyboard)
     KPTextWeight(@"Steer with W A S D. Esc opens HOME.", CGRectMake(s.origin.x + 690, s.origin.y + 118, 540, 26), 16,
                  KPP->secondaryText, NSFontWeightMedium);

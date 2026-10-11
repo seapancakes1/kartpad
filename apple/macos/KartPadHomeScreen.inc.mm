@@ -79,21 +79,23 @@ static void KPWriteVolume(float volume, bool muted) {
 
 #pragma mark Faces shared by the screens
 
-// A tile on a screen: a big icon, a title and a line under it.
+// A tile's icon square, centred (the Miis tile puts its faces there instead).
+static CGRect KPTileIconRect(CGRect r, CGFloat dy) {
+  const CGFloat icon = std::min<CGFloat>(78, r.size.height * 0.34);
+  return CGRectMake(CGRectGetMidX(r) - icon / 2, r.origin.y + r.size.height * 0.19 + dy, icon, icon);
+}
+// A tile on a screen: a big icon, a title and a line under it. The title sits at the same height
+// whether or not there's a line, so titles in a row line up.
 static void KPDrawTile(CGContextRef c, CGRect r, KPUIState state, BOOL primary, KPUIGlyph glyph, NSString *title,
                        NSString *detail, unsigned iconInk = 0) {
   KPButtonFace(c, r, primary ? KPStyle::Primary : KPStyle::Card, NO, state.enabled, state.pressed, state.focused);
   const CGFloat dy = state.pressed ? 2 : 0;
   const unsigned ink = primary ? 0xffffff : KPP->text, sub = primary ? 0xeaf7fd : KPP->secondaryText;
-  const CGFloat icon = std::min<CGFloat>(78, r.size.height * 0.34);
-  if ((int)glyph >= 0)
-    KPDrawGlyph(c, glyph, CGRectMake(CGRectGetMidX(r) - icon / 2, r.origin.y + r.size.height * 0.17 + dy, icon, icon),
-                iconInk ? iconInk : primary ? 0xffffff : KPP->accentBottom);
-  const CGFloat titleY = r.origin.y + r.size.height * (detail.length ? 0.58 : 0.64) + dy;
+  if ((int)glyph >= 0) KPDrawGlyph(c, glyph, KPTileIconRect(r, dy), iconInk ? iconInk : primary ? 0xffffff : KPP->accentBottom);
+  const CGFloat titleY = r.origin.y + r.size.height * 0.61 + dy;
   KPTextWeight(title, CGRectMake(r.origin.x + 10, titleY, r.size.width - 20, 34), 26, ink, NSFontWeightSemibold);
   if (detail.length)
-    KPTextWeight(detail, CGRectMake(r.origin.x + 12, r.origin.y + r.size.height * 0.58 + 36 + dy, r.size.width - 24, 24), 17,
-                 sub, NSFontWeightMedium);
+    KPTextWeight(detail, CGRectMake(r.origin.x + 12, titleY + 36, r.size.width - 24, 24), 17, sub, NSFontWeightMedium);
 }
 
 // A pill button: an icon and a word.
@@ -222,7 +224,7 @@ static KPScreen *KPMakeMiisScreen();
   self.switchGame.label = [NSString stringWithFormat:@"Switch to %@", KPGameTitle(KPOtherProfile())];
   self.switchGame.hidden = !KPCanSwitchGames();
 
-  // The Miis tile shows up to three of the player's Miis, overlapping, instead of an icon.
+  // The Miis tile shows up to three of the player's Miis, overlapping, where the other tiles have their icon.
   self.miis = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
     KPHomeScreen *home = weakSelf;
     NSInteger count = home.miiCount;
@@ -230,13 +232,15 @@ static KPScreen *KPMakeMiisScreen();
     (void)count;
     KPDrawTile(c, r, state, NO, faces.count ? (KPUIGlyph)-1 : KPUIGlyph::Mii, @"Miis", nil);
     if (!faces.count) return;
-    const CGFloat size = 96, dy = state.pressed ? 2 : 0, overlap = 30;
+    const CGFloat dy = state.pressed ? 2 : 0;
+    const CGRect icon = KPTileIconRect(r, dy);
+    const CGFloat size = icon.size.width, overlap = std::round(size * 0.3);
     const CGFloat width = size + (faces.count - 1) * (size - overlap);
     CGFloat x = CGRectGetMidX(r) - width / 2;
     for (NSDictionary *record in faces) {
       __weak KPUIButton *tile = home.miis;
       NSImage *portrait = KartPadMiiPortrait(record[@"mii"], ^{ tile.needsDisplay = YES; });
-      const CGRect well = CGRectMake(x, r.origin.y + r.size.height * 0.12 + dy, size, size);
+      const CGRect well = CGRectMake(x, icon.origin.y, size, size);
       KPFill(c, CGRectInset(well, -3, -3), KPP->panel, size * 0.25);
       KPDrawMiiWell(c, well, portrait, KPFavoriteColorHex(record), NO);
       x += size - overlap;
@@ -316,9 +320,9 @@ static KPScreen *KPMakeMiisScreen();
 
   self.restart = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
     KPButtonFace(c, r, KPStyle::Plain, NO, state.enabled, state.pressed, state.focused);
-    KPFill(c, CGRectInset(CGRectMake(r.origin.x, r.origin.y, r.size.width, r.size.height - 3), 2, 2), 0xf0a030, 7, 0.22);
     const CGFloat dy = state.pressed ? 2 : 0;
-    KPDrawGlyph(c, KPUIGlyph::Restart, CGRectMake(r.origin.x + 16, CGRectGetMidY(r) - 14 + dy, 26, 26), 0xc6731a);
+    KPFill(c, CGRectInset(CGRectMake(r.origin.x, r.origin.y + dy, r.size.width, r.size.height - 3), 2, 2), KPP->caution, 6, 0.22);
+    KPDrawGlyph(c, KPUIGlyph::Restart, CGRectMake(r.origin.x + 16, CGRectGetMidY(r) - 14 + dy, 26, 26), KPP->cautionInk);
     KPTextWeight(@"Restart to apply", CGRectMake(r.origin.x + 50, CGRectGetMidY(r) - 13 + dy, r.size.width - 58, 26), 19, KPP->text,
                  NSFontWeightSemibold, NSTextAlignmentLeft);
   } action:^{ [weakSelf askToRestart]; }];
@@ -529,9 +533,9 @@ static KPScreen *KPMakeMiisScreen();
   KPTextWeight(@"Players", CGRectMake(s.origin.x + 56, s.origin.y + 552 - origin, 300, 26), 18, KPP->secondaryText,
                NSFontWeightSemibold, NSTextAlignmentLeft);
   // Which buttons do what, for the controller in hand.
-  NSString *hint = @"Ⓐ Select    Ⓧ Find controller    Ⓑ Close";
-  KPTextWeight(hint, CGRectMake(s.origin.x + 1280 - 52 - 640, s.origin.y + 552 - origin, 640, 26), 16, KPP->secondaryText,
-               NSFontWeightMedium, NSTextAlignmentRight);
+  KPDrawHints(c, CGRectMake(s.origin.x + 1280 - 52 - 760, s.origin.y + 552 - origin, 760, 26),
+              {{KartPadMiiPadConfirm, @"Select"}, {KartPadMiiPadUndo, @"Find controller"}, {KartPadMiiPadBack, @"Close"}}, 16,
+              NSTextAlignmentRight);
 }
 
 - (void)drawSlot:(int)slot context:(CGContextRef)c in:(CGRect)r state:(KPUIState)state {

@@ -350,8 +350,9 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
     const CGFloat part = gauge.size.height * KPSettingsVisibleRows / count, at = gauge.size.height * self.first / count;
     KPFill(c, CGRectMake(gauge.origin.x, gauge.origin.y + at, 6, part), KPP->accentBottom, 3);
   }
-  KPTextWeight(@"Ⓐ Select    ◀ ▶ Adjust    LB / RB Category    Ⓑ Back", CGRectMake(s.origin.x + 52, s.origin.y + 672, 1176, 26), 16,
-               KPP->secondaryText, NSFontWeightMedium, NSTextAlignmentRight);
+  KPDrawHints(c, CGRectMake(s.origin.x + 52, s.origin.y + 672, 1176, 26),
+              {{KartPadMiiPadConfirm, @"Select"}, {KartPadMiiPadLeft, @"Adjust", KartPadMiiPadRight},
+               {KartPadMiiPadPreviousTab, @"Category", KartPadMiiPadNextTab}, {KartPadMiiPadBack, @"Back"}}, 16, NSTextAlignmentRight);
 }
 
 #pragma mark Rows

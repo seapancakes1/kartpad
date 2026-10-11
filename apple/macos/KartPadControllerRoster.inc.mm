@@ -187,6 +187,8 @@ static void KPFixBareWiiRemoteMapping(SDL_JoystickID id) {
 - (void)checkBattery:(KPPadDevice *)device announce:(BOOL)announce;
 @end
 
+static void KPHintDeviceChanged();  // KartPadHints.inc.mm
+
 @implementation KPControllerRoster {
   NSMutableDictionary<NSString *, KPPadDevice *> *_known;
   NSMutableDictionary<NSString *, NSNumber *> *_lightSlot;
@@ -199,6 +201,12 @@ static void KPFixBareWiiRemoteMapping(SDL_JoystickID id) {
   // Who was on which player at the last refresh. The devices themselves are updated in place, so
   // comparing them with the previous list would never see a controller change player.
   NSString *_seating;
+}
+// The screens' button hints follow the controller used last.
+- (void)setLastActive:(KPPadDevice *)device {
+  if (device == _lastActive) return;
+  _lastActive = device;
+  KPHintDeviceChanged();
 }
 
 + (instancetype)shared {
