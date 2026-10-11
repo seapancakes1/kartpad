@@ -24,7 +24,7 @@ static const char KPPhoneHelperPage[] = R"KPHELPER(<!doctype html>
 </head>
 <body>
 <h2>Linking to KartPad…</h2>
-<p id="say">This tab closes by itself.</p>
+<p id="say"></p>
 <script>
 "use strict";
 const CONTROLLER_ORIGIN = "{{CONTROLLER_ORIGIN}}";
@@ -52,7 +52,7 @@ else {
     say("Linked. Going back…");
     setTimeout(() => window.close(), 250);
   };
-  ws.onclose = () => { if (!answered) say("Couldn’t reach KartPad. Is it still open with this code on screen?"); };
+  ws.onclose = () => { if (!answered) say("Couldn’t reach KartPad. Keep the code on screen and try again."); };
 }
 </script>
 </body>

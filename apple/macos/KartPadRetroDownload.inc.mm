@@ -203,7 +203,7 @@ static NSString *KPRetroFolder() {
       }
       if (!good) {
         [NSFileManager.defaultManager removeItemAtPath:file error:nil];
-        [self fail:@"The download didn't match the pack this KartPad plays, so it was thrown away. Try again."];
+        [self fail:@"The download was damaged. Try again."];
         return;
       }
       ++self->_current;
@@ -396,7 +396,7 @@ static NSString *KPRetroFolder() {
       detail = download.done > 0 ? [NSString stringWithFormat:@"%@ of %@", KPBytesText(download.done), KPBytesText(download.total)]
                                  : @"Starting…";
       break;
-    case KPRetroVerifying: title = @"Checking the download…"; detail = @"Making sure it's the right pack."; break;
+    case KPRetroVerifying: title = @"Checking the download…"; detail = @""; break;
     case KPRetroInstalling: title = @"Installing…"; detail = @"Unpacking the files."; break;
     case KPRetroReady: title = @"Retro Rewind is ready"; detail = @"Switch to it from HOME."; break;
     case KPRetroFailed: title = @"It didn't finish"; detail = download.problem ?: @"Try again."; break;

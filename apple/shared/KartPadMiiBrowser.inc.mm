@@ -884,7 +884,7 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
 }
 - (void)rename:(NSDictionary*)record{
     if([self blocked])return;NSUInteger slot=[record[@"slot"] unsignedIntegerValue];__weak KPMiiBrowser *weak=self;
-    [self ask:[NSString stringWithFormat:@"Rename “%@”",record[@"name"]] message:@"Every license that races as this Mii gets the new name too, keeping its friend code and progress." text:record[@"name"] action:@"Rename" then:^(NSString *name){
+    [self ask:[NSString stringWithFormat:@"Rename “%@”",record[@"name"]] message:@"Licenses that race as this Mii get the new name too." text:record[@"name"] action:@"Rename" then:^(NSString *name){
         NSError *error=nil;NSUInteger updated=0;
         if(!KartPadStagePlayerName(slot,name,&updated,&error)){[weak tell:@"Mii Couldn’t Be Renamed" message:error.localizedDescription];return;}
         NSString *trimmed=[name stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
@@ -1022,7 +1022,7 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
 }
 - (void)link:(NSDictionary*)license to:(NSDictionary*)record{
     __weak KPMiiBrowser *weak=self;
-    [self confirm:[NSString stringWithFormat:@"Race as “%@”?",record[@"name"]] message:[NSString stringWithFormat:@"%@ (“%@”) will use this Mii’s name and appearance. Its progress and friend code are kept, and the save is backed up first.",KPLicenseTitle(license),license[@"name"]?:@"Unnamed"] action:@"Use This Mii" destructive:NO then:^{
+    [self confirm:[NSString stringWithFormat:@"Race as “%@”?",record[@"name"]] message:[NSString stringWithFormat:@"%@ (“%@”) will use this Mii’s name and appearance. Its progress and friend code are kept.",KPLicenseTitle(license),license[@"name"]?:@"Unnamed"] action:@"Use This Mii" destructive:NO then:^{
         NSError *error=nil;
         if(!KartPadStageLicenseMii(license[@"profileIdentifier"],[license[@"slot"] unsignedIntegerValue],license[@"createId"],[record[@"slot"] unsignedIntegerValue],record[@"createIdBytes"],&error)){[weak tell:@"Mii Couldn’t Be Linked" message:error.localizedDescription];return;}
         [weak changeScheduled:[NSString stringWithFormat:@"%@ will race as “%@”.",KPLicenseTitle(license),record[@"name"]]];

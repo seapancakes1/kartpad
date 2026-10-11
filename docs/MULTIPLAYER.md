@@ -98,8 +98,8 @@ More:
 - The tilt page is published over HTTPS (browsers only give motion to such
   pages), so the phone needs internet to open it. After it opens, input goes
   straight from the phone to the Mac over a WebRTC data channel on your Wi‑Fi;
-  nothing passes through the internet. If that direct link fails, **Use the
-  Touch-Only Link** opens the same controller from the Mac itself, touch only.
+  nothing passes through the internet. If that direct link fails, **Use Touch
+  Controls** opens the same controller from the Mac itself, touch only.
 - The Mac's phone page lists the phones that have joined, with each one's
   player, how quick its link is, and **Remove**.
 - Up to four phones join, each as its own controller (`Phone 1` to `Phone 4`)

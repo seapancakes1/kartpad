@@ -255,7 +255,7 @@ static NSString *ValidateExtractedRoot(NSString *root, NSError **error) {
   if (boot.length < 0x20) return @"The selected sys/boot.bin is truncated.";
   const uint8_t *bytes = static_cast<const uint8_t *>(boot.bytes);
   if (memcmp(bytes, "RMCP01", 6) != 0 || bytes[6] != 0 || bytes[7] != 0) {
-    return @"KartPad currently supports RMCP01 (PAL), disc 0, revision 0 only.";
+    return @"KartPad only supports the PAL version (RMCP01).";
   }
   const uint32_t magic = (static_cast<uint32_t>(bytes[0x18]) << 24) |
                          (static_cast<uint32_t>(bytes[0x19]) << 16) |
@@ -270,14 +270,14 @@ static NSString *ValidateExtractedRoot(NSString *root, NSError **error) {
   if (hash == nil) return @"KartPad could not hash sys/main.dol.";
   if (![hash isEqualToString:
       @"80d18895b39c63bd80f457398bfcbb91b7d16ac116a41a88967e954080155b05"]) {
-    return @"This game data is modified (for example Wiimmfi-patched or pre-patched). Please use a clean RMCP01 dump.";
+    return @"This game data has been modified. Use an unmodified RMCP01 copy.";
   }
   NSString *relHash = SHA256ForFile(
       [root stringByAppendingPathComponent:@"files/rel/StaticR.rel"], error);
   if (relHash == nil) return @"KartPad could not hash files/rel/StaticR.rel.";
   if (![relHash isEqualToString:
       @"16d9d146112541fefea701ecb5bc1a496f9d50e4a752fbb5b6778e7c6399f67d"]) {
-    return @"This game data is modified (for example Wiimmfi-patched or pre-patched). Please use a clean RMCP01 dump.";
+    return @"This game data has been modified. Use an unmodified RMCP01 copy.";
   }
   return KartPadIncompleteGameFilesError(root,
       @"If it's in iCloud Drive, Control-click the folder in Finder, choose Download Now and wait "
@@ -361,7 +361,7 @@ static NSString *ChooseAndValidateRetroRewindData() {
   NSOpenPanel *panel = NSOpenPanel.openPanel;
   panel.title = @"Choose Retro Rewind";
   panel.message = [NSString stringWithFormat:
-      @"Choose the RetroRewind6 folder from the exact supported %@ pack.",
+      @"Choose the RetroRewind6 folder from Retro Rewind %@.",
       @KARTPAD_RR_VERSION];
   panel.prompt = @"Choose Retro Rewind";
   panel.canChooseFiles = NO;

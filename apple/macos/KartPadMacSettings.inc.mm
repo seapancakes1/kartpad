@@ -164,7 +164,7 @@ static NSArray<NSNumber *> *KPVibrationStrengths() { return @[@0,@0.25,@0.5,@1];
 - (void)backgroundPauseChanged:(NSButton *)sender {
   const BOOL on=sender.state==NSControlStateValueOn;
   [NSUserDefaults.standardUserDefaults setBool:on forKey:kKartPadBackgroundPauseDefaultsKey];
-  self.settingsStatus.stringValue=on?@"Saved. The game pauses while another app is in front.":@"Saved. The game keeps running while another app is in front.";
+  self.settingsStatus.stringValue=@"Saved.";
 }
 - (void)restartFromSettings:(id)sender {
   // Closing first saves changed controller profiles, as closing Settings always does.
@@ -192,13 +192,13 @@ static NSArray<NSNumber *> *KPVibrationStrengths() { return @[@0,@0.25,@0.5,@1];
   if([key isEqual:@"video.vsync"]) {
     const bool changed=RuntimeConfigFile::LoadConfigFile().vsync.value_or(false)!=KPLaunchVsync;
     [self setRestartNeeded:changed for:@"vsync"];
-    self.settingsStatus.stringValue=changed?@"Saved. VSync changes when KartPad restarts.":@"Saved. VSync is back to how KartPad started.";
+    self.settingsStatus.stringValue=changed?@"Saved. Applies after a restart.":@"Saved.";
     [self refreshSettings];return;
   }
   if([key isEqual:@"video.fullscreen_across_notch"]) {
     const bool changed=KPFullscreenAcrossNotch()!=KPLaunchNotch;
     [self setRestartNeeded:changed for:@"notch"];
-    self.settingsStatus.stringValue=changed?@"Saved. Full-display fullscreen changes when KartPad restarts.":@"Saved. Full-display fullscreen is back to how KartPad started.";
+    self.settingsStatus.stringValue=changed?@"Saved. Applies after a restart.":@"Saved.";
     [self refreshSettings];return;
   }
   // Preserve the renderer's existing high-frame-rate resolution restriction.
@@ -326,20 +326,20 @@ static NSArray<NSNumber *> *KPVibrationStrengths() { return @[@0,@0.25,@0.5,@1];
     [self settingsLabel:@"Applies after a restart." page:data y:505];
     [self settingsButton:@"Miis…" action:@selector(showMiis:) page:data y:440];
     self.backgroundPauseSwitch=[NSButton checkboxWithTitle:@"Pause when you switch apps" target:self action:@selector(backgroundPauseChanged:)];
-    self.backgroundPauseSwitch.frame=NSMakeRect(24,350,715,28);[data addSubview:self.backgroundPauseSwitch];
-    [self setting:@"discord.enabled" checkbox:@"Discord Rich Presence" page:data y:255];
-    [self settingsButton:@"Open Application Support" action:@selector(showApplicationSupport:) page:data y:195];
-    [self settingsButton:@"Open Cache Folder" action:@selector(showCache:) page:data y:150];
-    [self settingsButton:@"Control Reference…" action:@selector(showControls:) page:data y:80];
+    self.backgroundPauseSwitch.frame=NSMakeRect(24,395,715,28);[data addSubview:self.backgroundPauseSwitch];
+    [self setting:@"discord.enabled" checkbox:@"Discord Rich Presence" page:data y:355];
+    [self settingsButton:@"Open Application Support" action:@selector(showApplicationSupport:) page:data y:295];
+    [self settingsButton:@"Open Cache Folder" action:@selector(showCache:) page:data y:250];
+    [self settingsButton:@"Control Reference…" action:@selector(showControls:) page:data y:180];
 
     NSView *advanced=[self settingsPage:@"Advanced"];
     [self settingsLabel:@"Advanced & Diagnostics" page:advanced y:680].font=[NSFont boldSystemFontOfSize:19];
     [self settingsButton:@"Save Diagnostics Report…" action:@selector(saveDiagnostics:) page:advanced y:615];
     [self settingsButton:@"Controller Compatibility Tools…" action:@selector(showControllerCompatibility:) page:advanced y:540];
-    [self settingsButton:@"Pair Wii Remote…" action:@selector(pairWiimote:) page:advanced y:410];
-    [self settingsLabel:@"Experimental." page:advanced y:345];
-    [self settingsButton:@"Private Wii Server…" action:@selector(showPrivateServer:) page:advanced y:275];
-    [self settingsLabel:@"Applies after a restart." page:advanced y:215];
+    [self settingsButton:@"Pair Wii Remote…" action:@selector(pairWiimote:) page:advanced y:465];
+    [self settingsLabel:@"Experimental." page:advanced y:400];
+    [self settingsButton:@"Private Wii Server…" action:@selector(showPrivateServer:) page:advanced y:330];
+    [self settingsLabel:@"Applies after a restart." page:advanced y:265];
     [self.settingsPanel center];
     __weak KartPadMacShellController *weak=self;
     KartPadMiiPadSetSettings(self.settingsPanel,self.settingsTabs,^{

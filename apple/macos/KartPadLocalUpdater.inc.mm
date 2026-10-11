@@ -240,14 +240,14 @@ static void KPRenderUpdateStatus(NSDictionary *status) {
     KPHideUpdateNoticeAfter(4.0);
   } else if ([phase isEqualToString:@"declined"]) {
     KPUpdateNotice([NSString stringWithFormat:@"Retro Rewind %@ is skipped", version],
-        @"You went back from this version, so automatic updates leave it out.", NO);
+        @"Automatic updates skip versions you went back from.", NO);
     KPUpdateNoticeIcon(@"arrow.uturn.backward.circle", NSColor.secondaryLabelColor, @"Version skipped");
     kpUpdateFootnote.stringValue = @"Your current version stays installed";
     kpUpdateAction.title = @"Install anyway"; kpUpdateAction.hidden = NO;
   } else if ([phase isEqualToString:@"rolledBack"]) {
     NSString *from = [status[@"from"] isKindOfClass:NSString.class] ? status[@"from"] : @"";
     NSString *detail = [status[@"reason"] isEqualToString:@"unstable"]
-        ? [NSString stringWithFormat:@"Retro Rewind %@ didn’t start properly, so KartPad restored the previous version. Your saves are unchanged.", from]
+        ? [NSString stringWithFormat:@"Retro Rewind %@ didn’t start properly.", from]
         : [NSString stringWithFormat:@"Retro Rewind %@ was removed. Automatic updates will skip it.", from];
     KPUpdateNotice([NSString stringWithFormat:@"Back on Retro Rewind %@", version], detail, NO);
     KPUpdateNoticeIcon(@"arrow.uturn.backward.circle.fill", NSColor.systemBlueColor, @"Previous version restored");
@@ -437,7 +437,7 @@ static void KPRevertLocalUpdate(id sender) {
   }
   alert.messageText = [NSString stringWithFormat:@"Go back to Retro Rewind %@?", rollback[@"version"]];
   alert.informativeText = [NSString stringWithFormat:
-      @"Finish your race first. KartPad will close, restore the previous app and game files, and reopen. Automatic updates will skip Retro Rewind %@.",
+      @"Unsaved progress will be lost. Automatic updates will skip Retro Rewind %@.",
       rollback[@"replaces"]];
   [alert addButtonWithTitle:@"Go Back"];
   [alert addButtonWithTitle:@"Cancel"];

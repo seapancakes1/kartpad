@@ -1131,11 +1131,11 @@ static NSString *KPPairTitle(KPPairKind kind) {
 }
 static NSString *KPPairSteps(KPPairKind kind) {
   switch (kind) {
-    case KPPairKind::Controller: return @"Put it in pairing mode, and KartPad pairs it by itself.";
+    case KPPairKind::Controller: return @"Put it in pairing mode.";
     case KPPairKind::WiiRemote:
-      return @"1. Open the battery cover and press the red SYNC button.\n2. KartPad pairs it by itself.";
+      return @"Open the battery cover and press the red SYNC button.";
     case KPPairKind::Phone:
-      return @"1. Join the same Wi\u2011Fi as this Mac.\n2. Point the phone\u2019s camera at the code and open the link.\n3. Tap Join, and hold the phone sideways.\nUp to four phones can join. Nothing to install.";
+      return @"1. Join this Mac\u2019s Wi\u2011Fi.\n2. Scan the code with the phone\u2019s camera.\n3. Tap Join.\nUp to four phones.";
   }
   return @"";
 }

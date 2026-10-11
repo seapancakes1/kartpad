@@ -176,7 +176,7 @@ void InputReport(void *context, IOReturn result, void *sender,
     [spacer setContentHuggingPriority:NSLayoutPriorityDefaultLow
                        forOrientation:NSLayoutConstraintOrientationHorizontal];
     NSTextField *note = [NSTextField labelWithString:
-        @"This direct Bluetooth path is experimental, requires macOS 12 or later, and does not use a DolphinBar. Attach the Nunchuk after the remote connects."];
+        @"Experimental. Connect the Nunchuk after the remote."];
     note.maximumNumberOfLines = 3;
     note.lineBreakMode = NSLineBreakByWordWrapping;
     note.textColor = NSColor.tertiaryLabelColor;
@@ -212,7 +212,7 @@ void InputReport(void *context, IOReturn result, void *sender,
   _inputReceived = NO;
   _handedOff = NO;
   SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_WII, "0");
-  [self setStatus:@"Searching for an original Wii Remote or Wii Remote Plus…"
+  [self setStatus:@"Looking for a Wii Remote…"
          spinning:YES];
   [self setupHIDManager];
   _inquiry = [IOBluetoothDeviceInquiry inquiryWithDelegate:self];
@@ -263,7 +263,7 @@ void InputReport(void *context, IOReturn result, void *sender,
     return;
   }
   if (result != kIOReturnSuccess) {
-    [self setStatus:@"The remote paired, but its physical HID device could not be opened."
+    [self setStatus:@"The remote paired but didn’t connect. Try again."
            spinning:NO];
     return;
   }
@@ -277,14 +277,14 @@ void InputReport(void *context, IOReturn result, void *sender,
   IOHIDDeviceSetReport(_hidDevice, kIOHIDReportTypeOutput, 0x11, led, sizeof(led));
   IOHIDDeviceSetReport(_hidDevice, kIOHIDReportTypeOutput, 0x12, mode, sizeof(mode));
   IOHIDDeviceSetReport(_hidDevice, kIOHIDReportTypeOutput, 0x15, status, sizeof(status));
-  [self setStatus:@"Paired. Waiting for the first controller input packet…"
+  [self setStatus:@"Connecting…"
          spinning:YES];
 }
 
 - (void)inputConfirmed {
   if (_inputReceived) return;
   _inputReceived = YES;
-  [self handOffToSDL:@"Input confirmed. Handing the remote to KartPad…"];
+  [self handOffToSDL:@"Connecting…"];
 }
 
 - (void)closeHID {
@@ -325,15 +325,14 @@ void InputReport(void *context, IOReturn result, void *sender,
         @"Connected as %@. Attach the Nunchuk any time.",
         found] spinning:NO];
   } else {
-    [self setStatus:@"Pairing completed. Press A on the Wii Remote; KartPad will finish connecting through SDL."
+    [self setStatus:@"Paired. Press A on the Wii Remote."
            spinning:NO];
   }
 }
 
 - (void)preparePairedDevice:(IOBluetoothDevice *)device {
   _bluetoothDevice = device;
-  [self setStatus:[NSString stringWithFormat:@"Bluetooth paired: %@. Waiting for physical HID…",
-      device.name ?: @"Wii Remote"] spinning:YES];
+  [self setStatus:@"Paired. Connecting…" spinning:YES];
   CFSetRef devices = _hidManager != nullptr
       ? IOHIDManagerCopyDevices(_hidManager) : nullptr;
   if (devices != nullptr) {

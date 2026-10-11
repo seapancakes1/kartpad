@@ -368,9 +368,9 @@ static void KPSetupSearch(void (^progress)(NSString *place), void (^found)(KPSet
   NSString *heading = @"", *line = @"";
   switch (self.step) {
     case KPSetupWelcome:
-      heading = self.recovering ? @"Let's find your game again" : @"Welcome to KartPad";
+      heading = self.recovering ? @"Find your game" : @"Welcome to KartPad";
       line = self.recovering ? @"KartPad can't find your Mario Kart Wii files where they used to be."
-                             : @"Let's get Mario Kart Wii ready. It takes about a minute.";
+                             : @"Set up Mario Kart Wii.";
       break;
     case KPSetupFind:
       heading = @"Where's your Mario Kart Wii?";

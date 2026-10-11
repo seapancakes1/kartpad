@@ -279,7 +279,7 @@ html.turned.back { --stripeDir: to right; }
   <div class="sheet hidden" id="message"><div class="card">
     <h1 id="messageTitle"></h1><p id="messageText"></p>
     <div class="row"><button class="btn primary" id="messageButton">Try Again</button></div>
-    <button class="btn hidden" id="touchButton">Use the Touch-Only Link</button>
+    <button class="btn hidden" id="touchButton">Use Touch Controls</button>
   </div></div>
   <div class="sheet hidden" id="tiltAsk"><div class="card">
     <h1>Steer by tilting?</h1>
@@ -457,7 +457,7 @@ function onResize() {
   // Safari turned the screen during a race: rotation lock keeps it still.
   if (portrait !== wasPortrait && joined && sheet === null && tilt && layout() === "race" && !pref("lockTip", false)) {
     setPref("lockTip", true);
-    toast("Tip: turn on Rotation Lock.");
+    toast("Turn on Rotation Lock.");
   }
   wasPortrait = portrait;
   placeStage();
@@ -543,7 +543,7 @@ function connect() {
       wanted = false;
       joined = false;
       letGo();
-      message("Can’t reach KartPad", "Make sure this phone is on the same Wi‑Fi as the Mac, then scan the code in KartPad again (Controls → Add Phone Controller…).");
+      message("Can’t reach KartPad", "Join the Mac’s Wi‑Fi, then scan the code again.");
       return;
     }
     setLive(false, "Reconnecting…");
@@ -619,7 +619,7 @@ function failed(why) {
   wanted = false;
   joined = false;
   letGo();
-  message("Couldn’t connect", why + " Make sure the phone is on the same Wi‑Fi as the Mac.", "Try Again", true);
+  message("Couldn’t connect", why + " Join the Mac’s Wi‑Fi and try again.", "Try Again", true);
   prepare().catch(() => {});
 }
 // The WebRTC link went away (Wi‑Fi, a long screen lock, KartPad quit). Coming back needs a tap, since
@@ -826,7 +826,7 @@ async function setTilt(on) {
   if (on && typeof DeviceMotionEvent.requestPermission === "function") {
     let refused;
     try { refused = (await DeviceMotionEvent.requestPermission()) !== "granted"; } catch (e) { refused = true; }
-    if (refused) { on = false; toast("Motion access refused."); }
+    if (refused) { on = false; toast("Tilt is off. Motion access was denied."); }
   }
   tilt = on;
   prefs.tilt = on;
@@ -1064,11 +1064,11 @@ show("join");
 applyLayout();
 if (!mac || !key) {
   $("joinButton").classList.add("hidden");
-  $("joinNote").textContent = "Scan the QR code in KartPad on the Mac: Controls → Add Phone Controller…";
+  $("joinNote").textContent = "Scan the code in KartPad: HOME › Controllers › Connect a controller › Phone.";
 } else if (!secure) {
   ready(true);
 } else if (!window.RTCPeerConnection) {
-  message("Tilt isn’t available here", "This browser can’t make the direct link that tilt needs. The touch-only link still works.", "Try Again", true);
+  message("Tilt isn’t available here", "This browser doesn’t support tilt. Touch controls still work.", "Try Again", true);
   $("messageButton").classList.add("hidden");
 } else {
   prepare().catch((e) => { $("joinNote").textContent = "Couldn’t get ready: " + e; });

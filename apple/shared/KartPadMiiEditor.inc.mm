@@ -70,7 +70,7 @@ static NSString *KPMiiNameCount(NSString *text){return [NSString stringWithForma
 // nil when the name can be stored. An empty name is only a problem where one is required.
 static NSString *KPMiiNameProblem(NSString *text,BOOL required){
     if(!text.length)return required?@"Enter a name.":nil;
-    if(text.length>10)return @"This name is too long. Please shorten it.";
+    if(text.length>10)return @"This name is too long.";
     NSData *bytes=[text dataUsingEncoding:NSUTF16BigEndianStringEncoding];
     return bytes&&kartpad::mii::ValidateUtf16BigEndianName(Bytes(bytes))?nil:@"This name has a character a Mii can’t use.";
 }
@@ -781,7 +781,7 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
             }
             // The game snaps height + weight to one of three body models; say which one the preview shows.
             id build=KPLabelView(KPBuildName(appearance),CGRectMake(4,2*row+4,pw-8,24),17,YES);[form addSubview:build];self.editor.buildLabel=build;
-            id note=KPLabelView(@"Mario Kart Wii uses height and weight together to pick a small, medium or large Mii. This also sets its kart and bike size.",CGRectMake(4,2*row+32,pw-8,noteH),13,NO,YES);[form addSubview:note];
+            id note=KPLabelView(@"Height and weight set the Mii’s size, which sets its kart and bike size.",CGRectMake(4,2*row+32,pw-8,noteH),13,NO,YES);[form addSubview:note];
         }else{
             auto ids=kartpad::mii::FeatureIds(self.editor.feature);unsigned pages=unsigned((ids.size()+11)/12);self.editor.page=std::min(self.editor.page,std::max(1u,pages)-1);
             unsigned category=unsigned(self.editor.category);
@@ -1054,7 +1054,7 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
             auto scene=std::make_shared<kartpad::mii::PreviewScene>(kartpad::mii::PreviewScene::Build(*resource,appearance,body.get()));
             if(ticket->load()!=revision)return;
             KPMiiGPUScene *gpu=[[KPMiiGPUScene alloc]initWithScene:scene device:device];
-            NSString *previewStatus=body?nil:@"Body assets missing. Reimport game data. Head preview available.";
+            NSString *previewStatus=body?nil:@"Body missing. Import your game data again.";
             static std::weak_ptr<kartpad::mii::Resources> previous;static NSMutableDictionary *cache;
             if(previous.lock().get()!=resource.get()){cache=[NSMutableDictionary dictionary];previous=resource;}
             NSMutableDictionary *images=[NSMutableDictionary dictionary];
@@ -1118,7 +1118,7 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
 #endif
         NSMutableData *data=self.draft.mutableCopy;NSString *problem=KPMiiNameProblem(text,[field tag]==2);
         if(problem||!KPMiiSetName(data,text,[field tag])){
-            self.validationField=[field tag];self.validationMessage=problem?:@"This name is too long. Please shorten it.";[self.canvas redraw];KPPlay(KPSound::Reject);return NO;
+            self.validationField=[field tag];self.validationMessage=problem?:@"This name is too long.";[self.canvas redraw];KPPlay(KPSound::Reject);return NO;
         }
         if(![data isEqual:self.draft]){auto a=kartpad::mii::Appearance::Decode(Bytes(data));[self applyAppearance:a];}
     }self.validationMessage=nil;return YES;
@@ -1129,13 +1129,13 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
 - (void)controlTextDidChange:(NSNotification*)note{
     NSTextField *field=note.object;NSTextView *editor=(NSTextView*)field.currentEditor;if(editor.hasMarkedText)return;
     NSMutableData *data=self.draft.mutableCopy;NSUInteger before=KPMiiName(self.draft,field.tag).length;
-    if(KPMiiSetName(data,field.stringValue,field.tag)){KPPlay(field.stringValue.length<before?KPSound::Erase:KPSound::Key);[self applyAppearance:kartpad::mii::Appearance::Decode(Bytes(data))];}else{KPPlay(KPSound::Reject);self.validationField=field.tag;self.validationMessage=KPMiiNameProblem(field.stringValue,NO)?:@"This name is too long. Please shorten it.";[self.canvas redraw];}
+    if(KPMiiSetName(data,field.stringValue,field.tag)){KPPlay(field.stringValue.length<before?KPSound::Erase:KPSound::Key);[self applyAppearance:kartpad::mii::Appearance::Decode(Bytes(data))];}else{KPPlay(KPSound::Reject);self.validationField=field.tag;self.validationMessage=KPMiiNameProblem(field.stringValue,NO)?:@"This name is too long.";[self.canvas redraw];}
 }
 #else
 - (void)textFieldDidBeginEditing:(UITextField*)field{_history.Begin();}
 - (void)textFieldDidEndEditing:(UITextField*)field{[self commitNames];_history.End();}
 - (BOOL)textFieldShouldReturn:(UITextField*)field{if([self commitNames]){[field resignFirstResponder];return YES;}return NO;}
-- (void)nameChanged:(UITextField*)field{if(field.markedTextRange)return;NSMutableData *data=self.draft.mutableCopy;NSUInteger before=KPMiiName(self.draft,field.tag).length;if(KPMiiSetName(data,field.text?:@"",field.tag)){KPPlay(field.text.length<before?KPSound::Erase:KPSound::Key);[self applyAppearance:kartpad::mii::Appearance::Decode(Bytes(data))];}else{KPPlay(KPSound::Reject);self.validationField=field.tag;self.validationMessage=KPMiiNameProblem(field.text?:@"",NO)?:@"This name is too long. Please shorten it.";[self.canvas redraw];}}
+- (void)nameChanged:(UITextField*)field{if(field.markedTextRange)return;NSMutableData *data=self.draft.mutableCopy;NSUInteger before=KPMiiName(self.draft,field.tag).length;if(KPMiiSetName(data,field.text?:@"",field.tag)){KPPlay(field.text.length<before?KPSound::Erase:KPSound::Key);[self applyAppearance:kartpad::mii::Appearance::Decode(Bytes(data))];}else{KPPlay(KPSound::Reject);self.validationField=field.tag;self.validationMessage=KPMiiNameProblem(field.text?:@"",NO)?:@"This name is too long.";[self.canvas redraw];}}
 - (NSArray<UIKeyCommand*>*)keyCommands{return @[[UIKeyCommand keyCommandWithInput:@"z" modifierFlags:UIKeyModifierCommand action:@selector(undoCommand:)],[UIKeyCommand keyCommandWithInput:@"z" modifierFlags:UIKeyModifierCommand|UIKeyModifierShift action:@selector(redoCommand:)],[UIKeyCommand keyCommandWithInput:UIKeyInputEscape modifierFlags:0 action:@selector(quit)]];}
 - (void)undoCommand:(id)sender{KPItem i{};i.action=KPAction::Undo;[self performItem:i];}
 - (void)redoCommand:(id)sender{KPItem i{};i.action=KPAction::Redo;[self performItem:i];}
