@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-work=$(mktemp -d /private/tmp/kartpad-mii-tests.XXXXXX)
+work=$(mktemp -d "${TMPDIR:-/tmp}/kartpad-mii-tests.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 clang++ -O2 -std=c++20 -UNDEBUG -I "$repo/runtime/include" "$repo/runtime/tests/mii_appearance_tests.cpp" -o "$work/appearance"
 "$work/appearance"
 clang++ -O2 -std=c++20 -UNDEBUG -I "$repo/runtime/include" "$repo/runtime/tests/mii_editor_history_tests.cpp" -o "$work/history"
 "$work/history"
+clang++ -O2 -std=c++20 -UNDEBUG -I "$repo/runtime/include" "$repo/runtime/tests/mii_database_tests.cpp" -o "$work/database"
+"$work/database"
 # Sound archive reader: synthetic archives always; every editor sound from a real
 # files/sound/revo_kart.brsar when given as the third argument.
 clang++ -O2 -std=c++20 -UNDEBUG -I "$repo/runtime/include" "$repo/runtime/tests/audio_sound_archive_tests.cpp" -o "$work/sounds"
