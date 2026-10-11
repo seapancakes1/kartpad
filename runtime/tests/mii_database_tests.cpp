@@ -66,7 +66,35 @@ static void TestExportedMiiHeader() {
     assert(!kartpad::mii::ValidateMii(std::vector<uint8_t>(74, 0xFF)));
 }
 
+// The table-driven checksums match the standard check values and a bit-at-a-time reference.
+static void TestChecksums() {
+    const std::string check = "123456789";
+    const std::span<const uint8_t> digits(reinterpret_cast<const uint8_t *>(check.data()), check.size());
+    assert(kartpad::mii::Crc32(digits) == 0xCBF43926u);
+    assert(kartpad::mii::Crc16Ccitt(digits) == 0x31C3u);
+    std::vector<uint8_t> bytes(70000);
+    uint32_t seed = 1;
+    for (auto &byte : bytes) {
+        seed = seed * 1664525u + 1013904223u;
+        byte = uint8_t(seed >> 24);
+    }
+    uint32_t crc32 = 0xFFFFFFFFu;
+    uint16_t crc16 = 0;
+    for (const uint8_t byte : bytes) {
+        crc32 ^= byte;
+        crc16 ^= uint16_t(byte << 8);
+        for (int bit = 0; bit < 8; ++bit) {
+            crc32 = (crc32 & 1u) ? (crc32 >> 1) ^ 0xEDB88320u : crc32 >> 1;
+            crc16 = (crc16 & 0x8000u) ? uint16_t((crc16 << 1) ^ 0x1021u) : uint16_t(crc16 << 1);
+        }
+    }
+    assert(kartpad::mii::Crc32(bytes) == (crc32 ^ 0xFFFFFFFFu));
+    assert(kartpad::mii::Crc16Ccitt(bytes) == crc16);
+    assert(kartpad::mii::Crc32({}) == 0 && kartpad::mii::Crc16Ccitt({}) == 0);
+}
+
 int main() {
+    TestChecksums();
     TestExportedMiiHeader();
     constexpr std::array<uint8_t, 9> crcVector{
         '1', '2', '3', '4', '5', '6', '7', '8', '9'};

@@ -14,16 +14,23 @@ inline constexpr std::size_t kMiiBlockOffset = 0x04;
 inline constexpr std::size_t kMiiBlockSize = 74;
 inline constexpr std::size_t kDatabaseCrcOffset = 0x1F1DE;
 
+// CRC-16/CCITT (polynomial 0x1021, initial 0) a byte at a time from a table.
+inline constexpr std::array<uint16_t, 256> kCrc16Table = [] {
+    std::array<uint16_t, 256> table{};
+    for (unsigned i = 0; i < 256; ++i) {
+        uint16_t crc = static_cast<uint16_t>(i << 8);
+        for (int bit = 0; bit < 8; ++bit)
+            crc = (crc & 0x8000u) != 0 ? static_cast<uint16_t>((crc << 1) ^ 0x1021u)
+                                       : static_cast<uint16_t>(crc << 1);
+        table[i] = crc;
+    }
+    return table;
+}();
+
 inline uint16_t Crc16Ccitt(std::span<const uint8_t> bytes) {
     uint16_t crc = 0;
-    for (const uint8_t byte : bytes) {
-        crc ^= static_cast<uint16_t>(byte) << 8;
-        for (int bit = 0; bit < 8; ++bit) {
-            crc = (crc & 0x8000u) != 0
-                ? static_cast<uint16_t>((crc << 1) ^ 0x1021u)
-                : static_cast<uint16_t>(crc << 1);
-        }
-    }
+    for (const uint8_t byte : bytes)
+        crc = static_cast<uint16_t>((crc << 8) ^ kCrc16Table[((crc >> 8) ^ byte) & 0xFFu]);
     return crc;
 }
 

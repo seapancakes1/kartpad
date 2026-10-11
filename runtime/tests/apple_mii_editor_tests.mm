@@ -204,6 +204,19 @@ int main() {
         assert(KartPadStagePlayerName(0, @" Ann", nullptr, &error));
         assert(ReadMiiName(Vector(KartPadReadMii(0, &error)), 2) == "Ann");
         assert(KartPadDiscardPendingMiiChanges(&error));
+        // Reads reuse the replayed queue only while the files are unchanged: a rename written in
+        // place (the file kept, as the game writes its files) shows straight away.
+        assert([KartPadMiiRecords(&error)[0][@"name"] isEqual:@"KartPad"]);
+        auto outside = db;
+        std::array<uint8_t, 20> outsideName{};
+        WriteMiiName(outsideName, 0, "Outside");
+        assert(RenameMii(outside, 0, std::span(outsideName).first(14)));
+        NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:dbpath];
+        [handle writeData:Data(outside)];
+        [handle closeFile];
+        assert([KartPadMiiRecords(&error)[0][@"name"] isEqual:@"Outside"]);
+        assert(ReadMiiName(Vector(KartPadReadMii(0, &error)), 2) == "Outside");
+        Write(dbpath, Data(db));
         // A stored Mii with a field out of range opens as it is, an edit to another field keeps it,
         // and a duplicate (a new Mii) takes the in-range value.
         auto odd = Appearance::Decode(std::span(db).subspan(kMiiBlockOffset, 74));

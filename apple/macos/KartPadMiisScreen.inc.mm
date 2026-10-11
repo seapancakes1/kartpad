@@ -39,7 +39,9 @@
 }
 - (void)willDisappear { [self.browser willClose]; }
 - (void)tick {
-  // An editor that closed (saved) leaves changes to show.
+  // An editor that closed (saved) leaves changes to show, and the game can write its saves. A
+  // reload that finds nothing changed costs well under a millisecond: the manager keeps the
+  // replayed queue until a file changes, and the screen redraws only when something did.
   static NSTimeInterval last;
   const NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
   if (now - last < 1) return;

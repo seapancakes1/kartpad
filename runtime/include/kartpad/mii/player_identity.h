@@ -24,16 +24,22 @@ struct LicenseRecord {
     std::array<uint8_t, kCreateIdByteSize> createId{};
 };
 
+// CRC-32 (reflected, polynomial 0xEDB88320) a byte at a time from a table.
+inline constexpr std::array<uint32_t, 256> kCrc32Table = [] {
+    std::array<uint32_t, 256> table{};
+    for (uint32_t i = 0; i < 256; ++i) {
+        uint32_t crc = i;
+        for (int bit = 0; bit < 8; ++bit)
+            crc = (crc & 1u) != 0 ? (crc >> 1) ^ 0xEDB88320u : crc >> 1;
+        table[i] = crc;
+    }
+    return table;
+}();
+
 inline uint32_t Crc32(std::span<const uint8_t> bytes) {
     uint32_t crc = 0xFFFFFFFFu;
-    for (const uint8_t byte : bytes) {
-        crc ^= byte;
-        for (int bit = 0; bit < 8; ++bit) {
-            crc = (crc & 1u) != 0
-                ? (crc >> 1) ^ 0xEDB88320u
-                : crc >> 1;
-        }
-    }
+    for (const uint8_t byte : bytes)
+        crc = (crc >> 8) ^ kCrc32Table[(crc ^ byte) & 0xFFu];
     return crc ^ 0xFFFFFFFFu;
 }
 

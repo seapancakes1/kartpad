@@ -15,7 +15,10 @@
 
 #include <span>
 #include <cstdlib>
+#include <memory>
+#include <mutex>
 #include <vector>
+#include <sys/stat.h>
 
 NSString *const KartPadMiiManagerErrorDomain = @"dev.kartpad.mii-manager";
 
@@ -225,6 +228,13 @@ struct Workspace {
   }
   void Write(NSString *path, const std::vector<uint8_t>& bytes) {
     current[path] = [NSData dataWithBytes:bytes.data() length:bytes.size()];
+  }
+  // The files' data is never changed in place, so a copy shares it.
+  Workspace Copy() const {
+    Workspace copy;
+    copy.original = [original mutableCopy];
+    copy.current = [current mutableCopy];
+    return copy;
   }
 };
 
@@ -480,14 +490,22 @@ BOOL ApplyChange(Workspace& files, id value, NSError **error) {
   return NO;
 }
 
-// The queued changes, empty when none are waiting; nil only when the queue can't be read.
-NSArray *ReadQueue(NSError **error) {
+// The queue file's contents; nil when there is none (*missing) or it can't be read.
+NSData *ReadQueueData(BOOL *missing, NSError **error) {
   NSFileManager *files = NSFileManager.defaultManager;
-  if (![files fileExistsAtPath:QueuePath()]) return @[];
+  *missing = ![files fileExistsAtPath:QueuePath()];
+  if (*missing) return nil;
   NSDictionary *attributes = [files attributesOfItemAtPath:QueuePath() error:error];
   if (attributes == nil) return nil;
-  NSData *data = attributes.fileSize <= 4 * 1024 * 1024
+  return attributes.fileSize <= 4 * 1024 * 1024
       ? [NSData dataWithContentsOfFile:QueuePath() options:0 error:error] : nil;
+}
+
+// The queued changes, empty when none are waiting; nil only when the queue can't be read.
+NSArray *ReadQueue(NSError **error) {
+  BOOL missing = NO;
+  NSData *data = ReadQueueData(&missing, error);
+  if (missing) return @[];
   NSArray *queue = data ? Value<NSArray>([NSPropertyListSerialization
       propertyListWithData:data options:NSPropertyListImmutable format:nil error:error]) : nil;
   if (queue == nil && error != nullptr && *error == nil) {
@@ -512,33 +530,175 @@ BOOL LoadOlderPendingDatabase(Workspace& files, NSError **error) {
   return YES;
 }
 
-// The files as they will be after the next launch, for reading.
-BOOL LoadUpcoming(Workspace& files, NSError **error) {
-  NSArray *queue = LoadOlderPendingDatabase(files, error) ? ReadQueue(error) : nil;
-  return queue != nil && Replay(files, queue, error);
+// A file's identity and version (device, inode, size and change times), or that it's missing.
+NSString *Stamp(NSString *path) {
+  struct stat info {};
+  if (stat(path.fileSystemRepresentation, &info) != 0) return [path stringByAppendingString:@"|-"];
+  return [NSString stringWithFormat:@"%@|%llu|%llu|%lld|%ld.%09ld|%ld.%09ld", path,
+      (unsigned long long)info.st_dev, (unsigned long long)info.st_ino, (long long)info.st_size,
+      (long)info.st_mtimespec.tv_sec, (long)info.st_mtimespec.tv_nsec,
+      (long)info.st_ctimespec.tv_sec, (long)info.st_ctimespec.tv_nsec];
 }
 
-// The queue to add a change to, replayed into files. Nothing is queued while an older kind of
+NSString *LicenseKey(NSString *profile, NSUInteger slot) {
+  return [NSString stringWithFormat:@"%@/%lu", profile, (unsigned long)slot];
+}
+
+// The files as they will be after the next launch: the queue replayed over the live files, and
+// which licenses the queued changes touch. Every Miis screen refresh reads this, and a replay
+// copies the saves and checks their checksums for each change, so it is kept for the queue and the
+// files it came from (key) and rebuilt only when one of them changes. Staging a change applies just
+// that change on top. Launch (ApplyQueue) still replays over freshly read files.
+struct Upcoming {
+  NSArray *key = nil;  // The queue's contents, then every file's Stamp.
+  NSArray *queue = nil;  // nil when the queue can't be read.
+  Workspace files;
+  NSMutableDictionary<NSString *, NSString *> *operations = [NSMutableDictionary dictionary];
+  NSMutableDictionary<NSString *, NSDictionary *> *deleted = [NSMutableDictionary dictionary];
+  NSError *error = nil;  // Why the queue can't be read or replayed.
+  // KartPadMiiRecords and KartPadLicenseRecords, built on first use.
+  NSArray *miis = nil, *licenses = nil;
+  NSError *miiError = nil, *licenseError = nil;
+  std::shared_ptr<Upcoming> Copy() const {
+    auto copy = std::make_shared<Upcoming>();
+    copy->key = key;
+    copy->queue = queue;
+    copy->files = files.Copy();
+    copy->operations = [operations mutableCopy];
+    copy->deleted = [deleted mutableCopy];
+    return copy;
+  }
+};
+
+NSArray *UpcomingKey() {
+  BOOL missing = NO;
+  NSData *queue = ReadQueueData(&missing, nullptr);
+  NSMutableArray *key = [NSMutableArray arrayWithObject:queue ?: Stamp(QueuePath())];
+  NSMutableArray<NSString *> *paths = [NSMutableArray arrayWithObjects:DatabasePath(), PendingPath(),
+      PendingIdentityPath(), PendingLicensePath(), nil];
+  for (NSDictionary<NSString *, NSString *> *location in SaveLocations())
+    [paths addObject:location[@"path"]];
+  for (NSString *path in paths)
+    [key addObject:Stamp(path)];
+  return key;
+}
+
+// Notes the licenses a change renames, relinks or deletes (as the saves are before it), then
+// applies it.
+BOOL Step(Upcoming& upcoming, id entry, NSError **error) {
+  NSDictionary *change = Value<NSDictionary>(entry);
+  NSString *kind = Value<NSString>(change[@"kind"]);
+  NSData *createId = Value<NSData>(change[@"createId"]);
+  if ([kind isEqualToString:@"name"] || [kind isEqualToString:@"license"]) {
+    for (NSDictionary<NSString *, NSString *> *location in SaveLocations()) {
+      BOOL missing = NO;
+      NSData *save = WorkspaceSave(upcoming.files, location[@"path"], &missing, nullptr);
+      for (const auto& record : kartpad::mii::ListLicenses(Bytes(save))) {
+        NSData *recordId = [NSData dataWithBytes:record.createId.data() length:record.createId.size()];
+        NSString *profile = location[@"identifier"], *key = LicenseKey(profile, record.slot);
+        if ([kind isEqualToString:@"name"] && [recordId isEqual:createId]) {
+          upcoming.operations[key] = @"rename";
+        } else if ([kind isEqualToString:@"license"] && [change[@"profileIdentifier"] isEqual:profile] &&
+                   [change[@"slot"] isEqual:@(record.slot)]) {
+          NSString *operation = Value<NSString>(change[@"operation"]);
+          if (operation) upcoming.operations[key] = operation;
+          if ([operation isEqualToString:@"delete"])
+            upcoming.deleted[key] = @{
+              @"name": [NSString stringWithUTF8String:record.name.c_str()],
+              @"createId": recordId,
+            };
+        }
+      }
+    }
+  }
+  return ApplyChange(upcoming.files, entry, error);
+}
+
+std::shared_ptr<Upcoming> BuildUpcoming(NSArray *key) {
+  auto upcoming = std::make_shared<Upcoming>();
+  upcoming->key = key;
+  NSError *error = nil;
+  if (!LoadOlderPendingDatabase(upcoming->files, &error) || !(upcoming->queue = ReadQueue(&error))) {
+    upcoming->error = error;
+    return upcoming;
+  }
+  // Read now, so the files match their stamps; one that can't be read fails where it's needed.
+  (void)upcoming->files.Load(DatabasePath(), nullptr);
+  for (NSDictionary<NSString *, NSString *> *location in SaveLocations())
+    (void)upcoming->files.Load(location[@"path"], nullptr);
+  for (id change in upcoming->queue) {
+    if (!Step(*upcoming, change, &error)) {
+      upcoming->error = error;
+      break;
+    }
+  }
+  return upcoming;
+}
+
+// Guards the kept upcoming files; readers share them and never change them.
+std::mutex& UpcomingLock() {
+  static std::mutex lock;
+  return lock;
+}
+std::shared_ptr<Upcoming>& KeptUpcoming() {
+  static std::shared_ptr<Upcoming> upcoming;
+  return upcoming;
+}
+
+// The upcoming files for the files as they are now.
+std::shared_ptr<Upcoming> CurrentUpcoming() {
+  NSArray *key = UpcomingKey();
+  std::lock_guard<std::mutex> lock(UpcomingLock());
+  auto& kept = KeptUpcoming();
+  if (!kept || ![kept->key isEqual:key]) kept = BuildUpcoming(key);
+  return kept;
+}
+
+// The database as the queue leaves it, for reading; nil with the reason when it can't be read.
+NSData *UpcomingDatabase(const Upcoming& upcoming, NSError **error) {
+  if (upcoming.error != nil) {
+    if (error != nullptr) *error = upcoming.error;
+    return nil;
+  }
+  Workspace files = upcoming.files.Copy();
+  return WorkspaceDatabase(files, error);
+}
+
+// A copy of the upcoming files to add a change to. Nothing is queued while an older kind of
 // pending change waits.
-NSArray *StagingQueue(Workspace& files, NSError **error) {
+std::shared_ptr<Upcoming> StagingQueue(NSError **error) {
   if (OtherChangesPending()) {
     if (error != nullptr) *error = ManagerError(13,
         "Restart KartPad to apply the pending data change first.");
-    return nil;
+    return nullptr;
   }
-  NSArray *queue = ReadQueue(error);
-  return queue != nil && Replay(files, queue, error) ? queue : nil;
+  auto upcoming = CurrentUpcoming();
+  if (upcoming->error != nil) {
+    if (error != nullptr) *error = upcoming->error;
+    return nullptr;
+  }
+  return upcoming->Copy();
 }
 
-BOOL QueueChange(NSArray *queue, Workspace& files, NSDictionary *change, NSError **error) {
-  if (!ApplyChange(files, change, error)) return NO;
-  NSData *data = [NSPropertyListSerialization dataWithPropertyList:[queue arrayByAddingObject:change]
+// Applies the change on top of the staging copy, writes the queue, and keeps the result.
+BOOL QueueChange(const std::shared_ptr<Upcoming>& next, NSDictionary *change, NSError **error) {
+  if (!Step(*next, change, error)) return NO;
+  NSArray *queue = [next->queue arrayByAddingObject:change];
+  NSData *data = [NSPropertyListSerialization dataWithPropertyList:queue
                                                             format:NSPropertyListBinaryFormat_v1_0
                                                            options:0 error:error];
-  return data != nil &&
-         [NSFileManager.defaultManager createDirectoryAtPath:SupportRoot()
-                                 withIntermediateDirectories:YES attributes:nil error:error] &&
-         [data writeToFile:QueuePath() options:NSDataWritingAtomic error:error];
+  if (data == nil ||
+      ![NSFileManager.defaultManager createDirectoryAtPath:SupportRoot()
+                               withIntermediateDirectories:YES attributes:nil error:error] ||
+      ![data writeToFile:QueuePath() options:NSDataWritingAtomic error:error])
+    return NO;
+  next->queue = queue;
+  NSMutableArray *key = [next->key mutableCopy];
+  key[0] = data;
+  next->key = key;
+  std::lock_guard<std::mutex> lock(UpcomingLock());
+  KeptUpcoming() = next;
+  return YES;
 }
 
 NSData *IdentityData(NSData *database, NSUInteger slot) {
@@ -549,8 +709,7 @@ NSData *IdentityData(NSData *database, NSUInteger slot) {
 } // namespace
 
 NSData *KartPadReadMii(NSUInteger slot, NSError **error) {
-  Workspace files;
-  NSData *data = LoadUpcoming(files, error) ? WorkspaceDatabase(files, error) : nil;
+  NSData *data = UpcomingDatabase(*CurrentUpcoming(), error);
   if (!data)
     return nil;
   if (slot >= kartpad::mii::kMaximumMiiSlots) {
@@ -569,8 +728,7 @@ NSData *KartPadReadMii(NSUInteger slot, NSError **error) {
   return [NSData dataWithBytes:block.data() length:block.size()];
 }
 NSData *KartPadNewMii(NSError **error) {
-  Workspace files;
-  NSData *data = LoadUpcoming(files, error) ? WorkspaceDatabase(files, error) : nil;
+  NSData *data = UpcomingDatabase(*CurrentUpcoming(), error);
   if (!data)
     return nil;
   try {
@@ -624,13 +782,12 @@ static NSData *NormalizedMii(NSData *mii, NSError **error) {
 BOOL KartPadStageMiiEditor(NSUInteger slot, NSData *expected, NSData *edited, NSError **error) {
   edited = NormalizedMii(edited, error);
   if (edited == nil) return NO;
-  Workspace files;
-  NSArray *queue = StagingQueue(files, error);
-  if (!queue)
+  auto next = StagingQueue(error);
+  if (!next)
     return NO;
   NSDictionary *change = expected ? @{@"kind" : @"mii", @"slot" : @(slot), @"expected" : expected, @"mii" : edited}
                                   : @{@"kind" : @"mii", @"mii" : edited};
-  return QueueChange(queue, files, change, error);
+  return QueueChange(next, change, error);
 }
 // Writes each change's new contents over its file, backing the old file up first. The changes are
 // journaled before any file is written, so an interrupted commit finishes on the next launch (see
@@ -740,9 +897,8 @@ static BOOL ApplyQueue(NSError **error) {
   }
   return CommitChanges(records, @[ QueuePath() ], NO, error);
 }
-NSArray<NSDictionary<NSString *, id> *> *KartPadMiiRecords(NSError **error) {
-  Workspace files;
-  NSData *data = LoadUpcoming(files, error) ? WorkspaceDatabase(files, error) : nil;
+static NSArray *MiiRecords(const Upcoming& upcoming, NSError **error) {
+  NSData *data = UpcomingDatabase(upcoming, error);
   if (data == nil) return @[];
 
   NSMutableArray<NSDictionary<NSString *, id> *> *result = [NSMutableArray array];
@@ -762,50 +918,35 @@ NSArray<NSDictionary<NSString *, id> *> *KartPadMiiRecords(NSError **error) {
       @"mii": [NSData dataWithBytes:block.data() length:block.size()],
     }];
   }
-  return result;
+  return result.copy;
+}
+
+// Built once for each state of the queue and files (see Upcoming).
+NSArray<NSDictionary<NSString *, id> *> *KartPadMiiRecords(NSError **error) {
+  auto upcoming = CurrentUpcoming();
+  std::lock_guard<std::mutex> lock(UpcomingLock());
+  if (upcoming->miis == nil) {
+    NSError *failure = nil;
+    upcoming->miis = MiiRecords(*upcoming, &failure);
+    upcoming->miiError = failure;
+  }
+  if (error != nullptr && upcoming->miiError != nil) *error = upcoming->miiError;
+  return upcoming->miis;
 }
 
 // Licenses as they will be after the next launch. Each one a queued change touches carries that
 // change as pendingOperation, and a license queued for deletion is still listed so it can say so.
-NSArray<NSDictionary<NSString *, id> *> *KartPadLicenseRecords(NSError **error) {
+static NSArray *LicenseRecords(const Upcoming& upcoming, NSError **error) {
   NSMutableArray<NSDictionary<NSString *, id> *> *result = [NSMutableArray array];
   NSDictionary *identity = [NSDictionary dictionaryWithContentsOfFile:PendingIdentityPath()];
   NSDictionary *license = [NSDictionary dictionaryWithContentsOfFile:PendingLicensePath()];
-  NSArray *queue = ReadQueue(error);
-  if (queue == nil) return @[];
-  Workspace files;
-  if (!LoadOlderPendingDatabase(files, error)) return @[];
-  NSMutableDictionary<NSString *, NSString *> *operations = [NSMutableDictionary dictionary];
-  NSMutableDictionary<NSString *, NSDictionary *> *deleted = [NSMutableDictionary dictionary];
-  auto key = [](NSString *profile, NSUInteger slot) {
-    return [NSString stringWithFormat:@"%@/%lu", profile, (unsigned long)slot];
-  };
-  for (id entry in queue) {
-    NSDictionary *change = Value<NSDictionary>(entry);
-    NSString *kind = Value<NSString>(change[@"kind"]);
-    NSData *createId = Value<NSData>(change[@"createId"]);
-    for (NSDictionary<NSString *, NSString *> *location in SaveLocations()) {
-      BOOL missing = NO;
-      NSData *save = WorkspaceSave(files, location[@"path"], &missing, nullptr);
-      for (const auto& record : kartpad::mii::ListLicenses(Bytes(save))) {
-        NSData *recordId = [NSData dataWithBytes:record.createId.data() length:record.createId.size()];
-        NSString *profile = location[@"identifier"];
-        if ([kind isEqualToString:@"name"] && [recordId isEqual:createId]) {
-          operations[key(profile, record.slot)] = @"rename";
-        } else if ([kind isEqualToString:@"license"] && [change[@"profileIdentifier"] isEqual:profile] &&
-                   [change[@"slot"] isEqual:@(record.slot)]) {
-          NSString *operation = Value<NSString>(change[@"operation"]);
-          if (operation) operations[key(profile, record.slot)] = operation;
-          if ([operation isEqualToString:@"delete"])
-            deleted[key(profile, record.slot)] = @{
-              @"name": [NSString stringWithUTF8String:record.name.c_str()],
-              @"createId": recordId,
-            };
-        }
-      }
-    }
-    if (!ApplyChange(files, entry, error)) return @[];
+  if (upcoming.error != nil) {
+    if (error != nullptr) *error = upcoming.error;
+    return @[];
   }
+  Workspace files = upcoming.files.Copy();
+  NSDictionary<NSString *, NSString *> *operations = upcoming.operations;
+  NSDictionary<NSString *, NSDictionary *> *deleted = upcoming.deleted;
   NSData *databaseData = WorkspaceDatabase(files, nullptr);
   const auto databaseBytes = Bytes(databaseData);
   const auto miis = kartpad::mii::ListMiis(databaseBytes);
@@ -816,7 +957,7 @@ NSArray<NSDictionary<NSString *, id> *> *KartPadLicenseRecords(NSError **error) 
     if (saveData == nil) return @[];
     const auto records = kartpad::mii::ListLicenses(Bytes(saveData));
     for (NSUInteger slot = 0; slot < kartpad::mii::kRksysLicenseCount; slot++) {
-      NSString *slotKey = key(location[@"identifier"], slot);
+      NSString *slotKey = LicenseKey(location[@"identifier"], slot);
       const auto record = std::find_if(records.begin(), records.end(),
                                        [&](const auto& r) { return r.slot == slot; });
       NSString *name = nil;
@@ -863,13 +1004,26 @@ NSArray<NSDictionary<NSString *, id> *> *KartPadLicenseRecords(NSError **error) 
       }];
     }
   }
-  return result;
+  return result.copy;
 }
 
+// Built once for each state of the queue and files (see Upcoming).
+NSArray<NSDictionary<NSString *, id> *> *KartPadLicenseRecords(NSError **error) {
+  auto upcoming = CurrentUpcoming();
+  std::lock_guard<std::mutex> lock(UpcomingLock());
+  if (upcoming->licenses == nil) {
+    NSError *failure = nil;
+    upcoming->licenses = LicenseRecords(*upcoming, &failure);
+    upcoming->licenseError = failure;
+  }
+  if (error != nullptr && upcoming->licenseError != nil) *error = upcoming->licenseError;
+  return upcoming->licenses;
+}
+
+
 BOOL KartPadStageMiiImport(NSData *miiData, NSString **name, NSError **error) {
-  Workspace files;
-  NSArray *queue = StagingQueue(files, error);
-  if (queue == nil || !QueueChange(queue, files, @{@"kind": @"mii", @"mii": miiData}, error)) return NO;
+  auto next = StagingQueue(error);
+  if (!next || !QueueChange(next, @{@"kind": @"mii", @"mii": miiData}, error)) return NO;
   if (name != nullptr) {
     const std::string decoded = kartpad::mii::ReadMiiName(Bytes(miiData), 0x02);
     *name = [NSString stringWithUTF8String:decoded.c_str()];
@@ -878,11 +1032,10 @@ BOOL KartPadStageMiiImport(NSData *miiData, NSString **name, NSError **error) {
 }
 
 BOOL KartPadStageMiiRemoval(NSUInteger slot, NSError **error) {
-  Workspace files;
-  NSArray *queue = StagingQueue(files, error);
-  NSData *database = queue ? WorkspaceDatabase(files, error) : nil;
+  auto next = StagingQueue(error);
+  NSData *database = next ? WorkspaceDatabase(next->files, error) : nil;
   if (database == nil) return NO;
-  return QueueChange(queue, files, @{
+  return QueueChange(next, @{
     @"kind": @"remove", @"slot": @(slot), @"createId": IdentityData(database, slot),
   }, error);
 }
@@ -892,16 +1045,15 @@ BOOL KartPadStagePlayerName(NSUInteger slot, NSString *name,
   if (updatedLicenses != nullptr) *updatedLicenses = 0;
   NSData *nameData = PlayerNameData(name, error);
   if (nameData == nil) return NO;
-  Workspace files;
-  NSArray *queue = StagingQueue(files, error);
-  NSData *database = queue ? WorkspaceDatabase(files, error) : nil;
+  auto next = StagingQueue(error);
+  NSData *database = next ? WorkspaceDatabase(next->files, error) : nil;
   if (database == nil) return NO;
   if (slot >= kartpad::mii::kMaximumMiiSlots) {
     if (error != nullptr) *error = ManagerError(8, "The selected Mii slot is invalid.");
     return NO;
   }
-  const std::size_t linked = LinkedLicenseCount(files, kartpad::mii::MiiCreateId(Bytes(database), slot));
-  if (!QueueChange(queue, files, @{
+  const std::size_t linked = LinkedLicenseCount(next->files, kartpad::mii::MiiCreateId(Bytes(database), slot));
+  if (!QueueChange(next, @{
         @"kind": @"name", @"slot": @(slot), @"createId": IdentityData(database, slot), @"name": nameData,
       }, error)) return NO;
   if (updatedLicenses != nullptr) *updatedLicenses = linked;
@@ -941,9 +1093,8 @@ static BOOL KartPadStageLicenseChange(NSString *profileIdentifier,
     change[@"miiSlot"] = @(selectedSlot);
     change[@"miiCreateId"] = selectedId;
   }
-  Workspace files;
-  NSArray *queue = StagingQueue(files, error);
-  return queue != nil && QueueChange(queue, files, change, error);
+  auto next = StagingQueue(error);
+  return next && QueueChange(next, change, error);
 }
 
 BOOL KartPadStageLicenseRename(NSString *profileIdentifier, NSUInteger slot,
