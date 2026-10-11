@@ -277,13 +277,16 @@ struct PadState {
 // Binary messages from the phone. State: {type, seq, buttons (LE16), x, y,
 // reserved (LE16)}, sent when anything changes and every 50 ms. Leave: {type}.
 // Ping: {type, id (LE16)}, sent back unchanged so the phone can time the link.
-enum MessageType : uint8_t { StateMessage = 1, LeaveMessage = 2, PingMessage = 3 };
-inline constexpr size_t StateMessageSize = 8, PingMessageSize = 3;
+// Delay: {type, milliseconds (LE16)}, the round trip the phone has been timing,
+// for the Mac's list of phones.
+enum MessageType : uint8_t { StateMessage = 1, LeaveMessage = 2, PingMessage = 3, DelayMessage = 4 };
+inline constexpr size_t StateMessageSize = 8, PingMessageSize = 3, DelayMessageSize = 3;
 
 struct Message {
   MessageType type = StateMessage;
   uint8_t seq = 0;
   PadState state;
+  uint16_t delayMs = 0;
 };
 
 inline bool DecodeMessage(std::string_view payload, Message &out) {
@@ -293,12 +296,16 @@ inline bool DecodeMessage(std::string_view payload, Message &out) {
     out = {LeaveMessage, 0, {}};
     return true;
   }
+  const auto byte = [&](size_t i) { return static_cast<uint8_t>(payload[i]); };
   if (type == PingMessage && payload.size() == PingMessageSize) {
     out = {PingMessage, 0, {}};
     return true;
   }
+  if (type == DelayMessage && payload.size() == DelayMessageSize) {
+    out = {DelayMessage, 0, {}, static_cast<uint16_t>(byte(1) | (byte(2) << 8))};
+    return true;
+  }
   if (type != StateMessage || payload.size() != StateMessageSize) return false;
-  const auto byte = [&](size_t i) { return static_cast<uint8_t>(payload[i]); };
   out.type = StateMessage;
   out.seq = byte(1);
   out.state.buttons = static_cast<uint16_t>((byte(2) | (byte(3) << 8)) & KnownButtons);
@@ -405,8 +412,19 @@ inline std::string ColorMessage(uint8_t r, uint8_t g, uint8_t b) {
   return std::string("{\"t\":\"color\",\"rgb\":\"") + hex + "\"}";
 }
 inline std::string RumbleMessage(bool on) { return std::string("{\"t\":\"rumble\",\"on\":") + (on ? "true" : "false") + "}"; }
+// What the phone's player is doing, so the page shows the controls for it: the
+// menus (also a paused race, or a race that player has finished), the start (the
+// course intro and the countdown, where accelerating is up to the player, for a
+// rocket start), or the race. Unknown: KartPad can't tell (the page offers a switch).
+// Fall: off the course and back with Lakitu, until just after landing, where
+// accelerating is up to the player again, for his boost.
+enum class RaceView : uint8_t { Menus, Start, Race, Unknown, Fall };
+inline constexpr const char *RaceViewNames[] = {"menus", "start", "race", "unknown", "fall"};
+inline std::string RaceMessage(RaceView view) {
+  return std::string("{\"t\":\"race\",\"view\":\"") + RaceViewNames[static_cast<int>(view)] + "\"}";
+}
 // Why a phone is sent away: "full", "replaced" (the same phone connected
-// again), "left", "expired" or "closed" (KartPad is quitting).
+// again), "left", "removed" (from the Mac), "expired" or "closed" (KartPad is quitting).
 inline std::string ByeMessage(std::string_view reason) { return "{\"t\":\"bye\",\"reason\":\"" + std::string(reason) + "\"}"; }
 
 // ---- Phone sessions ----
@@ -423,6 +441,7 @@ struct Session {
   std::string token;
   uint64_t lastMessage = 0, disconnectedAt = 0;
   PadState state;
+  uint16_t delayMs = 0;  // as the phone last reported it; 0 before its first report
 };
 
 // Up to four phones, by index: phone i is shown as "Phone i+1" and keeps its
@@ -483,6 +502,8 @@ class Sessions {
   }
 
   void Leave(int index) { sessions_[index] = {}; }
+
+  void Delay(int index, uint16_t ms) { sessions_[index].delayMs = ms; }
 
   struct Changes {
     std::vector<int> idle;     // let go of this pad's input

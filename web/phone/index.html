@@ -5,170 +5,562 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="theme-color" content="#15171d">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f2f4f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#15181b" media="(prefers-color-scheme: dark)">
 <meta name="robots" content="noindex">
 <title>KartPad Controller</title>
 <!--
-  KartPad's phone controller with tilt steering, published over HTTPS (GitHub Pages) because
-  browsers only give pages served that way the phone's motion. The QR code on the Mac opens it
-  with the Mac's address and this launch's key after the # (never sent to the page's host).
-  Joining opens the Mac's helper page in a second tab, which swaps WebRTC details with KartPad
-  (apple/macos/KartPadPhoneControllers.inc.mm) and closes; input then goes straight to the Mac
-  over a data channel. Messages are those of runtime/include/kartpad/network/phone_pad.h.
-  The touch-only page the Mac serves itself is apple/macos/KartPadPhonePage.inc.mm.
+  KartPad's phone controller. One page, two ways in:
+  - Over HTTPS (GitHub Pages), where browsers give a page the phone's motion, so it can steer by
+    tilting. The QR code on the Mac opens it with the Mac's address and this launch's key after the #
+    (never sent to the page's host). Joining opens the Mac's helper page in a second tab, which swaps
+    WebRTC details with KartPad (apple/macos/KartPadPhoneControllers.inc.mm) and closes; input then
+    goes straight to the Mac over a data channel.
+  - From the Mac itself (built into the app, and served at its own address with the key after the #),
+    touch only, over a WebSocket.
+  Messages are those of runtime/include/kartpad/network/phone_pad.h. KartPad also says what the
+  player is doing (the menus, the start of a race, the race, a fall), and the page shows the controls
+  for it: a D-pad in the menus; in a race, Drift under the right thumb and Item on the left, with a
+  stick or tilt steering. In a race it accelerates by itself from GO; the start and a fall are the
+  player's, for a rocket start or Lakitu's boost. The look follows KartPad's
+  (apple/shared/KartPadStyle.h).
 -->
 <style>
-:root { --accent: #8a8f9c; --bg: #15171d; --key: #262a33; --keyDown: #3a404c; --text: #f2f3f5; --dim: #9aa0ab; }
+:root {
+  --bg: #f2f4f5; --stripe: #e8ecee; --panel: #fbfcfc; --panelStroke: #c9d1d6; --well: #e6ecef;
+  --btnTop: #ffffff; --btnBottom: #dfe5e8; --btnStroke: #b3bdc3; --ledge: #b0bbc1;
+  --selTop: #ebf8fe; --selBottom: #bde8fa;
+  --accTop: #5ccbf3; --accBottom: #1b9ad5; --accStroke: #1784bc; --accLedge: #14709f;
+  --text: #3a4348; --dim: #6a747a; --icon: #5a646a; --off: #c3cbd0; --gloss: .9; --shadow: .2;
+  --live: #30b85c; --dead: #d0342c; --player: #6a747a;
+  --u: 3.9px; --W: 844px; --sl: 0px; --sr: 0px; --st: 0px; --sb: 0px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #15181b; --stripe: #191d20; --panel: #22272b; --panelStroke: #363d43; --well: #191d21;
+    --btnTop: #3c4349; --btnBottom: #2a3035; --btnStroke: #4c555c; --ledge: #0c0e10;
+    --selTop: #1f4b5f; --selBottom: #163748;
+    --accTop: #4cc6f2; --accBottom: #168ac4; --accStroke: #63d0f5; --accLedge: #0d5880;
+    --text: #e6ebee; --dim: #9aa5ab; --icon: #c3cbd0; --off: #4a535a; --gloss: .13; --shadow: .55;
+    --dead: #ff6b5e; --player: #9aa5ab;
+  }
+}
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-html, body { position: fixed; inset: 0; margin: 0; overflow: hidden; background: var(--bg); color: var(--text);
-  font: 600 16px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+html, body { position: fixed; inset: 0; margin: 0; overflow: hidden; color: var(--text);
+  font: 600 16px/1.2 ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", Roboto, sans-serif;
   touch-action: none; overscroll-behavior: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
-#pad { position: absolute; inset: 0; }
-.key { position: absolute; display: flex; align-items: center; justify-content: center; border-radius: 50%;
-  background: var(--key); border: 2px solid rgba(255,255,255,.08); color: var(--text); letter-spacing: .04em; }
-.key.down { background: var(--keyDown); transform: scale(.94); }
-.key small { font-size: 11px; color: var(--dim); display: block; text-align: center; }
-#a { width: 34vmin; height: 34vmin; right: calc(4vw + env(safe-area-inset-right)); bottom: 8vh; font-size: 13vmin;
-  background: var(--accent); color: #111; border-color: rgba(0,0,0,.15); }
-#a.down { filter: brightness(.82); }
-#a.locked { background: #3ad0e6; box-shadow: 0 0 0 4px rgba(58,208,230,.35); }
-#r { width: 26vmin; height: 26vmin; right: calc(4vw + 38vmin + env(safe-area-inset-right)); bottom: 6vh; border-radius: 30%; font-size: 4.2vmin; }
-#l { width: 22vmin; height: 22vmin; right: calc(4vw + 6vmin + env(safe-area-inset-right)); bottom: calc(8vh + 38vmin); font-size: 4.2vmin; }
-#b { width: 17vmin; height: 17vmin; right: calc(4vw + 42vmin + env(safe-area-inset-right)); bottom: calc(6vh + 30vmin); font-size: 7vmin; }
-#up { width: 14vmin; height: 14vmin; right: calc(4vw + 44vmin + env(safe-area-inset-right)); bottom: calc(6vh + 50vmin); border-radius: 30%; font-size: 3.4vmin; }
-.top { top: calc(3vmin + env(safe-area-inset-top)); height: 11vmin; min-height: 38px; border-radius: 99px; padding: 0 3.5vmin; font-size: 3.4vmin; }
-#home { left: calc(3vw + env(safe-area-inset-left)); }
-#start { left: calc(3vw + 21vmin + env(safe-area-inset-left)); }
-#mode { right: calc(3vw + 29vmin + env(safe-area-inset-right)); min-width: 17vmin; }
-#mode.on { background: var(--accent); color: #111; }
-#center { right: calc(3vw + 15vmin + env(safe-area-inset-right)); width: 11vmin; min-width: 38px; padding: 0; font-size: 5vmin; }
-#gear { right: calc(3vw + env(safe-area-inset-right)); width: 11vmin; min-width: 38px; padding: 0; font-size: 5vmin; }
-#badge { position: absolute; top: calc(3vmin + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 2vmin;
-  padding: 0 4vmin; height: 11vmin; min-height: 38px; border-radius: 99px; background: var(--key); font-size: 4.4vmin; white-space: nowrap; }
-#badge i { width: 2.6vmin; height: 2.6vmin; min-width: 9px; min-height: 9px; border-radius: 50%; background: #e5484d; }
-#badge.live i { background: #30b85c; }
-#badge b { color: var(--accent); }
-#stickzone { position: absolute; left: 0; top: 16vmin; bottom: 0; width: 52vw; }
-#base, #knob { position: absolute; border-radius: 50%; pointer-events: none; transform: translate(-50%, -50%); }
-#base { width: 36vmin; height: 36vmin; border: 2px solid rgba(255,255,255,.14); background: rgba(255,255,255,.04); }
-#knob { width: 17vmin; height: 17vmin; background: var(--accent); opacity: .9; }
-#base.idle, #knob.idle { opacity: .35; }
-#hint { position: absolute; left: 26vw; bottom: 5vh; transform: translateX(-50%); color: var(--dim); font-size: 3.4vmin; pointer-events: none; text-align: center; }
-#wheel { position: absolute; left: 26vw; top: 50%; width: 30vmin; height: 30vmin; margin: -15vmin 0 0 -15vmin; border-radius: 50%;
-  border: 3px solid rgba(255,255,255,.18); pointer-events: none; display: none; }
-#wheel::after { content: ""; position: absolute; left: 50%; top: -3px; width: 4px; height: 7vmin; margin-left: -2px; background: var(--accent); border-radius: 2px; }
-#wheel.flat { opacity: .3; }
-body.tilt #wheel { display: block; }
-.sheet { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4vmin;
-  background: var(--bg); text-align: center; padding: 6vmin; z-index: 5; }
-.sheet h1 { margin: 0; font-size: max(26px, 7vmin); }
-.sheet p { margin: 0; color: var(--dim); font-weight: 500; max-width: 36em; }
-.sheet button { font: inherit; font-size: max(20px, 5vmin); padding: 3vmin 12vmin; border-radius: 99px; border: 0; background: #f2b51e; color: #111; }
-.sheet button.plain { background: var(--key); color: var(--text); font-size: max(16px, 4vmin); padding: 2.4vmin 7vmin; }
-#settings { background: rgba(21,23,29,.97); gap: 3vmin; }
-.row { display: flex; gap: 2vmin; align-items: center; justify-content: center; flex-wrap: wrap; }
-.row span { color: var(--dim); min-width: 22vmin; text-align: right; }
-.row button { padding: 2vmin 5vmin; font-size: max(15px, 3.8vmin); background: var(--key); color: var(--text); }
-.row button.on { background: var(--accent); color: #111; }
+/* The pinstripes run the way the stage's do, and fill the whole page too: under the browser's bars,
+   and round the stage while the screen turns. */
+html { background: repeating-linear-gradient(var(--stripeDir, to bottom), var(--bg) 0, var(--bg) 2px, var(--stripe) 2px, var(--stripe) 4px) var(--bg); }
+html.turned { --stripeDir: to left; }
+html.turned.back { --stripeDir: to right; }
+#safe { position: fixed; visibility: hidden; pointer-events: none;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+/* Everything is drawn on the stage, always landscape: turned a quarter when the screen is upright. */
+#stage { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; transform-origin: 0 0; overflow: hidden;
+  background: repeating-linear-gradient(to bottom, var(--bg) 0, var(--bg) 2px, var(--stripe) 2px, var(--stripe) 4px); }
 .hidden { display: none !important; }
-#turn { display: none; z-index: 9; }
-@media (orientation: portrait) { #turn.wanted { display: flex; } }
+
+/* Buttons: KartPad's Wii channel faces, a gradient on a ledge with a glossy inner rim. */
+.key { position: absolute; display: flex; align-items: center; justify-content: center; flex-direction: column;
+  border-radius: calc(var(--u) * 3.4); border: 1.25px solid var(--btnStroke);
+  background: linear-gradient(var(--btnTop), var(--btnBottom)); box-shadow: 0 calc(var(--u) * .9) 0 var(--ledge);
+  color: var(--text); font-size: calc(var(--u) * 5); font-weight: 700; letter-spacing: .01em; }
+.key::after { content: ""; position: absolute; inset: 3px; border-radius: inherit; border: 1px solid rgba(255, 255, 255, var(--gloss));
+  -webkit-mask-image: linear-gradient(#000 45%, transparent 90%); mask-image: linear-gradient(#000 45%, transparent 90%); pointer-events: none; }
+.key.round { border-radius: 50%; }
+.key.down { transform: translateY(calc(var(--u) * .7)); box-shadow: 0 calc(var(--u) * .2) 0 var(--ledge);
+  background: linear-gradient(var(--btnBottom), var(--btnTop)); }
+.key.down::after { opacity: 0; }
+.key.primary { background: linear-gradient(var(--accTop), var(--accBottom)); border-color: var(--accStroke);
+  box-shadow: 0 calc(var(--u) * .9) 0 var(--accLedge); color: #fff; }
+.key.primary::after { border-color: rgba(255, 255, 255, .4); }
+.key.primary.down { background: linear-gradient(var(--accBottom), var(--accTop)); box-shadow: 0 calc(var(--u) * .2) 0 var(--accLedge); }
+.key small { font-size: calc(var(--u) * 2.8); color: var(--dim); font-weight: 600; }
+.key svg { width: calc(var(--u) * 5.6); height: calc(var(--u) * 5.6); fill: none; stroke: currentColor; stroke-width: 2.2;
+  stroke-linecap: round; stroke-linejoin: round; }
+/* A with Hold: AUTO while a long press keeps it accelerating. */
+.k-a .auto { position: absolute; bottom: 17%; font-size: calc(var(--u) * 2.5); letter-spacing: .08em; line-height: 1;
+  padding: .25em .55em; border-radius: 99px; border: 1.5px solid rgba(255, 255, 255, .85); opacity: 0; }
+.k-a.locked .auto { opacity: 1; background: #fff; color: var(--accBottom); }
+.k-a.locked { outline: calc(var(--u) * 1) solid rgba(92, 203, 243, .45); outline-offset: calc(var(--u) * .5); }
+.k-a { font-size: calc(var(--u) * 11); }
+.k-b { font-size: calc(var(--u) * 6.5); }
+/* Between two buttons: a thumb here presses both. */
+.seam { position: absolute; z-index: 2; }
+.seam::after { content: ""; position: absolute; left: 50%; top: 50%; width: calc(var(--u) * 1.6); height: calc(var(--u) * 1.6);
+  border-radius: 50%; background: var(--btnStroke); transform: translate(-50%, -50%); }
+
+/* The top bar. */
+.bar { position: absolute; top: calc(var(--st) + var(--u) * 3); display: flex; gap: calc(var(--u) * 2); z-index: 3; }
+#barLeft { left: calc(var(--sl) + var(--u) * 3); }
+#barRight { right: calc(var(--sr) + var(--u) * 3); }
+.bar .key { position: relative; height: calc(var(--u) * 11); min-height: 36px; min-width: calc(var(--u) * 13);
+  padding: 0 calc(var(--u) * 3); border-radius: 99px; font-size: calc(var(--u) * 3.6); flex-direction: row; gap: calc(var(--u) * 1.4); }
+.bar .key svg { width: calc(var(--u) * 5); height: calc(var(--u) * 5); }
+.bar .key.on { background: linear-gradient(var(--selTop), var(--selBottom)); border-color: var(--accStroke); }
+#home::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: inherit; background: rgba(27, 154, 213, .35); }
+#home.holding::before { width: 100%; transition: width .5s linear; }
+#badge { position: absolute; top: calc(var(--st) + var(--u) * 3); left: 50%; transform: translateX(-50%); z-index: 3;
+  display: flex; align-items: center; gap: calc(var(--u) * 1.6); height: calc(var(--u) * 11); min-height: 36px; padding: 0 calc(var(--u) * 4);
+  border-radius: 99px; background: var(--panel); border: 1.25px solid var(--panelStroke); font-size: calc(var(--u) * 4.2); white-space: nowrap; }
+#badge i { width: calc(var(--u) * 2.4); height: calc(var(--u) * 2.4); min-width: 8px; min-height: 8px; border-radius: 50%; background: var(--dead); }
+#badge.live i { background: var(--live); }
+#badge b { color: var(--player); font-weight: 800; }
+#toast { position: absolute; top: calc(var(--st) + var(--u) * 17); left: 50%; transform: translateX(-50%); z-index: 4;
+  padding: calc(var(--u) * 2) calc(var(--u) * 4); border-radius: 99px; background: var(--panel); border: 1.25px solid var(--panelStroke);
+  font-size: calc(var(--u) * 3.6); color: var(--text); white-space: nowrap; box-shadow: 0 2px 8px rgba(0, 0, 0, var(--shadow)); }
+
+/* Each layout is a layer; left-handed mirrors them (not the top bar). */
+.layer { position: absolute; inset: 0; direction: ltr; --is: var(--sl); --ie: var(--sr); }
+#stage.lefty .layer { direction: rtl; --is: var(--sr); --ie: var(--sl); }
+
+/* The menus: a D-pad, A and B. */
+#dpad { position: absolute; inset-inline-start: calc(var(--is) + var(--u) * 7); bottom: calc(var(--sb) + var(--u) * 8);
+  width: calc(var(--u) * 56); height: calc(var(--u) * 56); }
+#dpad .key { width: calc(var(--u) * 19); height: calc(var(--u) * 19); border-radius: calc(var(--u) * 3); font-size: calc(var(--u) * 4.6); color: var(--icon); }
+#dpad .d-up { left: calc(var(--u) * 18.5); top: 0; }
+#dpad .d-down { left: calc(var(--u) * 18.5); bottom: 0; }
+#dpad .d-left { left: 0; top: calc(var(--u) * 18.5); }
+#dpad .d-right { right: 0; top: calc(var(--u) * 18.5); }
+#dpad .hub { left: calc(var(--u) * 18.5); top: calc(var(--u) * 18.5); width: calc(var(--u) * 19); height: calc(var(--u) * 19);
+  position: absolute; background: var(--btnBottom); border-radius: calc(var(--u) * 2); }
+#menus .k-a { inset-inline-end: calc(var(--ie) + var(--u) * 7); bottom: calc(var(--sb) + var(--u) * 19);
+  width: calc(var(--u) * 32); height: calc(var(--u) * 32); }
+#menus .k-b { inset-inline-end: calc(var(--ie) + var(--u) * 41); bottom: calc(var(--sb) + var(--u) * 7);
+  width: calc(var(--u) * 20); height: calc(var(--u) * 20); }
+
+/* A race, with the stick or tilt: Drift under the right thumb, B beside it with A+B above (hold it
+   stopped to charge a mini-turbo), Trick over Drift; Item on the left. With Auto, A only shows for the
+   start and after a fall, in Drift's place, since accelerating is then the player's. With Hold, A sits
+   beside Drift all race, and the seams press two buttons. */
+.race .k-drift { inset-inline-end: calc(var(--ie) + var(--u) * 5); bottom: calc(var(--sb) + var(--u) * 7);
+  width: calc(var(--u) * 36); height: calc(var(--u) * 30); }
+.race .k-a { inset-inline-end: calc(var(--ie) + var(--u) * 8); bottom: calc(var(--sb) + var(--u) * 7);
+  width: calc(var(--u) * 30); height: calc(var(--u) * 30); }
+.race .k-b { inset-inline-end: calc(var(--ie) + var(--u) * 45); bottom: calc(var(--sb) + var(--u) * 7);
+  width: calc(var(--u) * 20); height: calc(var(--u) * 20); }
+.race .k-ab { inset-inline-end: calc(var(--ie) + var(--u) * 47); bottom: calc(var(--sb) + var(--u) * 32);
+  width: calc(var(--u) * 16); height: calc(var(--u) * 16); font-size: calc(var(--u) * 4); }
+.race .k-trick { inset-inline-end: calc(var(--ie) + var(--u) * 5); bottom: calc(var(--sb) + var(--u) * 42);
+  width: calc(var(--u) * 36); height: calc(var(--u) * 15); }
+.race .k-a, .race .seam { display: none; }
+#stage.amoment .race .k-a { display: flex; }
+#stage.amoment .race .k-drift, #stage.amoment .race .k-ab { display: none; }
+#stage.hold .race .k-drift { width: calc(var(--u) * 32); height: calc(var(--u) * 26); }
+#stage.hold .race .k-a { display: flex; inset-inline-end: calc(var(--ie) + var(--u) * 40.5);
+  width: calc(var(--u) * 26); height: calc(var(--u) * 26); font-size: calc(var(--u) * 9); }
+#stage.hold .race .k-b { inset-inline-end: calc(var(--ie) + var(--u) * 44.5); bottom: calc(var(--sb) + var(--u) * 37);
+  width: calc(var(--u) * 18); height: calc(var(--u) * 18); }
+#stage.hold .race .k-trick { bottom: calc(var(--sb) + var(--u) * 37); width: calc(var(--u) * 32); height: calc(var(--u) * 14); }
+#stage.hold .race .k-ab { display: none; }
+#stage.hold .race .seam { display: block; }
+.race .s-drift-a { inset-inline-end: calc(var(--ie) + var(--u) * 36.5); bottom: calc(var(--sb) + var(--u) * 10);
+  width: calc(var(--u) * 5); height: calc(var(--u) * 20); }
+.race .s-a-b { inset-inline-end: calc(var(--ie) + var(--u) * 45.5); bottom: calc(var(--sb) + var(--u) * 32);
+  width: calc(var(--u) * 16); height: calc(var(--u) * 5); }
+/* Item: the top throws it forward and the bottom back, as up or down on the stick does. */
+.k-item { justify-content: space-between; padding: calc(var(--u) * 2.2) 0;
+  --rule: linear-gradient(var(--btnStroke), var(--btnStroke)) center 32% / 46% 1px no-repeat,
+          linear-gradient(var(--btnStroke), var(--btnStroke)) center 68% / 46% 1px no-repeat;
+  background: var(--rule), linear-gradient(var(--btnTop), var(--btnBottom)); }
+.k-item.down { background: var(--rule), linear-gradient(var(--btnBottom), var(--btnTop)); }
+.k-item .aim { font-style: normal; font-size: calc(var(--u) * 4); line-height: 1; color: var(--icon); }
+.k-item::before { content: ""; position: absolute; left: 0; right: 0; height: 32%; opacity: 0; background: rgba(27, 154, 213, .3); }
+.k-item.aim-up::before { top: 0; opacity: 1; border-radius: inherit; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.k-item.aim-down::before { bottom: 0; opacity: 1; border-radius: inherit; border-top-left-radius: 0; border-top-right-radius: 0; }
+.k-item.aim-up .up, .k-item.aim-down .down { color: var(--accBottom); }
+
+/* The stick: anywhere on the left, under Item. */
+#stickzone { position: absolute; inset-inline-start: 0; top: calc(var(--u) * 16); bottom: 0;
+  width: calc(var(--W) - var(--u) * 75 - var(--ie)); }
+#base, #knob { position: absolute; border-radius: 50%; pointer-events: none; transform: translate(-50%, -50%); direction: ltr; }
+#base { width: calc(var(--u) * 36); height: calc(var(--u) * 36); background: var(--well); border: 1.25px solid var(--panelStroke);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, var(--shadow)); }
+#knob { width: calc(var(--u) * 17); height: calc(var(--u) * 17); border: 1.25px solid var(--btnStroke);
+  background: linear-gradient(var(--btnTop), var(--btnBottom)); box-shadow: 0 calc(var(--u) * .9) 0 var(--ledge); }
+#base.idle, #knob.idle { opacity: .45; }
+#raceStick .k-item { inset-inline-start: calc(var(--is) + var(--u) * 5); top: calc(var(--st) + var(--u) * 18);
+  width: calc(var(--u) * 40); height: calc(var(--u) * 30); }
+
+/* Tilt: Item alone under the left thumb, the wheel in the middle. */
+#raceTilt .k-item { inset-inline-start: calc(var(--is) + var(--u) * 5); bottom: calc(var(--sb) + var(--u) * 7);
+  width: calc(var(--u) * 40); height: calc(var(--u) * 46); }
+#wheel { position: absolute; left: 50%; top: 58%; width: calc(var(--u) * 38); height: calc(var(--u) * 38);
+  margin: calc(var(--u) * -19) 0 0 calc(var(--u) * -19); pointer-events: none; }
+#wheel g { stroke: var(--icon); stroke-width: 6; fill: none; stroke-linecap: round; }
+#wheel .mark { stroke: var(--player); stroke-width: 9; }
+#wheel.flat { opacity: .35; }
+
+/* Sheets: a card on the pinstripes. */
+.sheet { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; padding: calc(var(--u) * 4);
+  background: repeating-linear-gradient(to bottom, var(--bg) 0, var(--bg) 2px, var(--stripe) 2px, var(--stripe) 4px); }
+.card { display: flex; flex-direction: column; align-items: center; gap: max(12px, calc(var(--u) * 3)); max-width: 94%; max-height: 100%;
+  padding: max(18px, calc(var(--u) * 5)) max(20px, calc(var(--u) * 7)); text-align: center; background: var(--panel);
+  border: 1.25px solid var(--panelStroke); border-radius: max(14px, calc(var(--u) * 4)); box-shadow: 0 3px 14px rgba(0, 0, 0, var(--shadow)); }
+.card h1 { margin: 0; font-size: max(22px, calc(var(--u) * 6.2)); font-weight: 700; }
+.card p { margin: 0; color: var(--dim); font-weight: 500; font-size: max(15px, calc(var(--u) * 3.9)); max-width: 30em; line-height: 1.3; }
+.card p:empty { display: none; }
+.row { display: flex; gap: max(10px, calc(var(--u) * 2.4)); align-items: center; justify-content: center; flex-wrap: wrap; }
+.btn { position: relative; font: inherit; font-size: max(17px, calc(var(--u) * 4.4)); font-weight: 700; color: var(--text);
+  padding: .55em 1.6em; border-radius: max(10px, calc(var(--u) * 2.8)); border: 1.25px solid var(--btnStroke);
+  background: linear-gradient(var(--btnTop), var(--btnBottom)); box-shadow: 0 3px 0 var(--ledge); }
+.btn.primary { background: linear-gradient(var(--accTop), var(--accBottom)); border-color: var(--accStroke); box-shadow: 0 3px 0 var(--accLedge); color: #fff; }
+.btn:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--ledge); }
+.btn.primary:active { box-shadow: 0 1px 0 var(--accLedge); }
+.btn:disabled { opacity: .42; }
+#settings .card { max-width: 98%; padding: max(14px, calc(var(--u) * 4)) max(16px, calc(var(--u) * 5)); gap: max(8px, calc(var(--u) * 2.4)); }
+#settings .grid { display: grid; grid-template-columns: auto auto; gap: max(8px, calc(var(--u) * 2.2)) max(18px, calc(var(--u) * 6)); }
+.setting { display: flex; align-items: center; justify-content: space-between; gap: max(10px, calc(var(--u) * 2.4)); }
+.setting > span { color: var(--dim); font-size: max(14px, calc(var(--u) * 3.6)); text-align: left; }
+.seg { display: flex; gap: 4px; }
+.seg button { font: inherit; font-size: max(14px, calc(var(--u) * 3.6)); font-weight: 700; color: var(--text); padding: .4em .8em;
+  border-radius: max(8px, calc(var(--u) * 2.2)); border: 1.25px solid var(--btnStroke); background: linear-gradient(var(--btnTop), var(--btnBottom));
+  box-shadow: 0 2px 0 var(--ledge); }
+.seg button.on { background: linear-gradient(var(--selTop), var(--selBottom)); border-color: var(--accStroke); box-shadow: 0 2px 0 var(--accStroke); }
+#delay { font-size: max(13px, calc(var(--u) * 3.3)); }
 </style>
 </head>
 <body>
-<div id="pad">
-  <div id="stickzone"></div>
-  <div id="wheel"></div>
-  <div id="base" class="idle"></div><div id="knob" class="idle"></div>
-  <div id="hint">Steer: touch and drag anywhere here</div>
-  <div class="key top" id="home" data-bit="4096">HOME</div>
-  <div class="key top" id="start" data-bit="128">PAUSE</div>
+<div id="safe"></div>
+<div id="stage">
+  <div class="layer" id="menus">
+    <div id="dpad">
+      <div class="hub"></div>
+      <div class="key arm d-up" data-key="up" data-bit="256">▲</div>
+      <div class="key arm d-down" data-key="down" data-bit="512">▼</div>
+      <div class="key arm d-left" data-key="left" data-bit="1024">◀</div>
+      <div class="key arm d-right" data-key="right" data-bit="2048">▶</div>
+    </div>
+    <div class="key round k-b" data-key="b" data-bit="2">B</div>
+    <div class="key round primary k-a" data-key="a" data-bit="1">A</div>
+  </div>
+  <div class="layer race hidden" id="raceStick">
+    <div class="zone" id="stickzone"></div>
+    <div id="base" class="idle"></div><div id="knob" class="idle"></div>
+    <div class="key k-item" data-key="l" data-bit="16"><i class="aim up">▲</i>Item<i class="aim down">▼</i></div>
+    <div class="key k-trick" data-key="up" data-bit="256">Trick</div>
+    <div class="key round k-ab" data-bit="3">A+B</div>
+    <div class="key round k-b" data-key="b" data-bit="2">B</div>
+    <div class="key k-drift" data-key="r" data-bit="32">Drift</div>
+    <div class="key round primary k-a" data-key="a" data-bit="1">A<span class="auto">AUTO</span></div>
+    <div class="seam s-drift-a" data-bit="33"></div>
+    <div class="seam s-a-b" data-bit="3"></div>
+  </div>
+  <div class="layer race hidden" id="raceTilt">
+    <svg id="wheel" viewBox="-50 -50 100 100"><g><circle r="43"/><circle r="9"/><path d="M-43 0H-9M9 0H43M0 9V43"/></g><g><path class="mark" d="M0-47V-36"/></g></svg>
+    <div class="key k-item" data-key="l" data-bit="16"><i class="aim up">▲</i>Item<i class="aim down">▼</i></div>
+    <div class="key k-trick" data-key="up" data-bit="256">Trick</div>
+    <div class="key round k-ab" data-bit="3">A+B</div>
+    <div class="key round k-b" data-key="b" data-bit="2">B</div>
+    <div class="key k-drift" data-key="r" data-bit="32">Drift</div>
+    <div class="key round primary k-a" data-key="a" data-bit="1">A<span class="auto">AUTO</span></div>
+    <div class="seam s-drift-a" data-bit="33"></div>
+    <div class="seam s-a-b" data-bit="3"></div>
+  </div>
+  <div class="bar" id="barLeft">
+    <div class="key" id="home" data-key="home" aria-label="HOME"><svg viewBox="0 0 24 24"><path d="M3.5 11.5 12 4l8.5 7.5M6 9.5V20h12V9.5"/></svg></div>
+    <div class="key" id="pause" data-key="start" data-bit="128" aria-label="Pause"><svg viewBox="0 0 24 24"><path d="M9 5.5v13M15 5.5v13"/></svg></div>
+  </div>
   <div id="badge"><i></i><span id="who">Connecting…</span></div>
-  <div class="key top" id="mode">TILT</div>
-  <div class="key top" id="center" aria-label="Recenter">⟲</div>
-  <div class="key top" id="gear" aria-label="Settings">⚙︎</div>
-  <div class="key" id="up" data-bit="256"><span>TRICK<small>▲</small></span></div>
-  <div class="key" id="b" data-bit="2">B</div>
-  <div class="key" id="l" data-bit="16">ITEM</div>
-  <div class="key" id="r" data-bit="32">DRIFT</div>
-  <div class="key" id="a" data-bit="1">A</div>
+  <div class="bar" id="barRight">
+    <div class="key hidden" id="layoutKey">Race</div>
+    <div class="key hidden" id="tiltKey"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12H9m6 0h5.5M12 15v5.5"/><circle cx="12" cy="12" r="3"/></svg><span>Tilt</span></div>
+    <div class="key" id="gear" aria-label="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="7"/><path d="M12 2.5V5M12 19v2.5M2.5 12H5M19 12h2.5M5.3 5.3 7 7M17 17l1.7 1.7M5.3 18.7 7 17M17 7l1.7-1.7"/></svg></div>
+  </div>
+  <div id="toast" class="hidden"></div>
+
+  <div class="sheet" id="join"><div class="card">
+    <h1>KartPad</h1>
+    <button class="btn primary" id="joinButton" disabled>Join</button>
+    <p id="joinNote"></p>
+  </div></div>
+  <div class="sheet hidden" id="message"><div class="card">
+    <h1 id="messageTitle"></h1><p id="messageText"></p>
+    <div class="row"><button class="btn primary" id="messageButton">Try Again</button></div>
+    <button class="btn hidden" id="touchButton">Use the Touch-Only Link</button>
+  </div></div>
+  <div class="sheet hidden" id="tiltAsk"><div class="card">
+    <h1>Steer by tilting?</h1>
+    <p>Turn the phone like a steering wheel.</p>
+    <div class="row"><button class="btn primary" id="useTilt">Use Tilt</button><button class="btn" id="useStick">Use the Stick</button></div>
+  </div></div>
+  <div class="sheet hidden" id="settings"><div class="card">
+    <div class="grid">
+      <div class="setting tilt-only"><span>Steering</span><div class="seg" data-pref="tilt"><button data-value="true">Tilt</button><button data-value="false">Stick</button></div></div>
+      <div class="setting tilt-only"><span>Sensitivity</span><div class="seg" data-pref="sensitivity"><button data-value="0.5">0.5×</button><button data-value="1">1×</button><button data-value="2">2×</button></div></div>
+      <div class="setting tilt-only"><span>Direction</span><div class="seg" data-pref="inverted"><button data-value="false">Normal</button><button data-value="true">Inverted</button></div></div>
+      <div class="setting tilt-only"><span>Straight</span><div class="seg" id="straight"><button data-value="level">Level</button><button data-value="here">Set Here</button></div></div>
+      <div class="setting tilt-only"><span>Shake for Trick</span><div class="seg" data-pref="shake"><button data-value="true">On</button><button data-value="false">Off</button></div></div>
+      <div class="setting"><span>Accelerate</span><div class="seg" data-pref="auto"><button data-value="true">Auto</button><button data-value="false">Hold</button></div></div>
+      <div class="setting"><span>Hand</span><div class="seg" data-pref="lefty"><button data-value="false">Right</button><button data-value="true">Left</button></div></div>
+      <div class="setting hidden" id="flipRow"><span>Screen</span><div class="seg"><button id="flip">Flip</button></div></div>
+    </div>
+    <p id="delay"></p>
+    <div class="row"><button class="btn primary" id="closeSettings">Done</button><button class="btn" id="leave">Leave</button></div>
+  </div></div>
+  <div class="sheet hidden" id="turn"><div class="card">
+    <h1>Turn your phone sideways</h1>
+    <button class="btn" id="forceTurn">Rotation Lock Is On</button>
+  </div></div>
 </div>
-<div class="sheet" id="join">
-  <h1>KartPad</h1>
-  <p id="joinText">Use this phone as a controller. Hold it sideways.</p>
-  <button id="joinButton" disabled>Join</button>
-  <p id="joinNote"></p>
-</div>
-<div class="sheet hidden" id="message">
-  <h1 id="messageTitle"></h1><p id="messageText"></p>
-  <button id="messageButton">Try Again</button>
-  <button class="plain hidden" id="touchButton">Use the Touch-Only Link</button>
-</div>
-<div class="sheet hidden" id="tiltAsk">
-  <h1>Steer by tilting?</h1>
-  <p>Turn the phone like a steering wheel.</p>
-  <div class="row"><button id="useTilt">Use Tilt</button><button id="useStick">Use the Stick</button></div>
-</div>
-<div class="sheet hidden" id="settings">
-  <h1>Controller</h1>
-  <div class="row"><span>Tilt sensitivity</span><button data-sens="0.5">0.5×</button><button data-sens="1">1×</button><button data-sens="2">2×</button></div>
-  <div class="row"><span>Tilt direction</span><button id="invert">Inverted</button></div>
-  <div class="row"><span>Shake for tricks</span><button id="shake">On</button></div>
-  <p id="link"></p>
-  <div class="row"><button id="closeSettings">Done</button><button id="leave">Leave</button></div>
-</div>
-<div class="sheet" id="turn"><h1>Turn your phone sideways</h1><p>The controller works in landscape.</p></div>
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
+const stage = $("stage");
+// Over HTTPS: the Mac and key after the #, and a WebRTC link. From the Mac: its own address, the key
+// after the #, and a WebSocket.
+const secure = location.protocol === "https:";
 const fragment = new URLSearchParams(location.hash.slice(1));
-const mac = fragment.get("mac") || "";
-const key = fragment.get("k") || "";
+const mac = secure ? fragment.get("mac") || "" : location.host;
+const key = secure ? fragment.get("k") || "" : location.hash.slice(1);
 const macOrigin = "http://" + mac;
 const tokenKey = "kartpad-phone-" + key;
-let joined = false, wanted = false, buttons = 0, stickX = 0, stickY = 0, seq = 0, lastSent = "";
-let aLocked = false, aLockTimer = 0, wakeLock = null;
+const canTilt = secure && typeof DeviceMotionEvent !== "undefined";
+const iOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (/Mac/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
 
 function store(name, value) { try { value == null ? sessionStorage.removeItem(name) : sessionStorage.setItem(name, value); } catch (e) {} }
 function stored(name) { try { return sessionStorage.getItem(name); } catch (e) { return null; } }
 function pref(name, fallback) { try { const v = localStorage.getItem("kartpad-" + name); return v == null ? fallback : JSON.parse(v); } catch (e) { return fallback; } }
 function setPref(name, value) { try { localStorage.setItem("kartpad-" + name, JSON.stringify(value)); } catch (e) {} }
-function buzz(ms) { try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) {} }
-const b64url = (s) => btoa(unescape(encodeURIComponent(s))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const prefs = {tilt: pref("tilt", true), sensitivity: pref("sensitivity", 1), inverted: pref("inverted", false),
+               shake: pref("shake", true), auto: pref("auto", true), lefty: pref("lefty", false)};
 
-function show(sheet) {
-  for (const id of ["join", "message", "settings", "tiltAsk"]) $(id).classList.toggle("hidden", id !== sheet);
-  $("turn").classList.toggle("wanted", sheet == null || sheet === "settings" || sheet === "tiltAsk");
+// A tap you can feel: vibration on Android; on iPhone (iOS 18 and later), flipping a hidden switch,
+// which Safari answers with a haptic tick.
+const hapticSwitch = (() => {
+  if (!iOS) return null;
+  try {
+    const label = document.createElement("label"), input = document.createElement("input");
+    input.type = "checkbox";
+    input.setAttribute("switch", "");
+    label.appendChild(input);
+    label.setAttribute("aria-hidden", "true");
+    label.style.cssText = "position:fixed;left:-60px;top:0;width:40px;height:30px;opacity:0;overflow:hidden;pointer-events:none";
+    document.body.appendChild(label);
+    return label;
+  } catch (e) { return null; }
+})();
+function buzz(ms) {
+  try {
+    if (navigator.vibrate) navigator.vibrate(ms);
+    else if (hapticSwitch && ms > 0) hapticSwitch.click();
+  } catch (e) {}
+}
+let rumbleTimer = 0;
+function rumble(on) {
+  clearInterval(rumbleTimer);
+  if (navigator.vibrate) { buzz(on ? 4000 : 0); return; }
+  if (!on || !hapticSwitch) return;
+  let left = 8;
+  rumbleTimer = setInterval(() => { buzz(1); if (--left <= 0) clearInterval(rumbleTimer); }, 110);
+}
+
+// ---- Sheets, the player and the toast
+let sheet = "join";
+function show(name) {
+  sheet = name;
+  for (const id of ["join", "message", "settings", "tiltAsk"]) $(id).classList.toggle("hidden", id !== name);
+  placeStage();
 }
 function message(title, text, button, touch) {
   $("messageTitle").textContent = title;
-  $("messageText").textContent = text;
+  $("messageText").textContent = text || "";
   $("messageButton").textContent = button || "Try Again";
-  $("touchButton").classList.toggle("hidden", !touch);
+  $("touchButton").classList.toggle("hidden", !(touch && secure));
   show("message");
 }
 function setLive(live, text) { $("badge").classList.toggle("live", live); $("who").textContent = text; }
 function player(n) {
   if (n >= 1) { $("who").innerHTML = "<b>P" + n + "</b>"; $("badge").classList.add("live"); }
-  else { setLive(true, "Not playing"); document.documentElement.style.setProperty("--accent", "#8a8f9c"); }
+  else { setLive(true, "Not playing"); document.documentElement.style.removeProperty("--player"); }
+}
+let toastTimer = 0;
+function toast(text) {
+  $("toast").textContent = text;
+  $("toast").classList.remove("hidden");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => $("toast").classList.add("hidden"), 4000);
 }
 
-// ---- The WebRTC link. The offer is made before Join is tapped, so the tap can open the helper
-// tab at once: a tab opened after waiting counts as a pop-up and is blocked.
+// ---- The stage, always landscape. When the screen is upright (rotation lock, or Safari turning it
+// during a hard turn), it's drawn a quarter turn round: the way gravity says the phone is held when
+// tilt is on, else the way the screen last was, else as the player chose.
+let rotation = 0, W = innerWidth, H = innerHeight;
+let forced = false, forcedRotation = pref("rotation", 90), lastLandscape = null, gravity = null;
+// Which sign of gravity's x goes with a phone turned anticlockwise: +1 as the motion spec has it,
+// checked against the screen whenever it's landscape.
+let gravitySign = pref("gravitySign", 1);
+function screenAngle() {
+  try { if (screen.orientation && typeof screen.orientation.angle === "number") return screen.orientation.angle; } catch (e) {}
+  return typeof window.orientation === "number" ? (window.orientation + 360) % 360 : 0;
+}
+// Whether the screen is upright with no way to draw the controller sideways (then it asks to be
+// turned); otherwise sets the rotation. The way the screen last was only counts mid-game.
+function wantsTurn(playing) {
+  const portrait = innerHeight > innerWidth;
+  if (!portrait) {
+    rotation = 0;
+    const angle = screenAngle();
+    if (angle === 90 || angle === 270) {
+      lastLandscape = angle;
+      if (gravity && performance.now() - gravity.t < 1000 && Math.abs(gravity.x) > 6) {
+        const sign = Math.sign(gravity.x) * (angle === 90 ? 1 : -1);
+        if (sign !== gravitySign) { gravitySign = sign; setPref("gravitySign", sign); }
+      }
+    }
+    return false;
+  }
+  const g = gravity && performance.now() - gravity.t < 1500 ? gravity : null;
+  if (g && Math.abs(g.x) > Math.abs(g.y)) { rotation = g.x * gravitySign > 0 ? 90 : -90; return false; }
+  if (g) return true;  // held upright
+  if (forced) { rotation = forcedRotation; return false; }
+  if (playing && lastLandscape !== null) { rotation = lastLandscape === 90 ? 90 : -90; return false; }
+  return true;
+}
+function placeStage() {
+  const playing = joined && sheet === null, upright = wantsTurn(playing), turn = playing && upright;
+  if (upright) rotation = 0;
+  const vw = innerWidth, vh = innerHeight;
+  W = rotation ? vh : vw;
+  H = rotation ? vw : vh;
+  stage.style.width = W + "px";
+  stage.style.height = H + "px";
+  stage.style.transform = rotation === 90 ? "rotate(90deg) translate(0," + -H + "px)"
+                        : rotation === -90 ? "rotate(-90deg) translate(" + -W + "px,0)" : "none";
+  document.documentElement.classList.toggle("turned", rotation !== 0);
+  document.documentElement.classList.toggle("back", rotation === -90);
+  const s = getComputedStyle($("safe"));
+  const [t, r, b, l] = [s.paddingTop, s.paddingRight, s.paddingBottom, s.paddingLeft].map((v) => parseFloat(v) || 0);
+  const insets = rotation === 90 ? [r, t, b, l] : rotation === -90 ? [l, b, t, r] : [t, l, r, b];  // top, left, right, bottom
+  const root = document.documentElement.style;
+  root.setProperty("--u", Math.min(W, H) / 100 + "px");
+  root.setProperty("--W", W + "px");
+  root.setProperty("--st", insets[0] + "px");
+  root.setProperty("--sl", insets[1] + "px");
+  root.setProperty("--sr", insets[2] + "px");
+  root.setProperty("--sb", insets[3] + "px");
+  $("turn").classList.toggle("hidden", !turn);
+  $("flipRow").classList.toggle("hidden", !forced);
+  restStick();
+}
+// Viewport coordinates to the stage's.
+function toStage(x, y) {
+  if (rotation === 90) return {x: y, y: H - x};
+  if (rotation === -90) return {x: W - y, y: x};
+  return {x, y};
+}
+let wasPortrait = innerHeight > innerWidth;
+function onResize() {
+  const portrait = innerHeight > innerWidth;
+  // Safari turned the screen during a race: rotation lock keeps it still.
+  if (portrait !== wasPortrait && joined && sheet === null && tilt && layout() === "race" && !pref("lockTip", false)) {
+    setPref("lockTip", true);
+    toast("Tip: turn on Rotation Lock.");
+  }
+  wasPortrait = portrait;
+  placeStage();
+}
+addEventListener("resize", onResize);
+// Some browsers only have the new size a moment after turning.
+addEventListener("orientationchange", () => { setTimeout(onResize, 50); setTimeout(onResize, 400); });
+if (window.visualViewport) visualViewport.addEventListener("resize", onResize);
+$("forceTurn").onclick = () => { forced = true; placeStage(); };
+$("flip").onclick = () => { forcedRotation = -forcedRotation; setPref("rotation", forcedRotation); placeStage(); };
+
+// ---- What the player is doing, as KartPad says: "menus", "start" (the course intro and countdown),
+// "race", "fall" (off the course and back with Lakitu, until just after landing), or "unknown"
+// (KartPad can't tell, so the player switches).
+let view = "menus", manualRace = false;
+function layout() { return view === "unknown" ? (manualRace ? "race" : "menus") : view === "menus" ? "menus" : "race"; }
+function setView(next) {
+  if (!["menus", "start", "race", "unknown", "fall"].includes(next)) return;
+  const was = view;
+  view = next;
+  // Accelerating by itself is for the race. The countdown and a fall are the player's: a rocket start,
+  // and Lakitu's boost, both need A pressed at the right moment.
+  if (next === "race" && was !== "race" && prefs.auto) aLocked = true;
+  if (next !== "race") aLocked = false;
+  applyLayout();
+}
+function applyLayout() {
+  const now = layout(), tilted = now === "race" && tilt, hold = !prefs.auto || view === "unknown";
+  $("menus").classList.toggle("hidden", now !== "menus");
+  $("raceStick").classList.toggle("hidden", !(now === "race" && !tilted));
+  $("raceTilt").classList.toggle("hidden", !tilted);
+  stage.classList.toggle("hold", hold);
+  stage.classList.toggle("amoment", !hold && (view === "start" || view === "fall"));
+  stage.classList.toggle("lefty", prefs.lefty);
+  $("tiltKey").classList.toggle("hidden", !(canTilt && now === "race"));
+  $("tiltKey").classList.toggle("on", tilt);
+  $("tiltKey").querySelector("span").textContent = tilt ? "Tilt" : "Stick";
+  $("layoutKey").classList.toggle("hidden", view !== "unknown");
+  $("layoutKey").textContent = manualRace ? "Menus" : "Race";
+  // Fingers on controls that just went away let go.
+  for (const [id, finger] of fingers) {
+    if (finger.el && finger.el.offsetParent === null) { fingers.delete(id); if (finger.kind === "item") showAim(finger.el, 0); }
+    if (finger.kind === "stick" && (now !== "race" || tilted)) { fingers.delete(id); stick = null; stickX = stickY = 0; }
+  }
+  restStick();
+  render();
+  send(true);
+}
+
+// ---- The link to the Mac
+let joined = false, wanted = false, seq = 0, lastSent = "", wakeLock = null;
+let ws = null, retry = 0, retryTimer = 0, failedInARow = 0;
 let pc = null, padChannel = null, controlChannel = null, offer = null, openTimer = 0;
 const pings = new Map(), rtts = [];
 let pingId = 0;
 
+function linkOpen() { return secure ? padChannel && padChannel.readyState === "open" : ws && ws.readyState === 1; }
+function sendPad(bytes) { if (linkOpen()) (secure ? padChannel : ws).send(bytes); }
+function sendControl(bytes) {
+  if (secure) { if (controlChannel && controlChannel.readyState === "open") controlChannel.send(bytes); }
+  else if (ws && ws.readyState === 1) ws.send(bytes);
+}
+function onBinary(data) {
+  const bytes = new Uint8Array(data);
+  if (bytes.length === 3 && bytes[0] === 3) answerPing(bytes[1] | (bytes[2] << 8));
+}
+
+// From the Mac: a WebSocket, reconnecting by itself.
+function connect() {
+  clearTimeout(retryTimer);
+  if (ws) { ws.onclose = null; try { ws.close(); } catch (e) {} }
+  ws = new WebSocket("ws://" + location.host + "/ws?k=" + key + "&t=" + (stored(tokenKey) || ""));
+  ws.binaryType = "arraybuffer";
+  setLive(false, "Connecting…");
+  ws.onopen = () => { retry = 0; };
+  ws.onmessage = (event) => { if (typeof event.data === "string") onControl(event.data); else onBinary(event.data); };
+  ws.onclose = () => {
+    ws = null;
+    if (!wanted) return;
+    ++failedInARow;
+    // Not even once, or gone for about a minute (KartPad quit, or restarted with a new link).
+    if ((!joined && failedInARow >= 3) || failedInARow >= 15) {
+      wanted = false;
+      joined = false;
+      letGo();
+      message("Can’t reach KartPad", "Make sure this phone is on the same Wi‑Fi as the Mac, then scan the code in KartPad again (Controls → Add Phone Controller…).");
+      return;
+    }
+    setLive(false, "Reconnecting…");
+    letGo();
+    retryTimer = setTimeout(connect, Math.min(4000, 400 * Math.pow(2, retry++)));
+  };
+}
+
+// Over HTTPS: WebRTC. The offer is made before Join is tapped, so the tap can open the helper tab at
+// once: a tab opened after waiting counts as a pop-up and is blocked.
 function closeLink() {
   clearTimeout(openTimer);
   if (pc) { pc.onconnectionstatechange = null; try { pc.close(); } catch (e) {} }
   pc = padChannel = controlChannel = null;
   offer = null;
 }
-
-// Join and Try Again wait for the offer: the tap itself has to open the helper tab.
 function ready(yes) { $("joinButton").disabled = $("messageButton").disabled = !yes; }
-
 async function prepare() {
   closeLink();
   ready(false);
@@ -177,10 +569,7 @@ async function prepare() {
   padChannel = link.createDataChannel("pad", {ordered: false, maxRetransmits: 0});
   controlChannel = link.createDataChannel("control");
   padChannel.binaryType = controlChannel.binaryType = "arraybuffer";
-  padChannel.onmessage = (event) => {
-    const bytes = new Uint8Array(event.data);
-    if (bytes.length === 3 && bytes[0] === 3) answerPing(bytes[1] | (bytes[2] << 8));
-  };
+  padChannel.onmessage = (event) => onBinary(event.data);
   controlChannel.onopen = () => { clearTimeout(openTimer); setLive(false, "Joining…"); };
   controlChannel.onmessage = (event) => { if (typeof event.data === "string") onControl(event.data); };
   controlChannel.onclose = () => { if (pc === link) lost(); };
@@ -195,13 +584,20 @@ async function prepare() {
   offer = link.localDescription.sdp;
   ready(mac && key);
 }
+const b64url = (s) => btoa(unescape(encodeURIComponent(s))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
 function join() {
+  keepAwake();
+  try { if (!iOS && document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(() => {}); } catch (e) {}
+  if (!secure) {
+    wanted = true; failedInARow = 0; retry = 0;
+    show(null);
+    connect();
+    return;
+  }
   if (!offer) return;
   wanted = true;
-  keepAwake();
-  const token = stored(tokenKey) || "";
-  const helper = window.open(macOrigin + "/link#k=" + key + "&t=" + token + "&o=" + b64url(offer), "kartpad-link");
+  const helper = window.open(macOrigin + "/link#k=" + key + "&t=" + (stored(tokenKey) || "") + "&o=" + b64url(offer), "kartpad-link");
   if (!helper) {
     message("Couldn’t open the link tab", "Allow pop-ups for this page, then try again.", "Try Again", true);
     return;
@@ -209,20 +605,16 @@ function join() {
   show(null);
   setLive(false, "Linking…");
   // Nothing within 20 s (the Mac's helper page never answered, or the link never opened).
-  openTimer = setTimeout(() => {
-    if (!joined) failed("The phone and the Mac couldn’t connect directly.");
-  }, 20000);
+  openTimer = setTimeout(() => { if (!joined) failed("The phone and the Mac couldn’t connect directly."); }, 20000);
 }
-
 window.addEventListener("message", async (event) => {
-  if (event.origin !== macOrigin || !event.data || !pc) return;
+  if (!secure || event.origin !== macOrigin || !event.data || !pc) return;
   if (event.data.t === "link-error") return failed("KartPad couldn’t link this phone (" + event.data.why + ").");
   if (event.data.t !== "answer") return;
   setLive(false, "Connecting…");
   try { await pc.setRemoteDescription({type: "answer", sdp: event.data.sdp}); }
   catch (e) { failed("KartPad’s answer didn’t work here."); }
 });
-
 function failed(why) {
   wanted = false;
   joined = false;
@@ -230,9 +622,8 @@ function failed(why) {
   message("Couldn’t connect", why + " Make sure the phone is on the same Wi‑Fi as the Mac.", "Try Again", true);
   prepare().catch(() => {});
 }
-
-// The link went away (Wi‑Fi, the phone slept, KartPad quit). Coming back needs a tap, since it
-// opens the helper tab again; the token keeps this phone's player for a minute.
+// The WebRTC link went away (Wi‑Fi, a long screen lock, KartPad quit). Coming back needs a tap, since
+// it opens the helper tab again; the token keeps this phone's player for a minute.
 function lost() {
   const was = joined;
   joined = false;
@@ -247,118 +638,145 @@ function lost() {
 function onControl(text) {
   let m;
   try { m = JSON.parse(text); } catch (e) { return; }
-  if (m.t === "welcome") {
-    const first = !joined && stored(tokenKey) !== m.token;
-    store(tokenKey, m.token);
-    joined = true;
-    player(m.player);
-    send(true);
-    // Motion access needs a tap of its own, so tilt is offered once joined (and comes back on with
-    // one tap after a reconnect).
-    if (!tilt && pref("tilt", true) && (first || !askedTilt)) { askedTilt = true; show("tiltAsk"); }
-    else show(null);
-  }
+  if (m.t === "welcome") welcome(m);
   else if (m.t === "player") player(m.player);
-  else if (m.t === "color") document.documentElement.style.setProperty("--accent", m.rgb);
-  else if (m.t === "rumble") buzz(m.on ? 4000 : 0);
+  else if (m.t === "color") document.documentElement.style.setProperty("--player", m.rgb);
+  else if (m.t === "race") setView(m.view);
+  else if (m.t === "rumble") rumble(m.on);
   else if (m.t === "bye") goodbye(m.reason);
 }
-
+let askedTilt = false;
+function welcome(m) {
+  const first = !joined && stored(tokenKey) !== m.token;
+  store(tokenKey, m.token);
+  joined = true;
+  failedInARow = 0;
+  view = "menus";  // KartPad says what's on next
+  player(m.player);
+  // Motion access needs a tap of its own, so tilt is offered once joined (it stays on through reconnects).
+  if (canTilt && !tilt && prefs.tilt && (first || !askedTilt)) { askedTilt = true; show("tiltAsk"); }
+  else show(null);
+  applyLayout();
+}
 function goodbye(reason) {
   wanted = false;
   joined = false;
   letGo();
-  closeLink();
-  prepare().catch(() => {});
+  if (secure) { closeLink(); prepare().catch(() => {}); }
+  else if (ws) { ws.onclose = null; ws.close(); ws = null; }
   if (reason === "full") message("Four phones are already playing", "Ask someone to leave, then try again.");
   else if (reason === "replaced") message("Opened somewhere else", "This controller is now in another tab or window.", "Use It Here");
+  else if (reason === "removed") { store(tokenKey, null); message("Removed", "", "Join Again"); }
   else if (reason === "left") { store(tokenKey, null); show("join"); }
   else message("KartPad closed", "Open KartPad on the Mac and scan the code again.");
 }
 
 // ---- Sending: whenever anything changes, and every 50 ms so KartPad knows the phone is there.
+let buttons = 0;
 function send(force) {
-  if (!joined || !padChannel || padChannel.readyState !== "open") return;
-  const x = currentX(), state = buttons + ":" + x + ":" + stickY;
+  if (!joined || !linkOpen()) return;
+  let x = 0, y = 0;
+  if (layout() === "race") {
+    if (stick) { x = stickX; y = stickY; }
+    else if (tilt) x = Math.round(tiltSteer * 127);
+    y = itemAim() || y;
+  }
+  const state = buttons + ":" + x + ":" + y;
   if (!force && state === lastSent) return;
   lastSent = state;
   const bytes = new Uint8Array(8);
   bytes[0] = 1; bytes[1] = seq = (seq + 1) & 255;
   bytes[2] = buttons & 255; bytes[3] = buttons >> 8;
-  bytes[4] = x & 255; bytes[5] = stickY & 255;
-  padChannel.send(bytes);
+  bytes[4] = x & 255; bytes[5] = y & 255;
+  sendPad(bytes);
 }
 setInterval(() => send(true), 50);
-function letGo() { buttons = 0; stickX = 0; stickY = 0; aLocked = false; clearTimeout(aLockTimer); render(); send(true); }
+function letGo() {
+  fingers.clear();
+  stick = null; stickX = stickY = 0;
+  aimUntil = 0;
+  for (const item of document.querySelectorAll(".k-item")) showAim(item, 0);
+  aLocked = false;
+  clearTimeout(aLockTimer);
+  cancelHome();
+  restStick();
+  render();
+  send(true);
+}
 
-// Link delay: a ping every half second, timed on its way back.
+// Link delay: a ping every half second, timed on its way back; every 2 s, the middle of the latest
+// goes to the Mac for its list of phones.
 setInterval(() => {
-  if (!joined || !padChannel || padChannel.readyState !== "open") return;
+  if (!joined || !linkOpen()) return;
   pingId = (pingId + 1) & 0xffff;
   pings.set(pingId, performance.now());
-  padChannel.send(new Uint8Array([3, pingId & 255, pingId >> 8]));
+  sendPad(new Uint8Array([3, pingId & 255, pingId >> 8]));
   for (const [id, t] of pings) if (performance.now() - t > 2000) pings.delete(id);
 }, 500);
+function middleDelay() {
+  if (!rtts.length) return 0;
+  const sorted = [...rtts].sort((p, q) => p - q);
+  return Math.round(sorted[Math.floor(sorted.length / 2)]);
+}
+setInterval(() => {
+  if (!joined || !rtts.length) return;
+  const ms = Math.min(65535, Math.max(1, middleDelay()));
+  sendPad(new Uint8Array([4, ms & 255, ms >> 8]));
+}, 2000);
 function answerPing(id) {
   const t = pings.get(id);
   if (t === undefined) return;
   pings.delete(id);
   rtts.push(performance.now() - t);
   if (rtts.length > 60) rtts.shift();
-  const sorted = [...rtts].sort((p, q) => p - q);
-  $("link").textContent = "Link to the Mac: " + sorted[Math.floor(sorted.length / 2)].toFixed(0) + " ms there and back (worst " +
-                          sorted[sorted.length - 1].toFixed(0) + " ms lately).";
+  $("delay").textContent = "Link: " + middleDelay() + " ms (worst " + Math.round(Math.max(...rtts)) + " ms)";
 }
 
 async function keepAwake() {
   try { if (navigator.wakeLock && document.visibilityState === "visible") wakeLock = await navigator.wakeLock.request("screen"); } catch (e) {}
 }
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "hidden") letGo();
-  else if (wanted) {
-    keepAwake();
-    if (pc && controlChannel && controlChannel.readyState !== "open" && joined) lost();
+  if (document.visibilityState === "hidden") {
+    letGo();
+    if (!secure && ws) { ws.onclose = null; ws.close(); ws = null; }
+    return;
   }
+  if (!wanted) return;
+  keepAwake();
+  if (!secure) { connect(); return; }
+  // A short lock can keep the WebRTC link: carry on, accelerating again if a race is on.
+  if (controlChannel && controlChannel.readyState === "open") { if (view === "race" && prefs.auto) aLocked = true; render(); }
+  else if (joined) lost();
 });
 
-$("joinButton").onclick = join;
-$("messageButton").onclick = join;
-$("touchButton").onclick = () => { location.href = macOrigin + "/#" + key; };
-if (!mac || !key) {
-  $("joinButton").classList.add("hidden");
-  $("joinNote").textContent = "Scan the QR code in KartPad on the Mac: Controls → Add Phone Controller…";
-} else if (!window.RTCPeerConnection) {
-  $("joinText").textContent = "This browser can’t make the direct link that tilt needs.";
-  $("joinButton").classList.add("hidden");
-  $("touchButton").classList.remove("hidden");
-  message("Tilt isn’t available here", "This browser can’t make the direct link that tilt needs. The touch-only link still works.", "Try Again", true);
-} else {
-  prepare().catch((e) => { $("joinNote").textContent = "Couldn’t get ready: " + e; });
-}
-show(window.RTCPeerConnection || !mac ? "join" : "message");
 
 // ---- Tilt steering, as in KartPad's iPhone motion steering (apple/mobile/KartPadMotionSteering.mm):
 // the wheel angle is the direction of gravity in the screen's plane, from the phone's gyro-fused
 // gravity estimate, so swinging or jolting the phone doesn't steer. Browsers give it as
-// accelerationIncludingGravity minus acceleration (the motion the phone itself makes). Turning
-// the phone is measured from where it was when tilt came on, or from Recenter.
+// accelerationIncludingGravity minus acceleration (the motion the phone itself makes). Straight is
+// level, like a Wii Wheel: no calibrating. Set Here makes the current angle straight instead, for
+// playing lying down.
 const DEAD_ZONE = 0.045, FULL_LOCK = 0.70;           // radians, at 1× sensitivity
 const SHAKE_REARM = 0.35, SHAKE_TRIGGER = 1.35, SHAKE_COOLDOWN = 0.45;  // g, g, seconds
 const G = 9.80665;
-let askedTilt = false;
-let tilt = false, tiltSteer = 0, tiltAngle = null, center = null, flat = false, filtered = null;
-let sensitivity = pref("sensitivity", 1), inverted = pref("inverted", false), shakeTricks = pref("shake", true);
-let shakeArmed = false, lastShake = -1, shakeUntil = 0;
+let tilt = false, tiltSteer = 0, tiltAngle = null, center = null, levelSide = null, flat = false, filtered = null;
+let shakeArmed = false, lastShake = -1, shakeUntil = 0, lastTurnCheck = 0;
+const wrap = (a) => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; };
 
-function steering(angle, centerAngle) {
-  let delta = angle - centerAngle;
-  while (delta > Math.PI) delta -= 2 * Math.PI;
-  while (delta < -Math.PI) delta += 2 * Math.PI;
-  const fullLock = FULL_LOCK / Math.min(2, Math.max(0.5, sensitivity));
+function steering(angle) {
+  let straight = center;
+  if (straight === null) {
+    // Level, whichever way round the phone is held; the other way only once it's clearly been turned over.
+    if (levelSide === null) levelSide = Math.abs(wrap(angle)) <= Math.PI / 2 ? 0 : Math.PI;
+    else if (Math.abs(wrap(angle - levelSide)) > 0.75 * Math.PI) levelSide = levelSide === 0 ? Math.PI : 0;
+    straight = levelSide;
+  }
+  const delta = wrap(angle - straight);
+  const fullLock = FULL_LOCK / Math.min(2, Math.max(0.5, prefs.sensitivity));
   const magnitude = Math.abs(delta);
   if (magnitude <= DEAD_ZONE) return 0;
   const value = Math.sign(delta) * Math.min(1, (magnitude - DEAD_ZONE) / (fullLock - DEAD_ZONE));
-  return inverted ? -value : value;
+  return prefs.inverted ? -value : value;
 }
 
 function onMotion(event) {
@@ -374,18 +792,20 @@ function onMotion(event) {
     gx = filtered.x;
     gy = filtered.y;
   }
+  gravity = {x: gx, y: gy, t: performance.now()};
   // A phone lying flat has no wheel angle: hold the wheel straight.
   flat = Math.hypot(gx, gy) / G < 0.08;
   if (flat) {
     tiltSteer = 0;
   } else {
     tiltAngle = Math.atan2(gy, gx);
-    if (center === null) center = tiltAngle;
-    tiltSteer = steering(tiltAngle, center);
+    tiltSteer = steering(tiltAngle);
   }
   $("wheel").classList.toggle("flat", flat);
   $("wheel").style.transform = "rotate(" + (tiltSteer * 90) + "deg)";
-  if (shakeTricks && own && own.x != null) shake(Math.hypot(own.x, own.y, own.z || 0) / G, event.timeStamp / 1000);
+  if (prefs.shake && layout() === "race" && own && own.x != null) shake(Math.hypot(own.x, own.y, own.z || 0) / G, event.timeStamp / 1000);
+  // Which way round to draw, while the screen is upright.
+  if (innerHeight > innerWidth && performance.now() - lastTurnCheck > 250) { lastTurnCheck = performance.now(); placeStage(); }
   send();
 }
 
@@ -402,145 +822,257 @@ function shake(magnitude, now) {
   setTimeout(() => { render(); send(); }, 160);
 }
 
-// The stick's x: the thumb when it's on the stick (it overrides tilt, as on iPhone), else tilt.
-function currentX() {
-  if (stick || !tilt) return stickX;
-  return Math.round(tiltSteer * 127);
-}
-
 async function setTilt(on) {
-  let refused = false;
-  if (on && typeof DeviceMotionEvent !== "undefined" && typeof DeviceMotionEvent.requestPermission === "function") {
+  if (on && typeof DeviceMotionEvent.requestPermission === "function") {
+    let refused;
     try { refused = (await DeviceMotionEvent.requestPermission()) !== "granted"; } catch (e) { refused = true; }
-    if (refused) on = false;
+    if (refused) { on = false; toast("Motion access refused."); }
   }
   tilt = on;
+  prefs.tilt = on;
   setPref("tilt", on);
-  center = null;
   tiltSteer = 0;
+  levelSide = null;
   if (on) window.addEventListener("devicemotion", onMotion);
   else window.removeEventListener("devicemotion", onMotion);
-  document.body.classList.toggle("tilt", on);
-  $("mode").classList.toggle("on", on);
-  $("mode").textContent = on ? "TILT" : "STICK";
-  $("center").classList.toggle("hidden", !on);
-  $("hint").textContent = on ? "Turn the phone like a wheel. Touch here for the stick."
-                       : refused ? "Motion access refused. Drag here to steer."
-                                 : "Steer: touch and drag anywhere here";
-  send();
+  syncSettings();
+  applyLayout();
 }
 $("useTilt").onclick = () => { show(null); setTilt(true); };
-$("useStick").onclick = () => { setPref("tilt", false); show(null); setTilt(false); };
-// Motion access needs a tap on iPhone, so tilt comes back on with the first tap of the mode key.
-$("mode").textContent = "STICK";
-$("center").classList.add("hidden");
+$("useStick").onclick = () => { prefs.tilt = false; setPref("tilt", false); show(null); setTilt(false); };
 
+// ---- Settings
 function syncSettings() {
-  for (const b of document.querySelectorAll("[data-sens]")) b.classList.toggle("on", Number(b.dataset.sens) === sensitivity);
-  $("invert").classList.toggle("on", inverted);
-  $("invert").textContent = inverted ? "Inverted" : "Normal";
-  $("shake").classList.toggle("on", shakeTricks);
-  $("shake").textContent = shakeTricks ? "On" : "Off";
+  for (const seg of document.querySelectorAll(".seg[data-pref]"))
+    for (const b of seg.querySelectorAll("button")) b.classList.toggle("on", String(prefs[seg.dataset.pref]) === b.dataset.value);
+  $("straight").querySelector('[data-value="level"]').classList.toggle("on", center === null);
+  $("straight").querySelector('[data-value="here"]').classList.toggle("on", center !== null);
+  for (const row of document.querySelectorAll(".tilt-only")) row.classList.toggle("hidden", !canTilt);
 }
-for (const b of document.querySelectorAll("[data-sens]"))
-  b.onclick = () => { sensitivity = Number(b.dataset.sens); setPref("sensitivity", sensitivity); syncSettings(); };
-$("invert").onclick = () => { inverted = !inverted; setPref("inverted", inverted); syncSettings(); };
-$("shake").onclick = () => { shakeTricks = !shakeTricks; setPref("shake", shakeTricks); syncSettings(); };
+for (const seg of document.querySelectorAll(".seg[data-pref]")) {
+  for (const b of seg.querySelectorAll("button")) {
+    b.onclick = () => {
+      const name = seg.dataset.pref, value = JSON.parse(b.dataset.value);
+      if (name === "tilt") { setTilt(value); return; }
+      prefs[name] = value;
+      setPref(name, value);
+      if (name === "auto" && view === "race") aLocked = value;
+      syncSettings();
+      applyLayout();
+    };
+  }
+}
+$("straight").querySelector('[data-value="level"]').onclick = () => { center = null; levelSide = null; syncSettings(); };
+$("straight").querySelector('[data-value="here"]').onclick = () => { if (tiltAngle !== null) center = tiltAngle; buzz(15); syncSettings(); };
 $("closeSettings").onclick = () => show(null);
-$("leave").onclick = () => {
-  if (controlChannel && controlChannel.readyState === "open") controlChannel.send(new Uint8Array([2]));
-  else goodbye("left");
-};
+$("leave").onclick = () => { if (linkOpen()) sendControl(new Uint8Array([2])); else goodbye("left"); };
 syncSettings();
 
-// ---- Touch: each finger is the stick or a button, and can slide from one button to another.
+// ---- Touch: each finger holds a button (or two, on a seam or A+B), Item, the stick, the D-pad or
+// HOME, and can slide from one button to another.
 const keys = Array.from(document.querySelectorAll(".key[data-bit]"));
-const fingers = new Map();  // pointerId → key element, "stick" or "unlock"
-let stick = null;           // {id, x, y}
+const fingers = new Map();  // pointerId → {kind: "key" | "unlock" | "item" | "stick" | "dpad" | "home", bits, el, aim}
+let stick = null, stickX = 0, stickY = 0;  // stick: where it was touched, on the stage
+let aLocked = false, aLockTimer = 0, homeTimer = 0, homeUntil = 0;
+let aimHeld = 0, aimUntil = 0;
+
 function keyAt(x, y) {
   const el = document.elementFromPoint(x, y);
-  return el && el.closest ? el.closest(".key[data-bit]") : null;
+  return el && el.closest ? el.closest("[data-bit]:not(.arm), #home") : null;
 }
-function radius() { return Math.min(innerWidth, innerHeight) * 0.18; }
-function fingersOn(k) { for (const t of fingers.values()) if (t === k) return true; return false; }
+function inside(el, x, y) {
+  if (el.offsetParent === null) return false;
+  const r = el.getBoundingClientRect();
+  return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+}
 function render() {
-  let held = 0;
-  for (const target of fingers.values()) if (typeof target !== "string") held |= Number(target.dataset.bit);
-  if (aLocked) held |= 1;
-  if (performance.now() < shakeUntil) held |= 256;
+  let pressed = 0;
+  for (const finger of fingers.values()) pressed |= finger.bits;
+  if (performance.now() < shakeUntil) pressed |= 256;
+  if (performance.now() < homeUntil) pressed |= 4096;
+  let held = pressed;
+  const racing = layout() === "race";
+  if (aLocked && racing) held |= 1;
+  // Braking lets go of the accelerator while it's held (then reverses); A+B holds both.
+  if (aLocked && racing && (pressed & 2) && !(pressed & 1)) held &= ~1;
   buttons = held;
-  for (const k of keys) k.classList.toggle("down", (held & Number(k.dataset.bit)) !== 0 && !(k.id === "a" && aLocked && !fingersOn(k)));
-  $("a").classList.toggle("locked", aLocked);
+  for (const k of keys) {
+    const bits = Number(k.dataset.bit), multi = (bits & (bits - 1)) !== 0;
+    k.classList.toggle("down", !k.classList.contains("seam") && (multi ? (pressed & bits) === bits : (pressed & bits) !== 0));
+  }
+  for (const a of document.querySelectorAll(".k-a")) a.classList.toggle("locked", aLocked && racing);
 }
-function placeStick(cx, cy, kx, ky, idle) {
-  $("base").style.left = cx + "px"; $("base").style.top = cy + "px";
-  $("knob").style.left = kx + "px"; $("knob").style.top = ky + "px";
-  $("base").classList.toggle("idle", idle); $("knob").classList.toggle("idle", idle);
-}
-function restStick() {
-  const zone = $("stickzone").getBoundingClientRect();
-  const cx = zone.left + zone.width * 0.45, cy = zone.top + zone.height * 0.55;
-  placeStick(cx, cy, cx, cy, true);
-}
-// Hold A for a second to keep accelerating; a tap while locked unlocks without pressing.
-function pressA(down) {
-  if (down) {
-    if (aLocked) { aLocked = false; return false; }
-    clearTimeout(aLockTimer);
-    aLockTimer = setTimeout(() => { if (fingersOn($("a"))) { aLocked = true; buzz(30); render(); send(); } }, 1000);
-  } else clearTimeout(aLockTimer);
+
+// A, the accelerator. With Auto it's held all race, and only shows for the start and after a fall,
+// where it's just A. With Hold, a second's hold keeps it accelerating, and a tap while it is stops it.
+// In the menus it's just A.
+function pressA() {
+  if (layout() !== "race" || view === "start" || view === "fall" || (prefs.auto && view === "race")) return true;
+  if (aLocked) { aLocked = false; return false; }
+  clearTimeout(aLockTimer);
+  aLockTimer = setTimeout(() => {
+    for (const f of fingers.values()) if (f.bits & 1) { aLocked = true; buzz(30); render(); send(); return; }
+  }, 1000);
   return true;
 }
-const topKeys = {mode: () => setTilt(!tilt), center: () => { center = tiltAngle; buzz(15); },
-                 gear: () => { syncSettings(); show("settings"); }};
+function releaseA() { clearTimeout(aLockTimer); }
+function pressKey(id, k, x, y) {
+  const bits = Number(k.dataset.bit);
+  // A seam with A presses it, but only A itself switches accelerating off.
+  if (bits === 1 && !pressA()) { fingers.set(id, {kind: "unlock", bits: 0, el: k}); return; }
+  if (bits !== 1 && (bits & 1) && !aLocked) pressA();
+  if (k.classList.contains("k-item")) {
+    const aim = aimAt(k, x, y);
+    fingers.set(id, {kind: "item", bits, el: k, aim});
+    showAim(k, aim);
+  } else {
+    fingers.set(id, {kind: "key", bits, el: k});
+  }
+  buzz(8);
+}
+
+// Item, aimed like up or down on the stick: pressed or slid to its top it throws forward, to its
+// bottom it throws back. A held item goes when it's let go, so the aim stays a moment after.
+function aimAt(el, x, y) {
+  const share = (toStage(x, y).y - el.offsetTop) / el.offsetHeight;
+  return share < 0.32 ? -127 : share > 0.68 ? 127 : 0;
+}
+function showAim(el, aim) {
+  el.classList.toggle("aim-up", aim < 0);
+  el.classList.toggle("aim-down", aim > 0);
+}
+function itemAim() {
+  for (const f of fingers.values()) if (f.kind === "item" && f.aim) return f.aim;
+  return performance.now() < aimUntil ? aimHeld : 0;
+}
+function letGoOfItem(finger) {
+  showAim(finger.el, 0);
+  if (!finger.aim) return;
+  aimHeld = finger.aim;
+  aimUntil = performance.now() + 150;
+  setTimeout(() => { render(); send(); }, 160);
+}
+function dpadBits(x, y) {
+  const r = $("dpad").getBoundingClientRect();
+  const c = toStage(r.left + r.width / 2, r.top + r.height / 2), p = toStage(x, y);
+  const dx = p.x - c.x, dy = p.y - c.y, size = Math.max(r.width, r.height);
+  if (Math.hypot(dx, dy) < size * 0.1) return 0;
+  return Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 2048 : 1024) : (dy > 0 ? 512 : 256);
+}
+function startHome(id, el) {
+  fingers.set(id, {kind: "home", bits: 0, el});
+  el.classList.add("holding");
+  clearTimeout(homeTimer);
+  // Held half a second, so a stray tap mid-race doesn't open KartPad HOME.
+  homeTimer = setTimeout(() => {
+    el.classList.remove("holding");
+    homeUntil = performance.now() + 200;
+    buzz(20);
+    render(); send();
+    setTimeout(() => { render(); send(); }, 220);
+  }, 500);
+}
+function cancelHome() { clearTimeout(homeTimer); $("home").classList.remove("holding"); }
+function placeStick(cx, cy, kx, ky, idle) {
+  const base = $("base"), knob = $("knob");
+  base.style.left = cx + "px"; base.style.top = cy + "px";
+  knob.style.left = kx + "px"; knob.style.top = ky + "px";
+  base.classList.toggle("idle", idle); knob.classList.toggle("idle", idle);
+}
+function restStick() {
+  const zone = $("stickzone");
+  if (zone.offsetParent === null || stick) return;
+  const left = zone.offsetLeft, top = zone.offsetTop;
+  const cx = left + zone.offsetWidth * (prefs.lefty ? 0.55 : 0.45), cy = top + zone.offsetHeight * 0.62;
+  placeStick(cx, cy, cx, cy, true);
+}
+const radius = () => Math.min(W, H) * 0.18;
+const barKeys = {tiltKey: () => setTilt(!tilt), gear: () => { syncSettings(); show("settings"); },
+                 layoutKey: () => { manualRace = !manualRace; aLocked = false; applyLayout(); }};
+
 document.addEventListener("pointerdown", (e) => {
-  if (!joined || (e.target.closest && e.target.closest(".sheet"))) return;
-  const top = e.target.closest && e.target.closest("#mode, #center, #gear");
-  if (top) { topKeys[top.id](); return; }
-  const k = keyAt(e.clientX, e.clientY);
-  if (k) {
-    if (k.id === "a" && !pressA(true)) { fingers.set(e.pointerId, "unlock"); render(); send(); return; }
-    fingers.set(e.pointerId, k); buzz(8);
-  } else if (!stick && e.clientX < innerWidth * 0.55 && e.clientY > innerHeight * 0.16) {
-    stick = {id: e.pointerId, x: e.clientX, y: e.clientY};
-    fingers.set(e.pointerId, "stick");
-    placeStick(e.clientX, e.clientY, e.clientX, e.clientY, false);
+  if (!joined || sheet !== null || !$("turn").classList.contains("hidden")) return;
+  const target = document.elementFromPoint(e.clientX, e.clientY);
+  const bar = target && target.closest && target.closest("#tiltKey, #gear, #layoutKey");
+  if (bar) { barKeys[bar.id](); return; }
+  if (inside($("dpad"), e.clientX, e.clientY)) {
+    fingers.set(e.pointerId, {kind: "dpad", bits: dpadBits(e.clientX, e.clientY)});
+    buzz(8);
+  } else {
+    const k = keyAt(e.clientX, e.clientY);
+    if (k && k.id === "home") startHome(e.pointerId, k);
+    else if (k) pressKey(e.pointerId, k, e.clientX, e.clientY);
+    else if (!stick && inside($("stickzone"), e.clientX, e.clientY)) {
+      const p = toStage(e.clientX, e.clientY);
+      stick = {id: e.pointerId, x: p.x, y: p.y};
+      fingers.set(e.pointerId, {kind: "stick", bits: 0});
+      placeStick(p.x, p.y, p.x, p.y, false);
+    }
   }
   render(); send();
 });
 document.addEventListener("pointermove", (e) => {
-  const was = fingers.get(e.pointerId);
-  if (was === undefined || was === "unlock") return;
-  if (was === "stick") {
-    let dx = e.clientX - stick.x, dy = e.clientY - stick.y;
+  const finger = fingers.get(e.pointerId);
+  if (!finger) return;
+  if (finger.kind === "stick") {
+    const p = toStage(e.clientX, e.clientY);
+    let dx = p.x - stick.x, dy = p.y - stick.y;
     const r = radius(), d = Math.hypot(dx, dy);
     if (d > r) { dx *= r / d; dy *= r / d; }
     stickX = Math.round(dx / r * 127); stickY = Math.round(dy / r * 127);
     placeStick(stick.x, stick.y, stick.x + dx, stick.y + dy, false);
+  } else if (finger.kind === "dpad") {
+    const bits = dpadBits(e.clientX, e.clientY);
+    if (bits !== finger.bits && bits) buzz(8);
+    finger.bits = bits;
+  } else if (finger.kind === "home") {
+    if (!inside(finger.el, e.clientX, e.clientY)) { cancelHome(); fingers.delete(e.pointerId); }
+  } else if (finger.kind === "item") {
+    // Held until let go, wherever the finger slides; sliding only aims it.
+    const aim = aimAt(finger.el, e.clientX, e.clientY);
+    if (aim !== finger.aim) { finger.aim = aim; showAim(finger.el, aim); buzz(6); }
   } else {
     const k = keyAt(e.clientX, e.clientY);
-    if (k && k !== was) {
-      if (was.id === "a") pressA(false);
-      if (k.id === "a" && !pressA(true)) return;
-      fingers.set(e.pointerId, k); buzz(8);
+    if (k && k !== finger.el && k.id !== "home" && k.closest(".layer, .bar") === finger.el.closest(".layer, .bar")) {
+      if ((finger.bits & 1) && !(Number(k.dataset.bit) & 1)) releaseA();
+      if ((Number(k.dataset.bit) & 1) && (finger.bits & 1)) { finger.bits = Number(k.dataset.bit); finger.el = k; }
+      else pressKey(e.pointerId, k, e.clientX, e.clientY);
     }
   }
   render(); send();
 });
 function lift(e) {
-  const was = fingers.get(e.pointerId);
-  if (was === undefined) return;
+  const finger = fingers.get(e.pointerId);
+  if (!finger) return;
   fingers.delete(e.pointerId);
-  if (was === "stick") { stick = null; stickX = 0; stickY = 0; restStick(); }
-  else if (was !== "unlock" && was.id === "a") pressA(false);
+  if (finger.kind === "stick") { stick = null; stickX = 0; stickY = 0; restStick(); }
+  else if (finger.kind === "home") cancelHome();
+  else if (finger.kind === "item") letGoOfItem(finger);
+  else if (finger.kind === "key" && (finger.bits & 1)) releaseA();
   render(); send();
 }
 document.addEventListener("pointerup", lift);
 document.addEventListener("pointercancel", lift);
 for (const type of ["touchstart", "touchmove", "gesturestart", "dblclick", "contextmenu"])
   document.addEventListener(type, (e) => { if (e.target.tagName !== "BUTTON") e.preventDefault(); }, {passive: false});
-addEventListener("resize", restStick);
-restStick();
+
+// ---- Off we go
+$("joinButton").onclick = join;
+$("messageButton").onclick = join;
+$("touchButton").onclick = () => { location.href = macOrigin + "/#" + key; };
+show("join");
+applyLayout();
+if (!mac || !key) {
+  $("joinButton").classList.add("hidden");
+  $("joinNote").textContent = "Scan the QR code in KartPad on the Mac: Controls → Add Phone Controller…";
+} else if (!secure) {
+  ready(true);
+} else if (!window.RTCPeerConnection) {
+  message("Tilt isn’t available here", "This browser can’t make the direct link that tilt needs. The touch-only link still works.", "Try Again", true);
+  $("messageButton").classList.add("hidden");
+} else {
+  prepare().catch((e) => { $("joinNote").textContent = "Couldn’t get ready: " + e; });
+}
 </script>
 </body>
 </html>

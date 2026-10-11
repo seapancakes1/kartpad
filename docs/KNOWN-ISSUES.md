@@ -73,7 +73,10 @@ the [archive](archive/known-issues-through-2026-09.md).
 - **Mac: phone controllers on campus, hotel or guest Wi‑Fi:** networks that
   keep devices apart stop phones reaching the Mac. Use a home network instead.
 - **Mac: the tilt page needs internet on the phone** to open (it's published
-  over HTTPS). Offline, use **Code Without Tilt**, which is touch only.
+  over HTTPS). Offline, `defaults write dev.kartpad.app KartPadPhonePageURL ""`
+  makes the QR code open the touch-only controller the Mac serves itself.
+- **Mac: phone controller haptics on iPhone** rely on Safari answering a
+  switch toggle with a tick (iOS 18 and later), and may not tick on every press.
 - **Mac: Wii Remote with Classic Controller Pro** has input lag and no D-pad.
   [#306](https://github.com/chrissotraidis/kartpad/issues/306)
 

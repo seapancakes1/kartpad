@@ -53,32 +53,68 @@ Guests can play on a Mac with their own phone and nothing to install. Choose
 Controller → Phone**), scan the QR code with the phone's camera, open the link
 and tap **Join**. A second tab opens for a moment to link the phone to the Mac,
 then closes. Choose **Use Tilt** to steer by turning the phone like a wheel, or
-drag anywhere on the left half to steer with a stick; **A**, **Drift**, **Item**,
-**B**, **Trick**, **Pause** and **HOME** are on the right and top. Hold A for a
-second to lock acceleration, and tap it to unlock, as on iPhone.
+**Use the Stick**.
+
+The phone shows the controls for what its player is doing, which KartPad reads
+from the game:
+
+- **Menus** (and a paused race, or one that player has finished): a D-pad, **A**
+  and **B**.
+- **A race:** **Drift** under the right thumb, with **B**, **A+B** and
+  **Trick** beside it, and **Item** on the left. With tilt, Item sits alone
+  under the left thumb and a wheel shows the steering (a sharp shake also does a
+  trick). With the stick, drag anywhere on the left to steer; Item is above it.
+- **Item** aims like up or down on the stick: press or slide to its top to
+  throw forward, its bottom to throw back, the middle to use it as normal. Hold
+  it to keep the item trailing; it's thrown when you let go.
+- **Accelerating:** from GO the phone accelerates by itself, so there's no A
+  button. Hold **B** to brake and reverse; let go to drive on. Hold **A+B** when
+  stopped (after a hit, say) to charge a standstill mini-turbo, then let go to
+  launch. The countdown and a fall are the player's: **A** takes Drift's place
+  for a rocket start, and from falling off until just after Lakitu sets the kart
+  down, for his boost (press A as you land). KartPad reads the fall from the
+  game, as it does the race.
+- **Accelerate: Hold** in **⚙** puts A beside Drift for the whole race instead:
+  hold it to accelerate, or hold it for a second to keep accelerating and tap it
+  to stop. A thumb on the edge between **A** and **Drift**, or **A** and **B**,
+  presses both.
+- **HOME** needs a half-second hold, so a stray tap doesn't open it mid-race.
+  **Pause**, **Tilt**/**Stick** and **⚙** are along the top.
+
+More:
 
 - **Tilt** works like KartPad's iPhone motion steering: it follows the phone's
   angle (from the phone's gyro-steadied gravity), not how hard it's moved, so
-  swinging or jolting the phone doesn't steer. **⟲** recenters; the **⚙** sheet
-  has sensitivity (0.5×, 1×, 2×), direction, shake for tricks, and the link's
-  delay. Touching the stick area steers with the stick meanwhile.
+  swinging or jolting the phone doesn't steer. Straight is level, like a Wii
+  Wheel, so there's nothing to calibrate; **Straight: Set Here** makes the
+  current angle straight instead, for playing lying down. **⚙** also has
+  sensitivity (0.5×, 1×, 2×), direction, shake for Trick, accelerating, the
+  hand (**Left** mirrors the controls) and the link's delay.
+- A hard turn can make the phone turn its screen to portrait; the controller
+  carries on drawn sideways, but **Rotation Lock** (in Control Centre) keeps the
+  screen still. With rotation lock on, tap **Rotation Lock Is On** when the page
+  asks for the phone to be turned (and **Screen: Flip** in **⚙** if it comes out
+  upside down).
 - The tilt page is published over HTTPS (browsers only give motion to such
-  pages), so the phone needs internet to open it. **Code Without Tilt** on the
-  Mac switches to a touch-only page the Mac serves itself, which works offline.
-  After the page opens, input goes straight from the phone to the Mac over a
-  WebRTC data channel on your Wi‑Fi; nothing passes through the internet.
-
+  pages), so the phone needs internet to open it. After it opens, input goes
+  straight from the phone to the Mac over a WebRTC data channel on your Wi‑Fi;
+  nothing passes through the internet. If that direct link fails, **Use the
+  Touch-Only Link** opens the same controller from the Mac itself, touch only.
+- The Mac's phone page lists the phones that have joined, with each one's
+  player, how quick its link is, and **Remove**.
 - Up to four phones join, each as its own controller (`Phone 1` to `Phone 4`)
-  on the first free player. Controllers and Player Order move them like any
-  other controller, and the phone shows its player number and colour.
+  on the first free player (or the keyboard's, while the keyboard just follows
+  free players), as a controller does. Controllers and Player Order move them
+  like any other controller, and the phone shows its player number and colour.
 - The phone must be on the same Wi‑Fi as the Mac. Networks that keep devices
   apart, common on campus, hotel and guest Wi‑Fi, block it.
-- A phone that locks or drops keeps its player for a minute. The touch page
-  rejoins by itself; the tilt page shows **Reconnect** (one tap, since it opens
-  the linking tab again). **Leave** (in the ⚙ sheet on the tilt page) frees it at
-  once.
+- A phone that locks or drops keeps its player for a minute. The touch-only page
+  rejoins by itself. The tilt page usually carries on after a short lock, and
+  otherwise shows **Reconnect** (one tap, since it opens the linking tab again).
+  **Leave** in **⚙** frees the player at once.
 - The link changes each time KartPad starts, so scan again after a restart.
-- iPhones don't vibrate; Android phones do when the game rumbles.
+- Android phones vibrate on presses and when the game rumbles. iPhones (iOS 18
+  and later) give a light tick on presses; the game's rumble doesn't reach them.
 - A phone's player lasts for that session only; it is never saved, so a phone
   that joined first doesn't take Player 1 from a controller next time.
 

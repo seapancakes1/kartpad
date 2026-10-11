@@ -69,7 +69,8 @@ so you can tell which one is yours.
   KartPad watches. When the new controller turns up it celebrates and gives it
   the first free player. The search stops after about a minute, since it slows
   other Bluetooth while it runs, and automated runs (`KARTPAD_BACKGROUND=1`)
-  don't search.
+  don't search. The phone page shows one QR code and lists the phones that have
+  joined, each with its player, its link delay and **Remove**.
 - **The keyboard** is a controller too: by default it plays as the first
   player without a controller, so a pad on Player 1 now works alongside it.
   Settings → Controls → Keyboard plays as pins it to a player.
@@ -218,10 +219,11 @@ mouse click on a control: what the window's hit test finds, then the click),
 control on the screen), `vpad add|press N BUTTON|release N BUTTON|remove N`
 (SDL virtual controllers, to check choosing controllers by pressing and joining),
 `move IDENTIFIER|vpadN SLOT` (put a controller on a player, or take it off with
--1, without benching it), `phone start|status|background-input` (phone
+-1, without benching it), `phone start|status|background-input|remove N` (phone
 controllers: start the server, log the touch and tilt links and each phone's
-player and what its pad presses, or keep SDL input while KartPad is in the
-background),
+player, what its pad presses, the controls it shows and its link delay, keep
+SDL input while KartPad is in the background, or remove phone N as the Connect
+screen does),
 `key NAME` (a key the game reads as typed, by SDL's
 name: `key return` is A for the keyboard's player; a backgrounded game ignores
 controllers but takes these), `shot NAME`,

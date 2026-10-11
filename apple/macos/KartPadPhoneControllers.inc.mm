@@ -14,7 +14,9 @@
 // The protocol itself is in kartpad/network/phone_pad.h. Network work runs on its own queue, which
 // also sets the virtual pads' buttons and axes (SDL's joystick lock makes that safe from there).
 // Attaching and detaching pads and choosing their players happen on the main thread, as the rest
-// of the roster does.
+// of the roster does. Each phone is also told what its player is doing (the menus, the start of a
+// race, the race), read from the game's memory on the game loop (kartpad/network/phone_race.h), so
+// the page shows the controls for it.
 // Included by KartPadMacShell.mm after KartPadControllerRoster.inc.mm.
 
 #import <CoreImage/CoreImage.h>
@@ -32,6 +34,8 @@
 #include <rtc/rtc.h>
 
 #include "kartpad/network/phone_pad.h"
+#include "kartpad/network/phone_race.h"
+#include "memory.h"
 
 namespace kpp = kartpad::phone_pad;
 
@@ -50,6 +54,9 @@ static_assert(kpp::sdl::LeftX == SDL_GAMEPAD_AXIS_LEFTX && kpp::sdl::LeftY == SD
 static constexpr const char *KPPhonePreferredPort = "47800";
 static constexpr uint64_t KPPhoneRequestDeadlineMs = 5000;  // a connection that hasn't asked for anything
 static constexpr uint64_t KPPhoneSilenceMs = 5000;          // a phone that has stopped sending (it sends every 50 ms)
+// A WebRTC phone goes quiet when its screen locks, and its link can outlast a short lock, which saves
+// a tap on Reconnect (coming back needs the helper tab again). Its buttons are let go after a second.
+static constexpr uint64_t KPPhoneRtcSilenceMs = 30000;
 static constexpr uint64_t KPPhoneJoinDeadlineMs = 15000;    // a WebRTC link that never opened its channels
 
 static uint64_t KPPhoneNow() { return clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1000000; }
@@ -108,6 +115,16 @@ static std::atomic<uint16_t> KPPhonePort{0};
 static std::atomic<bool> KPPhoneFailed{false};
 // Each phone's virtual pad; set on the main thread and read on the queue, both under SDL's joystick lock.
 static std::array<SDL_Joystick *, kpp::MaxPhones> KPPhoneJoysticks{};
+// What each player is doing in the game (phone_pad::RaceView), by slot, from the game loop; whether one
+// of KartPad's screens has the controllers, from the main thread; each phone's player (1-4, 0 for
+// none), from the main thread; and each phone's link delay, from the queue, for the Connect screen.
+static std::array<std::atomic<uint8_t>, kpp::race::Channels> KPPhoneRaceViews{};
+static std::atomic<bool> KPPhoneScreenUp{false}, KPPhoneStarted{false};
+static std::array<std::atomic<int>, kpp::MaxPhones> KPPhonePlayers{};
+static std::array<std::atomic<int>, kpp::MaxPhones> KPPhoneDelays{};
+static std::array<std::atomic<bool>, kpp::MaxPhones> KPPhoneLinked{};  // connected now, not just holding its player
+// On the queue: the view each phone was last told, -1 until its welcome.
+static std::array<int, kpp::MaxPhones> KPPhoneToldView{-1, -1, -1, -1};
 
 static void KPPhoneApply(int phone, const kpp::PadState &state) {
   const kpp::GamepadValues values = kpp::ToGamepad(state);
@@ -131,6 +148,7 @@ static void KPPhoneClose(const KPPhoneLinkRef &link) {
   if (phone >= 0 && KPPhoneDriver[phone] == link) {
     // Dropped: the phone keeps its pad and player for a while, holding nothing, to come back to.
     KPPhoneDriver[phone] = nullptr;
+    KPPhoneLinked[phone] = false;
     KPPhoneSessions.Disconnected(phone, KPPhoneNow());
     KPPhoneApply(phone, {});
   }
@@ -202,6 +220,13 @@ static std::string KPPhoneColorMessage(int slot) {
   return kpp::ColorMessage((rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff);
 }
 
+// A phone with a pad, for the Connect screen's list: its number (0-3), its player (1-4, 0 for none),
+// its link delay (0 until it reports one), and whether it's connected or away, holding its player.
+struct KPPhoneEntry {
+  int phone = 0, player = 0, delayMs = 0;
+  bool linked = false;
+};
+
 @interface KPPhoneServer : NSObject <KPRosterListener>
 + (instancetype)shared;
 - (void)start;
@@ -214,8 +239,40 @@ static std::string KPPhoneColorMessage(int slot) {
 - (void)drawCode:(NSString *)url in:(CGContextRef)c rect:(CGRect)rect;
 - (void)seatPhone:(int)phone then:(void (^)(int slot))done;
 - (void)removePhone:(int)phone;
+- (void)sendAway:(int)phone;  // the Connect screen's Remove
+- (std::vector<KPPhoneEntry>)entries;
 - (NSString *)status;
 @end
+
+// The controls a phone should show: its player's race view, or the menus while it has no player or
+// one of KartPad's screens has the controllers.
+static kpp::RaceView KPPhoneView(int phone) {
+  const int player = KPPhonePlayers[phone].load();
+  if (player <= 0 || KPPhoneScreenUp.load()) return kpp::RaceView::Menus;
+  return static_cast<kpp::RaceView>(KPPhoneRaceViews[player - 1].load());
+}
+
+// Tells a phone its view when it changes, or always (just after its welcome).
+static void KPPhoneTellView(int phone, bool always) {
+  const KPPhoneLinkRef &link = KPPhoneDriver[phone];
+  if (link == nullptr || (!always && KPPhoneToldView[phone] < 0)) return;
+  const kpp::RaceView view = KPPhoneView(phone);
+  if (!always && KPPhoneToldView[phone] == static_cast<int>(view)) return;
+  KPPhoneToldView[phone] = static_cast<int>(view);
+  KPPhoneSendText(link, kpp::RaceMessage(view));
+}
+
+// Lets a phone go for good: it left, or the Mac removed it.
+static void KPPhoneLetGo(const KPPhoneLinkRef &link, int phone, std::string_view reason) {
+  KPPhoneSessions.Leave(phone);
+  KPPhoneDriver[phone] = nullptr;
+  KPPhoneDelays[phone] = 0;
+  KPPhoneLinked[phone] = false;
+  link->phone = -1;
+  KPPhoneApply(phone, {});
+  KPPhoneSendAway(link, reason);
+  dispatch_async(dispatch_get_main_queue(), ^{ [KPPhoneServer.shared removePhone:phone]; });
+}
 
 static void KPPhoneJoin(const KPPhoneLinkRef &link, const std::string &token) {
   link->joined = true;
@@ -232,6 +289,8 @@ static void KPPhoneJoin(const KPPhoneLinkRef &link, const std::string &token) {
   KPPhoneDriver[phone] = link;
   link->phone = phone;
   KPPhoneRumbling[phone] = false;
+  KPPhoneToldView[phone] = -1;
+  KPPhoneLinked[phone] = true;
   const std::string token_ = KPPhoneSessions[phone].token;
   KPPhoneLinkRef keep = link;
   dispatch_async(dispatch_get_main_queue(), ^{
@@ -240,6 +299,7 @@ static void KPPhoneJoin(const KPPhoneLinkRef &link, const std::string &token) {
         if (KPPhoneDriver[phone] != keep) return;
         KPPhoneSendText(keep, kpp::WelcomeMessage(phone + 1, slot + 1, token_));
         if (slot >= 0) KPPhoneSendText(keep, KPPhoneColorMessage(slot));
+        KPPhoneTellView(phone, true);
       });
     }];
   });
@@ -256,12 +316,12 @@ static void KPPhoneMessage(const KPPhoneLinkRef &link, const std::string &payloa
     return;
   }
   if (message.type == kpp::LeaveMessage) {
-    KPPhoneSessions.Leave(phone);
-    KPPhoneDriver[phone] = nullptr;
-    link->phone = -1;
-    KPPhoneApply(phone, {});
-    KPPhoneSendAway(link, "left");
-    dispatch_async(dispatch_get_main_queue(), ^{ [KPPhoneServer.shared removePhone:phone]; });
+    KPPhoneLetGo(link, phone, "left");
+    return;
+  }
+  if (message.type == kpp::DelayMessage) {
+    KPPhoneSessions.Delay(phone, message.delayMs);
+    KPPhoneDelays[phone] = message.delayMs;
     return;
   }
   if (KPPhoneSessions.Update(phone, message.state, KPPhoneNow())) KPPhoneApply(phone, message.state);
@@ -394,19 +454,20 @@ static void KPPhoneAccept(nw_connection_t connection) {
   KPPhoneReceive(link);
 }
 
-// Every 100 ms: let go of a quiet phone's buttons, remove pads whose phone didn't come back, and
-// close connections that stopped talking.
+// Every 100 ms: let go of a quiet phone's buttons, remove pads whose phone didn't come back, close
+// connections that stopped talking, and tell phones what their players are doing.
 static void KPPhoneTick() {
   const uint64_t now = KPPhoneNow();
   const kpp::Sessions::Changes changes = KPPhoneSessions.Advance(now);
   for (int phone : changes.idle) KPPhoneApply(phone, {});
   for (int phone : changes.expired)
     dispatch_async(dispatch_get_main_queue(), ^{ [KPPhoneServer.shared removePhone:phone]; });
+  for (int phone = 0; phone < kpp::MaxPhones; ++phone) KPPhoneTellView(phone, false);
   const std::vector<KPPhoneLinkRef> links = KPPhoneLinks;
   for (const KPPhoneLinkRef &link : links) {
     if (link->answered) continue;
     bool quiet;
-    if (link->peer) quiet = link->joined ? now - link->lastHeard > KPPhoneSilenceMs : now - link->openedAt > KPPhoneJoinDeadlineMs;
+    if (link->peer) quiet = link->joined ? now - link->lastHeard > KPPhoneRtcSilenceMs : now - link->openedAt > KPPhoneJoinDeadlineMs;
     else if (link->upgraded) quiet = now - link->lastHeard > KPPhoneSilenceMs;
     else quiet = now - link->openedAt > KPPhoneRequestDeadlineMs;
     if (quiet) KPPhoneClose(link);
@@ -588,7 +649,29 @@ static bool SDLCALL KPPhoneRumble(void *userdata, Uint16 low, Uint16 high) {
   return true;
 }
 
+#pragma mark Game loop
+
+// Ten times a second once phones are on: what each player is doing, from the game's memory.
+static void KPPhoneRaceTick() {
+  static uint64_t lastRead;
+  static kpp::race::Views logged{};
+  const uint64_t now = KPPhoneNow();
+  if (!KPPhoneStarted.load(std::memory_order_relaxed) || now - lastRead < 100) return;
+  lastRead = now;
+  const kpp::race::Views views =
+      kpp::race::ReadViews([](uint32_t address, uint32_t &value) { return Memory::TryRead32(address, value); });
+  for (size_t slot = 0; slot < views.size(); ++slot) KPPhoneRaceViews[slot] = static_cast<uint8_t>(views[slot]);
+  if (views == logged) return;
+  logged = views;
+  const auto &kNames = kpp::RaceViewNames;
+  AppendSessionLine([NSString stringWithFormat:@"phoneRace=%s,%s,%s,%s", kNames[int(views[0])], kNames[int(views[1])],
+                                               kNames[int(views[2])], kNames[int(views[3])]]);
+}
+
 #pragma mark Main thread
+
+static BOOL KPPhoneOverlayActive();                // KartPadControllersScreen.inc.mm
+extern "C" bool KartPadControllersVisible();       // KartPadMacMiis.inc.mm
 
 // Where the HTTPS controller page is published (web/phone in this repository), overridable with
 // `defaults write dev.kartpad.app KartPadPhonePageURL <https URL>`; an empty value leaves phones
@@ -674,6 +757,7 @@ static std::vector<bool> KPPhoneQRModules(NSString *text, int &size) {
 
 @implementation KPPhoneServer {
   BOOL _started;
+  NSTimer *_screenTimer;
   NSString *_key;
   NSURL *_page;
   std::array<SDL_JoystickID, kpp::MaxPhones> _pads;
@@ -710,6 +794,13 @@ static std::vector<bool> KPPhoneQRModules(NSString *text, int &size) {
   if (origin.empty()) _page = nil;
   rtcInitLogger(RTC_LOG_WARNING, KPPhoneRtcLog);
   [KPControllerRoster.shared.listeners addObject:self];
+  KPPhoneStarted = true;
+  // While one of KartPad's screens has the controllers, phones show the menus' controls. (Screens that
+  // pause the game stop the game loop, so this is looked at here.)
+  _screenTimer = [NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *timer) {
+    (void)timer;
+    KPPhoneScreenUp = KPPhoneOverlayActive() || KartPadControllersVisible();
+  }];
   dispatch_async(KPPhoneQueue(), ^{
     KPPhoneKey = key;
     KPPhoneControllerOrigin = origin;
@@ -825,13 +916,19 @@ static std::vector<bool> KPPhoneQRModules(NSString *text, int &size) {
     else done(-1);
     return;
   }
+  // As a controller joining by a press does (KPAutoJoinTick): the first free player, or the keyboard's
+  // while the keyboard just follows free players.
+  const BOOL keyboardFloats = ![[NSUserDefaults.standardUserDefaults objectForKey:KPKeyboardPlayerKey] isKindOfClass:NSNumber.class];
   if (device.slot < 0 && ![roster.benched containsObject:device.identifier])
-    for (int slot = 0; slot < KPPlayerCount; ++slot)
-      if (![roster deviceInSlot:slot]) {
+    for (int slot = 0; slot < KPPlayerCount; ++slot) {
+      KPPadDevice *occupant = [roster deviceInSlot:slot];
+      if (occupant == nil || (occupant.isKeyboard && keyboardFloats)) {
         [roster move:device toSlot:slot];
         break;
       }
+    }
   _toldSlot[phone] = device.slot;
+  KPPhonePlayers[phone] = device.slot + 1;
   done(device.slot);
 }
 
@@ -846,7 +943,28 @@ static std::vector<bool> KPPhoneQRModules(NSString *text, int &size) {
   SDL_DetachVirtualJoystick(id);
   _pads[phone] = 0;
   _toldSlot[phone] = -2;
+  KPPhonePlayers[phone] = 0;
   AppendSessionLine([NSString stringWithFormat:@"phoneLeft=%d", phone + 1]);
+}
+
+- (void)sendAway:(int)phone {
+  dispatch_async(KPPhoneQueue(), ^{
+    if (const KPPhoneLinkRef link = KPPhoneDriver[phone]) {
+      KPPhoneLetGo(link, phone, "removed");
+      return;
+    }
+    // Holding its player while it's away: there's no one to tell.
+    KPPhoneSessions.Leave(phone);
+    KPPhoneDelays[phone] = 0;
+    dispatch_async(dispatch_get_main_queue(), ^{ [self removePhone:phone]; });
+  });
+}
+
+- (std::vector<KPPhoneEntry>)entries {
+  std::vector<KPPhoneEntry> entries;
+  for (int phone = 0; phone < kpp::MaxPhones; ++phone)
+    if (_pads[phone]) entries.push_back({phone, KPPhonePlayers[phone].load(), KPPhoneDelays[phone].load(), KPPhoneLinked[phone].load()});
+  return entries;
 }
 
 // A phone moved to another player (Controllers, Stop playing, Player Order): tell it, so it shows
@@ -859,6 +977,7 @@ static std::vector<bool> KPPhoneQRModules(NSString *text, int &size) {
     const int slot = device ? device.slot : -1;
     if (slot == _toldSlot[phone]) continue;
     _toldSlot[phone] = slot;
+    KPPhonePlayers[phone] = slot + 1;
     dispatch_async(KPPhoneQueue(), ^{
       const KPPhoneLinkRef &link = KPPhoneDriver[phone];
       if (link == nullptr) return;
@@ -878,10 +997,11 @@ static std::vector<bool> KPPhoneQRModules(NSString *text, int &size) {
   for (int phone = 0; phone < kpp::MaxPhones; ++phone) {
     if (_pads[phone] == 0) continue;
     KPPadDevice *device = [roster deviceWithIdentifier:[NSString stringWithFormat:@"sdl:%u", _pads[phone]]];
-    [text appendFormat:@" phone%d=sdl:%u,player=%d,buttons=0x%llx,x=%.2f,l=%.2f,r=%.2f", phone + 1, _pads[phone],
-                       device ? device.slot + 1 : 0, device ? (unsigned long long)device.buttons : 0ull,
+    [text appendFormat:@" phone%d=sdl:%u,player=%d,buttons=0x%llx,x=%.2f,l=%.2f,r=%.2f,view=%d,delay=%d", phone + 1,
+                       _pads[phone], device ? device.slot + 1 : 0, device ? (unsigned long long)device.buttons : 0ull,
                        device ? device->axes[SDL_GAMEPAD_AXIS_LEFTX] : 0.f, device ? device->axes[SDL_GAMEPAD_AXIS_LEFT_TRIGGER] : 0.f,
-                       device ? device->axes[SDL_GAMEPAD_AXIS_RIGHT_TRIGGER] : 0.f];
+                       device ? device->axes[SDL_GAMEPAD_AXIS_RIGHT_TRIGGER] : 0.f, static_cast<int>(KPPhoneView(phone)),
+                       KPPhoneDelays[phone].load()];
   }
   return text;
 }

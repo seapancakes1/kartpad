@@ -2,7 +2,8 @@
 # data channels only, over Mbed TLS for DTLS. Everything is fetched at pinned versions and built
 # statically. libdatachannel's own dependencies (libjuice, usrsctp, plog) are git submodules missing
 # from its release tarball, so each is fetched at the commit v0.24.6 pins and put where it expects.
-# Defines kartpad_phone_link, which the Mac products link.
+# Defines kartpad_phone_link, which the Mac products link. It also carries the controller page
+# (web/phone/index.html), so the Mac can serve it itself for the touch-only link.
 include_guard(GLOBAL)
 include(FetchContent)
 
@@ -80,3 +81,17 @@ kartpad_add_phone_link_dependencies()
 add_library(kartpad_phone_link INTERFACE)
 target_link_libraries(kartpad_phone_link INTERFACE LibDataChannel::LibDataChannelStatic)
 target_compile_definitions(kartpad_phone_link INTERFACE RTC_STATIC KARTPAD_PHONE_WEBRTC=1)
+
+# The controller page as a C++ string (KartPadPhonePage.inc.mm includes it). Written again when the page
+# changes; file(CONFIGURE) leaves the header alone when nothing did, so nothing rebuilds needlessly.
+set(KARTPAD_PHONE_PAGE "${CMAKE_CURRENT_LIST_DIR}/../web/phone/index.html")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${KARTPAD_PHONE_PAGE}")
+file(READ "${KARTPAD_PHONE_PAGE}" KARTPAD_PHONE_PAGE_HTML)
+string(FIND "${KARTPAD_PHONE_PAGE_HTML}" ")KPPAGE\"" KARTPAD_PHONE_PAGE_DELIMITER)
+if(NOT KARTPAD_PHONE_PAGE_DELIMITER EQUAL -1)
+    message(FATAL_ERROR "web/phone/index.html contains the C++ string's closing delimiter")
+endif()
+file(CONFIGURE OUTPUT "${CMAKE_BINARY_DIR}/kartpad_generated/KartPadPhonePageHTML.inc"
+    CONTENT "// Generated from web/phone/index.html by cmake/KartPadPhoneLink.cmake.\nstatic const char KPPhonePage[] = R\"KPPAGE(@KARTPAD_PHONE_PAGE_HTML@)KPPAGE\";\n"
+    @ONLY)
+target_include_directories(kartpad_phone_link INTERFACE "${CMAKE_BINARY_DIR}/kartpad_generated")

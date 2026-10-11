@@ -95,6 +95,10 @@ small web server, the helper page and `/signal`, and a way to feed a player
 slot (on tvOS and iOS, KartPad's own controller slots rather than SDL virtual
 pads). This is a no-install alternative to the DSU approach below.
 
+Possible next steps, from the phone controller to the iPhone app's own touch
+controls: level as straight in its motion steering, Item aimed by where it's
+pressed, and Auto accelerating that hands A back for the start and falls.
+
 ## DSU / Cemuhook motion controllers on Apple TV
 
 **Status:** Reviewed; deferred for an optional experimental build. Not implemented

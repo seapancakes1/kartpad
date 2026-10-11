@@ -496,6 +496,7 @@ extern "C" void KartPadControllersTick() {
     KPHomeTick();
     KPOverlayGameTick();
     KPDiscordPresenceTick();
+    KPPhoneRaceTick();
   }
 }
 // The runtime keeps pad and keyboard input from the game (and the pointer visible) while this is

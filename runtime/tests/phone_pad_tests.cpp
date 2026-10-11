@@ -1,6 +1,8 @@
 #include "kartpad/network/phone_pad.h"
+#include "kartpad/network/phone_race.h"
 
 #include <iostream>
+#include <map>
 
 namespace {
 
@@ -160,6 +162,10 @@ bool Messages() {
                "leave message");
   ok &= Expect(DecodeMessage(std::string{char(PingMessage), 7, 1}, message) && message.type == PingMessage, "ping");
   ok &= Expect(!DecodeMessage(std::string{char(PingMessage), 7}, message), "short ping");
+  ok &= Expect(DecodeMessage(std::string{char(DelayMessage), 0x2c, 0x01}, message) && message.type == DelayMessage &&
+                   message.delayMs == 300,
+               "delay report");
+  ok &= Expect(!DecodeMessage(std::string{char(DelayMessage), 7}, message), "short delay report");
   ok &= Expect(!DecodeMessage("", message), "empty message");
   ok &= Expect(!DecodeMessage(StateBytes(0, 0, 0, 0).substr(0, 7), message), "short state");
   ok &= Expect(!DecodeMessage(StateBytes(0, 0, 0, 0) + "x", message), "long state");
@@ -184,6 +190,10 @@ bool Messages() {
   ok &= Expect(WelcomeMessage(1, 2, "ab") == R"({"t":"welcome","phone":1,"player":2,"token":"ab"})", "welcome");
   ok &= Expect(ColorMessage(255, 0, 16) == R"({"t":"color","rgb":"#ff0010"})", "colour");
   ok &= Expect(ByeMessage("full") == R"({"t":"bye","reason":"full"})", "bye");
+  ok &= Expect(RaceMessage(RaceView::Start) == R"({"t":"race","view":"start"})" &&
+                   RaceMessage(RaceView::Unknown) == R"({"t":"race","view":"unknown"})" &&
+                   RaceMessage(RaceView::Fall) == R"({"t":"race","view":"fall"})",
+               "race view");
   return ok;
 }
 
@@ -261,6 +271,8 @@ bool SessionTable() {
   ok &= Expect(sessions.Join("", "t4", 30500).index == -1, "fifth phone turned away");
 
   // Leaving frees the phone at once; a dropped phone expires after the hold.
+  sessions.Delay(2, 12);
+  ok &= Expect(sessions[2].delayMs == 12, "delay kept");
   sessions.Leave(2);
   ok &= Expect(!sessions[2].used && sessions.Join("t2", "t5", 30600).index == 2 && sessions[2].token == "t5",
                "left phone's token no longer works");
@@ -270,6 +282,120 @@ bool SessionTable() {
   bool expiredOne = false;
   for (int index : changes.expired) expiredOne |= index == 1;
   ok &= Expect(expiredOne && !sessions[1].used, "expired");
+  return ok;
+}
+
+// A race in memory, laid out as base Mario Kart Wii's: the director with its pads,
+// and the race manager with its racers.
+struct FakeRace {
+  std::map<uint32_t, uint32_t> words;
+  static constexpr uint32_t director = 0x80900000, manager = 0x80a00000, players = 0x80a01000;
+  FakeRace(uint32_t stage, bool paused = false) {
+    namespace r = race;
+    words[r::DirectorPointer] = director;
+    words[r::RaceManagerPointer] = manager;
+    words[manager + r::ManagerStage] = stage;
+    words[manager + r::ManagerPlayers] = players;
+    words[director + r::DirectorPaused] = paused ? 0x01000000 : 0;
+    for (uint32_t pad = 0; pad < 4; ++pad) {
+      const uint32_t controller = director + r::DirectorGCControllers + pad * r::GCControllerSize;
+      words[controller + r::GCControllerChannel] = pad;
+    }
+  }
+  // Racer i, played on this Mac with KPadPlayer kpad on GameCube pad `pad`, or a
+  // computer racer when kpad is -1.
+  void Racer(int i, int kpad, int pad, bool finished = false) {
+    namespace r = race;
+    const uint32_t player = 0x80b00000 + 0x100 * i;
+    words[players + 4 * i] = player;
+    words[player + r::PlayerFlags] = finished ? r::FinishedFlag | 1 : 1;
+    if (kpad < 0) {
+      words[player + r::PlayerKPad] = 0x80c00000;
+      return;
+    }
+    const uint32_t kpadAddress = director + r::DirectorPlayers + kpad * r::KPadPlayerSize;
+    words[player + r::PlayerKPad] = kpadAddress;
+    words[kpadAddress + r::KPadController] = director + r::DirectorGCControllers + pad * r::GCControllerSize;
+  }
+  // Racer i's kart: its state's first and third flag words, and the frames left
+  // after landing from a respawn.
+  void Kart(int i, uint32_t flags0, uint32_t flags2 = 0, int16_t postLand = 0) {
+    namespace r = race;
+    const uint32_t karts = 0x80d00000, objects = karts - 0x100, kart = karts + 0x1000 * i;
+    const uint32_t accessor = kart + 0x1c, state = kart + 0x200, move = kart + 0x400;
+    words[r::KartManagerPointer] = karts - 0x200;
+    words[karts - 0x200 + r::KartManagerObjects] = objects;
+    words[objects + 4 * i] = kart;
+    words[kart] = accessor;
+    words[accessor + r::AccessorState] = state;
+    words[accessor + r::AccessorMove] = move;
+    words[state + r::StateFlags] = flags0;
+    words[state + r::StateFlags + 8] = flags2;
+    words[move + r::MovePostLandTimer] = static_cast<uint32_t>(static_cast<uint16_t>(postLand)) << 16 | 30;
+  }
+  race::Views Views() const {
+    return race::ReadViews([this](uint32_t address, uint32_t &value) {
+      const auto found = words.find(address);
+      value = found == words.end() ? 0 : found->second;
+      return true;
+    });
+  }
+};
+
+bool RaceViews() {
+  bool ok = true;
+  using V = RaceView;
+  FakeRace menus(race::Racing);
+  menus.words[race::RaceManagerPointer] = 0;
+  ok &= Expect(menus.Views() == race::Views{V::Menus, V::Menus, V::Menus, V::Menus}, "no race: menus");
+  menus.words[race::DirectorPointer] = 0;
+  ok &= Expect(menus.Views() == race::Views{V::Menus, V::Menus, V::Menus, V::Menus}, "starting up: menus");
+
+  // Player 1 (pad 0) and player 3 (pad 2) race against a computer racer.
+  FakeRace start(race::Countdown);
+  start.Racer(0, 0, 0);
+  start.Racer(1, -1, 0);
+  start.Racer(2, 1, 2);
+  ok &= Expect(start.Views() == race::Views{V::Start, V::Menus, V::Start, V::Menus}, "countdown: the start, for racers only");
+  start.words[start.manager + race::ManagerStage] = race::Racing;
+  ok &= Expect(start.Views() == race::Views{V::Race, V::Menus, V::Race, V::Menus}, "racing");
+  start.Racer(2, 1, 2, true);
+  ok &= Expect(start.Views() == race::Views{V::Race, V::Menus, V::Menus, V::Menus}, "a finished racer is back in the menus");
+  start.words[start.director + race::DirectorPaused] = 0x01000000;
+  ok &= Expect(start.Views() == race::Views{V::Menus, V::Menus, V::Menus, V::Menus}, "paused: menus");
+
+  // Player 1 falls off the course: off it, with Lakitu, dropped, then the frames
+  // after landing for his boost. Accelerating and braking (flags 0 and 1) and the
+  // boost itself running (the low half of the timer word) aren't a fall.
+  FakeRace fall(race::Racing);
+  fall.Racer(0, 0, 0);
+  fall.Racer(1, 1, 1);
+  fall.Kart(1, 0);
+  fall.Kart(0, 1 | 2);
+  ok &= Expect(fall.Views() == race::Views{V::Race, V::Race, V::Menus, V::Menus}, "driving: the race");
+  fall.Kart(0, 1 << 4);
+  ok &= Expect(fall.Views() == race::Views{V::Fall, V::Race, V::Menus, V::Menus}, "off the course: a fall");
+  fall.Kart(0, 0, 1 << 13);
+  ok &= Expect(fall.Views()[0] == V::Fall, "Lakitu carries the kart: a fall");
+  fall.Kart(0, 0, 1 << 14);
+  ok &= Expect(fall.Views()[0] == V::Fall, "dropped: a fall");
+  fall.Kart(0, 1 << 18, 0, 3);
+  ok &= Expect(fall.Views()[0] == V::Fall, "just landed: still a fall, for the boost");
+  fall.Kart(0, 1 << 18, 1 << 12 | 1 << 15, 0);
+  ok &= Expect(fall.Views()[0] == V::Race, "landed: the race");
+  fall.words[fall.manager + race::ManagerStage] = race::Countdown;
+  fall.Kart(0, 0, 1 << 13);
+  ok &= Expect(fall.Views()[0] == V::Start, "a fall only counts in the race");
+  fall.words[fall.manager + race::ManagerStage] = race::Racing;
+  fall.words[race::KartManagerPointer] = 0x12345678;
+  ok &= Expect(fall.Views() == race::Views{V::Race, V::Race, V::Menus, V::Menus}, "karts outside RAM: the race");
+
+  FakeRace odd(7);
+  odd.Racer(0, 0, 0);
+  ok &= Expect(odd.Views()[0] == V::Unknown, "a stage that can't be: unknown");
+  FakeRace elsewhere(race::Racing);
+  elsewhere.words[race::DirectorPointer] = 0x12345678;
+  ok &= Expect(elsewhere.Views()[0] == V::Unknown, "a director outside RAM: unknown");
   return ok;
 }
 
@@ -284,5 +410,6 @@ int main() {
   ok &= Signals();
   ok &= Peers();
   ok &= SessionTable();
+  ok &= RaceViews();
   return ok ? 0 : 1;
 }

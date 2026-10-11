@@ -1117,7 +1117,7 @@ enum class KPPairKind { Controller, WiiRemote, Phone };
 @property(nonatomic) BOOL busy;
 @property(nonatomic, strong) NSSet<NSString *> *before;
 @property(nonatomic, strong) KPPadDevice *arrived;
-@property(nonatomic) BOOL phoneTouch;  // Phone: showing the code for the touch-only page
+@property(nonatomic, strong) NSMutableArray<KPUIButton *> *removes;  // Phone: Remove, one per phone listed
 @end
 
 @implementation KPConnectScreen
@@ -1172,12 +1172,17 @@ static const struct {
     [self.kinds addObject:tile];
   }
   self.primary = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
-    KPConnectScreen *screen = weakSelf;
-    if (screen.kind == KPPairKind::Phone)
-      KPDrawPill(c, r, state, KPStyle::Primary, KPUIGlyph::Swap, screen.phoneTouch ? @"Code With Tilt" : @"Code Without Tilt");
-    else
-      KPDrawPill(c, r, state, KPStyle::Primary, KPUIGlyph::Find, screen.busy ? @"Searching…" : @"Search Again");
+    KPDrawPill(c, r, state, KPStyle::Primary, KPUIGlyph::Find, weakSelf.busy ? @"Searching…" : @"Search Again");
   } action:^{ [weakSelf primaryAction]; }];
+  self.removes = [NSMutableArray array];
+  for (int row = 0; row < kpp::MaxPhones; ++row) {
+    KPUIButton *remove = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
+      KPDrawPill(c, r, state, KPStyle::Plain, KPUIGlyph::Close, @"Remove");
+    } action:^{ [weakSelf removePhoneRow:row]; }];
+    remove.label = @"Remove";
+    remove.hidden = YES;
+    [self.removes addObject:remove];
+  }
   self.settings = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
     KPDrawPill(c, r, state, KPStyle::Plain, KPUIGlyph::Bluetooth, @"Bluetooth Settings");
   } action:^{ [weakSelf openBluetoothSettings]; }];
@@ -1193,14 +1198,34 @@ static const struct {
     tile.hidden = !self.choosing;
     [self place:tile at:CGRectMake(x0 + tile.tag2 * (w + gap), s.origin.y + 180, w, 236)];
   }
-  // Phones: switching between the codes with and without tilt, when there's a tilt page.
-  self.primary.hidden = self.choosing || (self.kind == KPPairKind::Phone && !KPPhoneServer.shared.hasTiltPage);
+  self.primary.hidden = self.choosing || self.kind == KPPairKind::Phone;
+  [self placeRemoves];
   self.settings.hidden = self.choosing || self.kind != KPPairKind::Controller;
   // Right to left: Done, Search Again, Bluetooth Settings.
   const CGFloat doneX = CGRectGetMaxX(s) - 56 - 170, primaryX = doneX - 16 - 270;
   [self place:self.primary at:CGRectMake(primaryX, s.origin.y + 560, 270, 64)];
   [self place:self.settings at:CGRectMake(primaryX - 16 - 290, s.origin.y + 560, 290, 64)];
   [self place:self.done at:CGRectMake(doneX, self.choosing ? s.origin.y + 590 : s.origin.y + 560, 170, 64)];
+}
+// Phones: a Remove beside each phone in the list (drawPhoneJoin).
+static constexpr CGFloat KPPhoneListTop = 300, KPPhoneRowHeight = 58;
+- (void)placeRemoves {
+  const CGRect s = self.safe;
+  const std::vector<KPPhoneEntry> phones =
+      self.kind == KPPairKind::Phone && !self.choosing ? KPPhoneServer.shared.entries : std::vector<KPPhoneEntry>{};
+  for (NSUInteger row = 0; row < self.removes.count; ++row) {
+    KPUIButton *remove = self.removes[row];
+    const BOOL shown = row < phones.size();
+    if (!shown && !remove.hidden && remove.focused) [KPOverlay() focus:self.done sound:NO];
+    remove.hidden = !shown;
+    if (!shown) continue;
+    remove.tag2 = phones[row].phone;
+    [self place:remove at:CGRectMake(CGRectGetMaxX(s) - 56 - 150, s.origin.y + KPPhoneListTop + row * KPPhoneRowHeight + 4, 150, 46)];
+  }
+}
+- (void)removePhoneRow:(int)row {
+  [KPPhoneServer.shared sendAway:(int)self.removes[row].tag2];
+  KPUIPlay(KPUISound::Close);
 }
 - (KPUIButton *)initialFocus { return self.choosing ? self.kinds.firstObject : self.kind == KPPairKind::Phone ? self.done : self.primary; }
 - (void)chooseKind:(KPPairKind)kind {
@@ -1247,12 +1272,6 @@ static const struct {
   self.primary.needsDisplay = YES;
 }
 - (void)primaryAction {
-  if (self.kind == KPPairKind::Phone) {
-    self.phoneTouch = !self.phoneTouch;
-    self.needsDisplay = YES;
-    self.primary.needsDisplay = YES;
-    return;
-  }
   if (self.kind == KPPairKind::WiiRemote) {
     if (!self.busy) [self pairWiiRemote];
     return;
@@ -1274,6 +1293,7 @@ static const struct {
 }
 - (void)rosterChanged {
   const BOOL phone = self.kind == KPPairKind::Phone;
+  [self placeRemoves];
   // Phones keep coming: the code stays up and each new one is announced in turn.
   if (self.choosing || (self.arrived && !phone)) return;
   for (KPPadDevice *device in KPControllerRoster.shared.devices) {
@@ -1306,6 +1326,7 @@ static const struct {
 }
 - (void)tick {
   [KPControllerRoster.shared refresh];
+  [self placeRemoves];
   self.needsDisplay = YES;
 }
 - (void)willDisappear {
@@ -1372,13 +1393,14 @@ static const struct {
                  NSTextAlignmentLeft);
   }
 }
-// The link as a QR code where the controller would be, the steps beside it, and who has joined.
-// There's no address to type: the link carries this launch's key.
+// The link as a QR code where the controller would be, the steps beside it, and the phones that have
+// joined, each with its player, how quick its link is, and Remove. There's no address to type: the
+// link carries this launch's key. It opens the page with tilt, or the touch-only one the Mac serves
+// when no tilt page is set.
 - (void)drawPhoneJoin:(CGContextRef)c {
   const CGRect s = self.safe;
   KPPhoneServer *server = KPPhoneServer.shared;
-  const BOOL touch = self.phoneTouch || !server.hasTiltPage;
-  NSString *url = touch ? server.touchURL : server.tiltURL;
+  NSString *url = server.hasTiltPage ? server.tiltURL : server.touchURL;
   const CGRect code = CGRectMake(s.origin.x + 56 + (580 - 340) / 2, s.origin.y + 150, 340, 340);
   if (url) {
     [server drawCode:url in:c rect:code];
@@ -1386,18 +1408,31 @@ static const struct {
     KPFill(c, code, KPP->panel, 18);
     KPTextWeight(server.problem ?: @"", CGRectInset(code, 30, 130), 20, KPP->secondaryText, NSFontWeightMedium);
   }
-  KPTextWeight(KPPairSteps(self.kind), CGRectMake(s.origin.x + 700, s.origin.y + 140, 524, 230), 21, KPP->text, NSFontWeightMedium,
+  KPTextWeight(KPPairSteps(self.kind), CGRectMake(s.origin.x + 700, s.origin.y + 140, 524, 150), 21, KPP->text, NSFontWeightMedium,
                NSTextAlignmentLeft);
-  KPTextWeight(touch ? @"Touch only. Works offline." : @"Needs internet on the phone.",
-               CGRectMake(s.origin.x + 700, s.origin.y + 380, 524, 50), 17, KPP->secondaryText, NSFontWeightRegular, NSTextAlignmentLeft);
-  KPPadDevice *arrived = self.arrived;
-  const unsigned ink = arrived ? 0x22843f : KPP->accentBottom;
-  if (self.status.length) {
-    if (arrived) KPDrawGlyph(c, KPUIGlyph::Check, CGRectMake(s.origin.x + 700, s.origin.y + 440, 36, 36), ink);
-    KPTextWeight(self.status, CGRectMake(s.origin.x + (arrived ? 748 : 700), s.origin.y + 438, 476, 100), 20, ink, NSFontWeightSemibold,
-                 NSTextAlignmentLeft);
+  const std::vector<KPPhoneEntry> phones = server.entries;
+  if (phones.empty()) {
+    KPTextWeight(@"Waiting for a phone…", CGRectMake(s.origin.x + 700, s.origin.y + KPPhoneListTop + 12, 524, 30), 20, KPP->accentBottom,
+                 NSFontWeightSemibold, NSTextAlignmentLeft);
+    return;
+  }
+  CGFloat y = s.origin.y + KPPhoneListTop;
+  for (const KPPhoneEntry &phone : phones) {
+    KPSetInk(c, phone.player > 0 ? KPPlayerColors[phone.player - 1] : KPP->switchOff);
+    CGContextFillEllipseInRect(c, CGRectMake(s.origin.x + 702, y + 16, 22, 22));
+    KPTextWeight(phone.player > 0 ? KPPlayerName(phone.player - 1) : @"Not playing", CGRectMake(s.origin.x + 738, y + 2, 300, 28), 20,
+                 KPP->text, NSFontWeightSemibold, NSTextAlignmentLeft);
+    NSString *detail = !phone.linked        ? [NSString stringWithFormat:@"Phone %d · Away", phone.phone + 1]
+                       : phone.delayMs > 0 ? [NSString stringWithFormat:@"Phone %d · %d ms", phone.phone + 1, phone.delayMs]
+                                           : [NSString stringWithFormat:@"Phone %d", phone.phone + 1];
+    KPTextWeight(detail, CGRectMake(s.origin.x + 738, y + 29, 300, 22), 16, KPP->secondaryText, NSFontWeightRegular, NSTextAlignmentLeft);
+    y += KPPhoneRowHeight;
   }
 }
 @end
 
 static KPScreen *KPMakeConnectScreen() { return [[KPConnectScreen alloc] initWithFrame:NSZeroRect]; }
+
+// For phones (KartPadPhoneControllers.inc.mm): while one of KartPad's screens is up, the controllers are
+// its, so phones show the menus' controls.
+static BOOL KPPhoneOverlayActive() { return KPOverlay().active; }

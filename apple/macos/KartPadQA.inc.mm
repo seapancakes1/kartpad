@@ -5,7 +5,7 @@
 //   home | close | screen settings|controllers|miis|pair-wii|pair-phone | pad up|down|left|right|a|b|x|y|lb|rb|start
 //   shot NAME | resize W H | fullscreen | appearance light|dark|system | restart | quit | wait SECONDS
 //   focus LABEL | click LABEL | where | navmap | roster | vpad add|press|release|remove | key NAME
-//   move IDENTIFIER|vpadN SLOT | phone start|status|background-input
+//   move IDENTIFIER|vpadN SLOT | phone start|status|background-input|remove N
 // Included by KartPadMacShell.mm at the end.
 
 #import <objc/objc-exception.h>
@@ -245,8 +245,11 @@ static void KPQARun(NSString *line) {
     // Phone controllers without a camera: phone start (the server, as Connect a Controller → Phone
     // starts it) | phone status (the link, which a test script opens as a phone would, and the phones)
     // | phone background-input (SDL keeps controller input while KartPad is in the background, so a
-    // hidden run sees what the phones press; Aurora refuses to start with the environment variable).
+    // hidden run sees what the phones press; Aurora refuses to start with the environment variable)
+    // | phone remove N (as the Connect screen's Remove does to phone N).
     if ([argument isEqualToString:@"start"]) [KPPhoneServer.shared start];
+    if (words.count >= 3 && [words[1] isEqualToString:@"remove"] && words[2].intValue >= 1)
+      [KPPhoneServer.shared sendAway:words[2].intValue - 1];
     if ([argument isEqualToString:@"background-input"])
       SDL_SetHintWithPriority(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1", SDL_HINT_OVERRIDE);
     KPQALog([@"phone " stringByAppendingString:[KPPhoneServer.shared status]]);
