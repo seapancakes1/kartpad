@@ -13,6 +13,14 @@
 
 #include <cstdlib>
 
+// Automated checks (KartPadQA.inc.mm: a command file, synthesised input and clicks, virtual pads,
+// window captures) and the hooks they use are only in builds configured with -DKARTPAD_QA_HOOKS=ON.
+#if defined(KARTPAD_QA_HOOKS) && KARTPAD_QA_HOOKS
+#define KP_QA_HOOKS 1
+#else
+#define KP_QA_HOOKS 0
+#endif
+
 #include <aurora/aurora.h>
 #include "runtime_config.h"
 #if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)
@@ -1209,7 +1217,9 @@ static bool KPShowScreen(NSString *which) {
 }
 @end
 
+#if KP_QA_HOOKS
 #include "KartPadQA.inc.mm"
+#endif
 
 // The runtime holds the game still while this is true (WaitWhileBackgroundPaused). That includes
 // KartPad hidden and its window minimized (as exclusive fullscreen is on losing the focus), which
@@ -1591,7 +1601,9 @@ void KartPadMacShellInstall(void) {
     [NSApplication sharedApplication];
     InstallSettingsShortcutMonitor();
     InstallMenu();
+#if KP_QA_HOOKS
     KPStartQA();
+#endif
 #if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)
     KPStartLocalUpdates();
 #endif

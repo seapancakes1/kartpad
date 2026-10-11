@@ -4,11 +4,18 @@
 // holding the Miis buttons on a controller open it, the Mii editor opens above it, and closing it
 // returns the keyboard to the game.
 
+#import <objc/runtime.h>
+
 // Automated checks (KARTPAD_BACKGROUND=1) leave the focus where it is: KartPad never comes forward.
+// Only builds with the QA hooks (KP_QA_HOOKS) look; otherwise it's never so.
+#if KP_QA_HOOKS
 static BOOL KPUIBackgroundAutomation() {
   static const BOOL background = [NSProcessInfo.processInfo.environment[@"KARTPAD_BACKGROUND"] isEqual:@"1"];
   return background;
 }
+#else
+static constexpr BOOL KPUIBackgroundAutomation() { return NO; }
+#endif
 
 // KartPad's screens over the game (KartPadOverlay.inc.mm): HOME, Controllers, Settings and the rest.
 static bool KPOverlayActive();

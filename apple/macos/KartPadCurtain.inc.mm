@@ -67,7 +67,9 @@ static void KPDrawCurtainCard(CGContextRef c, CGSize size, NSString *heading, NS
 }
 @end
 
+#if KP_QA_HOOKS
 static NSString *KPQADirectory();  // KartPadQA.inc.mm
+#endif
 
 static void KPRestartWithCurtain(NSString *heading, NSString *detail) {
   NSWindow *game = KPGameWindow();
@@ -209,6 +211,7 @@ static void KPRunCurtain(NSString *path) {
   [NSRunLoop.mainRunLoop addTimer:animate forMode:NSRunLoopCommonModes];
   [NSDistributedNotificationCenter.defaultCenter postNotificationName:KPCurtainNotice(token, @"ready") object:nil userInfo:nil
                                                    deliverImmediately:YES];
+#if KP_QA_HOOKS
   // Automated checks get a picture of the curtain.
   if (NSString *qa = KPQADirectory()) {
     [view displayIfNeeded];
@@ -217,6 +220,7 @@ static void KPRunCurtain(NSString *path) {
     [[rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:[qa stringByAppendingPathComponent:@"curtain.png"]
                                                                             atomically:YES];
   }
+#endif
 
   __block BOOL shown = NO;
   id observer = [NSDistributedNotificationCenter.defaultCenter addObserverForName:KPCurtainNotice(token, @"shown") object:nil queue:nil
@@ -234,10 +238,12 @@ static void KPRunCurtain(NSString *path) {
   NSMutableArray<NSString *> *arguments = [NSMutableArray arrayWithObjects:@"-n", nil];
   if (background) [arguments addObject:@"-g"];
   [arguments addObjectsFromArray:@[@"--env", [NSString stringWithFormat:@"%@=%@", KPCurtainTokenVariable, token]]];
+#if KP_QA_HOOKS
   for (NSString *name in @[@"KARTPAD_MUTED", @"KARTPAD_BACKGROUND", @"KARTPAD_QA_DIR"]) {
     NSString *value = NSProcessInfo.processInfo.environment[name];
     if (value.length) [arguments addObjectsFromArray:@[@"--env", [NSString stringWithFormat:@"%@=%@", name, value]]];
   }
+#endif
   [arguments addObject:handoff[@"app"]];
   NSTask *open = [NSTask new];
   open.executableURL = [NSURL fileURLWithPath:@"/usr/bin/open"];
@@ -246,6 +252,7 @@ static void KPRunCurtain(NSString *path) {
   NSMutableDictionary *environment = [NSProcessInfo.processInfo.environment mutableCopy];
   [environment removeObjectForKey:KPCurtainVariable];
   open.environment = environment;
+#if KP_QA_HOOKS
   // Automated checks start the program itself, so it keeps the checker's file access rather than
   // asking for its own (a copy opened by Finder or open is responsible for itself).
   if (KPQADirectory()) {
@@ -256,6 +263,7 @@ static void KPRunCurtain(NSString *path) {
     open.standardOutput = NSFileHandle.fileHandleWithNullDevice;
     open.standardError = NSFileHandle.fileHandleWithNullDevice;
   }
+#endif
   NSError *error = nil;
   const BOOL failed = ![open launchAndReturnError:&error];
   if (failed) NSLog(@"[KartPad] curtain could not reopen KartPad: %@", error);

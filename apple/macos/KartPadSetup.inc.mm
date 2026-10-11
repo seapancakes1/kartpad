@@ -5,7 +5,9 @@
 // read through a short SDL session that is shut down again before the game starts, so the game finds
 // them fresh. Included by KartPadMacShell.mm with the screens; KartPadMacShellPrepareGameData runs it.
 
+#if KP_QA_HOOKS
 static void KPStartQA();  // KartPadQA.inc.mm
+#endif
 
 typedef NS_ENUM(NSInteger, KPSetupStep) { KPSetupWelcome, KPSetupFind, KPSetupSearching, KPSetupFound, KPSetupRetro, KPSetupReady };
 
@@ -453,7 +455,9 @@ static NSString *KPRunSetup(BOOL recovering) {
   window.contentView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, size.width, size.height)];
   [window center];
 
+#if KP_QA_HOOKS
   KPStartQA();
+#endif
   // Controllers, for setup only.
   SDL_InitSubSystem(SDL_INIT_GAMEPAD);
   NSMutableArray<NSValue *> *opened = [NSMutableArray array];

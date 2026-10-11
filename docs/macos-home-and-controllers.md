@@ -140,7 +140,7 @@ button press.
 | `apple/macos/KartPadSetup.inc.mm` | First-run setup |
 | `apple/macos/KartPadRetroDownload.inc.mm` | Retro Rewind download (dual builds) |
 | `apple/macos/KartPadDiscordPresence.inc.mm` | What Discord shows during a Mario Kart Wii race (`kartpad/discord/race_presence.h`); the runtime's `DiscordPresence` sends it from its own thread |
-| `apple/macos/KartPadQA.inc.mm` | Automated checks (below) |
+| `apple/macos/KartPadQA.inc.mm` | Automated checks (below), in builds with `-DKARTPAD_QA_HOOKS=ON` only |
 
 ### How it fits together
 
@@ -210,7 +210,12 @@ button press.
 
 ### Automated checks
 
-Run a packaged copy muted and in the background with a command file:
+The checks are only in a build configured with `-DKARTPAD_QA_HOOKS=ON` (off by
+default; `scripts/prepare-g7-game-runtime.sh` passes `KARTPAD_QA_HOOKS` on from
+the environment, and an existing build directory keeps it in its CMake cache).
+Without it there is no command file, no `KARTPAD_BACKGROUND` and no exception
+log; only `KARTPAD_MUTED=1` still keeps the sound off. Run such a build's copy
+muted and in the background with a command file:
 
 ```sh
 KARTPAD_MUTED=1 KARTPAD_BACKGROUND=1 KARTPAD_QA_DIR=/path/to/qa \
