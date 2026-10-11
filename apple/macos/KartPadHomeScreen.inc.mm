@@ -737,6 +737,11 @@ extern "C" bool KartPadOverlayPauseWanted() {
 
 static void KPShowHomeHint();
 static void KPCurtainDone();  // KartPadCurtain.inc.mm
+static void KPControllerDropped(int slot, NSString *name, NSData *mii);  // KartPadReconnect.inc.mm
+static BOOL KPReconnectWanted(int slot);
+static BOOL KPReconnectShowing();
+static void KPReconnectPhonesTick();
+static void KPGhostsTick();  // KartPadGhostsScreen.inc.mm
 
 // A controller that isn't playing joins by pressing any button during the game, as on a console:
 // it takes the first free player (or the keyboard's, while the keyboard just follows free players)
@@ -816,6 +821,8 @@ static void KPOverlayGameTick() {
   static bool hinted;
   const NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
   KPAutoJoinTick();
+  KPReconnectPhonesTick();
+  KPGhostsTick();
   if (now - lastRefresh > 0.5) {
     lastRefresh = now;
     [KPControllerRoster.shared refresh];
@@ -860,6 +867,8 @@ static void KPShowHomeHint() {
 
 @implementation KPControllerRoster (Toasts)
 - (void)announceConnected:(KPPadDevice *)device {
+  // The disconnected card shows who's back itself.
+  if (KPReconnectShowing()) return;
   const int slot = device.slot;
   NSString *detail = slot >= 0 ? [NSString stringWithFormat:@"Player %d", slot + 1] : @"Press any button to join";
   NSImage *portrait = nil;
@@ -873,6 +882,11 @@ static void KPShowHomeHint() {
 }
 - (void)announceGone:(KPPadDevice *)device {
   const int slot = device.slot;
+  // Mid-game, the game waits for that player to reconnect, on a card that says so.
+  if (!device.isKeyboard && KPReconnectWanted(slot)) {
+    KPControllerDropped(slot, device.name, [self miiFor:device]);
+    return;
+  }
   NSString *heading = slot >= 0 ? [NSString stringWithFormat:@"Player %d's controller disconnected", slot + 1]
                                 : [NSString stringWithFormat:@"%@ disconnected", device.name];
   [KPOverlay() toast:heading detail:nil

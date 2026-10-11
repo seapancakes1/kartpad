@@ -81,6 +81,14 @@ so you can tell which one is yours.
   and licenses are still picked in the game, and the game's Register
   Controllers screen works as before.
 
+**A controller disconnecting** (or a phone dropping off for more than a second)
+during the game holds it still, on a card for that player: their Mii, the
+controller they had and "Waiting…". It closes by itself once the player has a
+controller again: the same one reconnecting, or another that isn't playing
+pressing A. **Controllers** opens on that player, and **Continue** (or B)
+carries on without them. Online the race can't wait, so there it's only a
+toast, as it is while HOME or another screen is open.
+
 **Button setup.** The game's twelve actions in a list with the buttons they're
 on. A changes one ("Press a button for Accelerate"), X adds a second button,
 Reset puts them back. Changes save by themselves.
@@ -98,6 +106,15 @@ technical tools (private server, controller compatibility, diagnostics, the
 classic Settings window).
 
 **Miis** open inside the game window, and so does the Mii editor.
+
+**Time Trial ghosts** (Settings → Game, or Data → Time Trial Ghosts…) shows each
+license's saved ghosts: the course, the time, the racer's Mii, and whether it's
+the personal best or the downloaded one. A saves the ghost's `.rkg` to
+Downloads. To import one, drop its `.rkg` on the game window, or use
+**Import** (the newest ghosts in Downloads and on the Desktop, or any file with
+the mouse). It becomes that license's downloaded ghost for its course, the one
+Time Trials race against, at the next restart. The save is backed up first and
+personal bests stay. Mario Kart Wii's own courses only, as on iPhone.
 
 **First launch.** A short guided setup a controller can finish: KartPad looks
 for your game files in Downloads, Desktop, Documents and connected drives (your
@@ -136,6 +153,8 @@ button press.
 | `apple/macos/KartPadControllerArt.inc.mm` | The live controller drawings |
 | `apple/macos/KartPadSettingsScreen.inc.mm` | Settings |
 | `apple/macos/KartPadMiisScreen.inc.mm` | The shared Miis screen hosted in the game window (the editor embeds itself, `KPMiiEmbedEditor` in `KartPadMiiEditor.inc.mm`) |
+| `apple/macos/KartPadReconnect.inc.mm` | The game waiting for a disconnected player (controllers and phones) |
+| `apple/macos/KartPadGhostsScreen.inc.mm` | Time Trial ghosts: the screen, exporting, importing and dropped `.rkg` files |
 | `apple/macos/KartPadCurtain.inc.mm` | Restarts behind a curtain |
 | `apple/macos/KartPadSetup.inc.mm` | First-run setup |
 | `apple/macos/KartPadRetroDownload.inc.mm` | Retro Rewind download (dual builds) |
@@ -232,7 +251,7 @@ echo "home" >> /path/to/qa/commands.txt
 echo "shot home" >> /path/to/qa/commands.txt # /path/to/qa/home.png
 ```
 
-Commands: `home`, `close`, `screen settings|controllers|miis|pair-wii|pair-phone`,
+Commands: `home`, `close`, `screen settings|controllers|miis|ghosts|pair-wii|pair-phone`,
 `pad up|down|left|right|a|b|x|y|lb|rb|start`, `focus LABEL`, `click LABEL` (a
 mouse click on a control: what the window's hit test finds, then the click),
 `drag FROM TO LABEL` (a mouse drag across a control between fractions of its
@@ -246,6 +265,8 @@ controllers: start the server, log the touch and tilt links and each phone's
 player, what its pad presses, the controls it shows and its link delay, keep
 SDL input while KartPad is in the background, or remove phone N as the Connect
 screen does),
+`dropfile PATH` (a file as if dropped on the game window), `droptypes` (whether the
+game window takes drops),
 `key NAME` (a key the game reads as typed, by SDL's
 name: `key return` is A for the keyboard's player; a backgrounded game ignores
 controllers but takes these), `shot NAME`,
