@@ -598,8 +598,8 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
     row.setOn = ^(BOOL on) { [NSUserDefaults.standardUserDefaults setBool:on forKey:kKartPadBackgroundPauseDefaultsKey]; };
     [game addObject:row];
   }
-  [game addObject:boolRow(@"Discord Rich Presence", nil, "discord", "enabled", true,
-                          ^bool(const RuntimeUserConfig &c) { return c.discordPresenceEnabled.value_or(true); }, false, true)];
+  [game addObject:boolRow(@"Discord Rich Presence", nil, "discord", "enabled", false,
+                          ^bool(const RuntimeUserConfig &c) { return c.discordPresenceEnabled.value_or(false); }, false, true)];
   {
     KPSettingRow *row = KPRow(@"Miis", nil, KPRowAction);
     row.run = ^{ [KPOverlay() present:KPMakeMiisScreen()]; };

@@ -64,7 +64,7 @@
     @"audio.voices_volume":@(c.audioVoicesVolume.value_or(1.0f)),
     @"audio.muted":@(c.audioMuted.value_or(false)),
     @"audio.mix_worker":@(c.audioMixWorker.value_or(true)),
-    @"discord.enabled":@(c.discordPresenceEnabled.value_or(true))};
+    @"discord.enabled":@(c.discordPresenceEnabled.value_or(false))};
   for(NSString *key in self.settingControls) {
     NSControl *control=self.settingControls[key];id value=values[key];
     if([control isKindOfClass:NSPopUpButton.class]) {

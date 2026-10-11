@@ -112,8 +112,8 @@ data folder. It keeps going while you play.
 what you're playing. In Mario Kart Wii that's the course, then the mode and
 class ("Luigi Circuit", "Grand Prix · 150cc") during a race, and "In the menus"
 otherwise, under WiiCompiled's Discord application. Retro Rewind shows its own
-status. Settings → Game → Discord Rich Presence turns it off (`[discord] enabled` in
-Config.toml). It only talks to the Discord app on this Mac.
+status. It's off until you turn on Settings → Game → Discord Rich Presence
+(`[discord] enabled` in Config.toml). It only talks to the Discord app on this Mac.
 
 **The first few launches** show a hint, "Press HOME for menus", after your first
 button press.
