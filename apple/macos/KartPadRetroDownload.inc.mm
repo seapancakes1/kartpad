@@ -5,7 +5,43 @@
 // says when it's ready. Builds whose Retro Rewind is kept up to date by the local auto-updater
 // leave it to that and don't offer the download. Dual builds only; included by KartPadMacShell.mm.
 
+// What an install that didn't finish (KartPad quit or crashed part-way) leaves in base: unpacked
+// copies (Staging-*, about 2 GB each) and downloads go, except keep's (the attempt starting now);
+// a pack moved aside (Previous-*) goes back to rootName if nothing replaced it, else it goes too.
+// Runs on the install queue, so never beside an install. Outside the dual guard for its unit test.
+[[maybe_unused]] static void KPRecoverRetroInstall(NSString *base, NSString *rootName, NSString *keep) {
+  NSFileManager *files = NSFileManager.defaultManager;
+  NSString *destination = [base stringByAppendingPathComponent:rootName];
+  NSMutableArray<NSString *> *previous = [NSMutableArray array];
+  for (NSString *name in [files contentsOfDirectoryAtPath:base error:nil]) {
+    NSString *path = [base stringByAppendingPathComponent:name];
+    if ([name hasPrefix:@"Staging-"]) [files removeItemAtPath:path error:nil];
+    else if ([name hasPrefix:@"Previous-"]) [previous addObject:path];
+  }
+  [previous sortUsingComparator:^NSComparisonResult(NSString *a, NSString *b) {
+    NSDate *left = [files attributesOfItemAtPath:a error:nil].fileModificationDate ?: NSDate.distantPast;
+    return [[files attributesOfItemAtPath:b error:nil].fileModificationDate ?: NSDate.distantPast compare:left];
+  }];
+  if (previous.count && ![files fileExistsAtPath:destination] &&
+      [files moveItemAtPath:previous.firstObject toPath:destination error:nil]) [previous removeObjectAtIndex:0];
+  for (NSString *path in previous) [files removeItemAtPath:path error:nil];
+  NSString *downloads = [base stringByAppendingPathComponent:@"Downloads"];
+  for (NSString *name in [files contentsOfDirectoryAtPath:downloads error:nil])
+    if (keep == nil || ![name hasPrefix:keep]) [files removeItemAtPath:[downloads stringByAppendingPathComponent:name] error:nil];
+}
+
 #if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)
+
+// Installs and their recovery take turns here, so one never moves a folder another is using.
+static dispatch_queue_t KPRetroInstallQueue() {
+  static dispatch_queue_t queue;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    queue = dispatch_queue_create("dev.kartpad.retro-install",
+        dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_UTILITY, 0));
+  });
+  return queue;
+}
 
 typedef NS_ENUM(NSInteger, KPRetroStage) {
   KPRetroIdle, KPRetroDownloading, KPRetroVerifying, KPRetroInstalling, KPRetroReady, KPRetroFailed
@@ -45,6 +81,7 @@ static NSString *KPRetroFolder() {
   std::vector<KPRetroArchive> _archives;
   size_t _current;
   NSMutableArray<NSString *> *_files;
+  NSString *_attempt;  // names this run's downloads, so tidying up after another run never takes them
   BOOL _cancelled;
   // Each run (and each cancel) moves this on; work from an older run stops where it notices.
   std::atomic<uint64_t> _generation;
@@ -53,7 +90,11 @@ static NSString *KPRetroFolder() {
 + (instancetype)shared {
   static KPRetroDownload *shared;
   static dispatch_once_t once;
-  dispatch_once(&once, ^{ shared = [KPRetroDownload new]; });
+  dispatch_once(&once, ^{
+    shared = [KPRetroDownload new];
+    NSString *base = KPRetroFolder();
+    dispatch_async(KPRetroInstallQueue(), ^{ KPRecoverRetroInstall(base, @KARTPAD_RR_ROOT, nil); });
+  });
   return shared;
 }
 
@@ -97,6 +138,9 @@ static NSString *KPRetroFolder() {
   _cancelled = NO;
   ++_generation;
   self.problem = nil;
+  _attempt = [NSString stringWithFormat:@"archive-%@-", NSUUID.UUID.UUIDString];
+  NSString *base = KPRetroFolder(), *attempt = _attempt;
+  dispatch_async(KPRetroInstallQueue(), ^{ KPRecoverRetroInstall(base, @KARTPAD_RR_ROOT, attempt); });
   // Room for the downloads, the unpacked pack and a little over.
   uint64_t needed = 256ull << 20;
   for (const KPRetroArchive &archive : archives) needed += archive.bytes;
@@ -150,7 +194,7 @@ static NSString *KPRetroFolder() {
   }
   NSString *folder = [KPRetroFolder() stringByAppendingPathComponent:@"Downloads"];
   [NSFileManager.defaultManager createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:nil];
-  NSString *file = [folder stringByAppendingPathComponent:[NSString stringWithFormat:@"archive-%zu.zip", _current]];
+  NSString *file = [folder stringByAppendingPathComponent:[NSString stringWithFormat:@"%@%zu.zip", _attempt, _current]];
   [NSFileManager.defaultManager removeItemAtPath:file error:nil];
   NSError *error = nil;
   if (![NSFileManager.defaultManager moveItemAtURL:location toURL:[NSURL fileURLWithPath:file] error:&error]) {
@@ -217,9 +261,9 @@ static NSString *KPRetroFolder() {
   self.stage = KPRetroInstalling;
   NSArray<NSString *> *archives = _files.copy;
   const uint64_t generation = _generation;
-  dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+  NSString *base = KPRetroFolder();
+  dispatch_async(KPRetroInstallQueue(), ^{
     NSFileManager *files = NSFileManager.defaultManager;
-    NSString *base = KPRetroFolder();
     NSString *staging = [base stringByAppendingPathComponent:[@"Staging-" stringByAppendingString:NSUUID.UUID.UUIDString]];
     [files createDirectoryAtPath:staging withIntermediateDirectories:YES attributes:nil error:nil];
     NSString *problem = nil;

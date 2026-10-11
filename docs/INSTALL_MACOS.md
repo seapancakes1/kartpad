@@ -26,14 +26,18 @@ iPhone/iPad.
 
 ## Retro Rewind
 
-The Mac app doesn't download Retro Rewind. Download the official Retro Rewind
-6.12.8 full pack, then choose **Data → Choose Retro Rewind Data…** and select
-its `RetroRewind6` folder. Choose **Game → Retro Rewind**, quit and reopen
-KartPad. **Game → Original Mario Kart Wii** and reopening switches back.
+KartPad downloads Retro Rewind for you: switch to it from **HOME**, or open
+**Settings → Game → Retro Rewind files**, and choose **Download**. It gets the
+exact pack this KartPad was built for (about 2 GB), checks it and installs it
+in KartPad's data folder while you keep playing. When it's ready, switch to it
+from **HOME**. To use a pack you already have, choose
+**Data → Choose Retro Rewind Data…** and select its `RetroRewind6` folder.
+**Game → Original Mario Kart Wii** switches back.
 
 KartPad needs the exact Retro Rewind version it was built for. If it says the
 data is unsupported, use the version it names; a newer pack needs a KartPad
-update.
+update. A Mac app you build yourself can instead
+[update Retro Rewind on its own](macos-local-auto-update.md).
 
 ## HOME
 
