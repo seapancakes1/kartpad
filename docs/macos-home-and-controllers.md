@@ -32,7 +32,13 @@ underneath (online the race keeps going, and HOME says so). HOME has:
 that lights up as you press. Pressing anything on a controller bounces its card,
 so you can tell which one is yours.
 
-- A controller that isn't playing joins with **A**.
+- A controller that isn't playing joins with **A** here, and **during the game
+  with any button**: it takes the first free player (or the keyboard's, while
+  the keyboard just follows free players), buzzes, lights up in that player's
+  colour and says so. It joins as the button is let go, so that press doesn't
+  also act in the game. One taken out with **Stop playing** stays out until
+  it's given a player again. Every connected controller can always drive
+  KartPad's own screens and open HOME, playing or not.
 - Players change controllers by pressing on the one they want, as on a console:
   - **Change controller** (A on a card, or A on an empty card): "Press Ⓐ on
     the controller for Player 2". Whichever controller presses A takes that
@@ -178,13 +184,16 @@ Commands: `home`, `close`, `screen settings|controllers|miis|pair-wii`,
 mouse click on a control: what the window's hit test finds, then the click),
 `where` (the focused control), `navmap` (where each direction leads from every
 control on the screen), `vpad add|press N BUTTON|release N BUTTON|remove N`
-(SDL virtual controllers, to check choosing controllers by pressing), `shot NAME`,
+(SDL virtual controllers, to check choosing controllers by pressing and joining),
+`move IDENTIFIER|vpadN SLOT` (put a controller on a player, or take it off with
+-1, without benching it), `shot NAME`,
 `shotwindow NAME`, `resize W H`, `appearance light|dark|system`, `frames` (the
 presented-frame counter, to check the game holds still), `roster` (every
 controller's player and Aurora port), `toast`, `hint`,
 `editmii SLOT`, `closewindows`, `setupuse PATH`, `rrtest`, `rrstatus [screen]`,
 `restart`, `quit`, `wait SECONDS`. Every Objective-C exception is logged with
-its stack in `log.txt`. Use a portable copy (a `portable.txt` beside the app)
+its stack in `log.txt`. A `focus` that finds nothing skips the `pad a`, `x` or `y`
+after it, so a script can't press whatever happened to be focused instead. Use a portable copy (a `portable.txt` beside the app)
 so checks never touch your own settings and saves. Start the program directly
 rather than with `open`: a copy opened by LaunchServices asks for its own
 permission to read Documents, and `screen pair-wii` (Wii Remote pairing) asks for
