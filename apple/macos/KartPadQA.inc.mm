@@ -4,7 +4,7 @@
 // it with KARTPAD_MUTED=1 KARTPAD_BACKGROUND=1 so it stays silent and never takes the focus.
 //   home | close | screen settings|controllers|miis|pair-wii | pad up|down|left|right|a|b|x|y|lb|rb|start
 //   shot NAME | resize W H | fullscreen | appearance light|dark|system | restart | quit | wait SECONDS
-//   focus LABEL | click LABEL | where | navmap | roster | vpad add|press|release|remove
+//   focus LABEL | click LABEL | where | navmap | roster | vpad add|press|release|remove | key NAME
 //   move IDENTIFIER|vpadN SLOT
 // Included by KartPadMacShell.mm at the end.
 
@@ -155,6 +155,18 @@ static void KPQARun(NSString *line) {
 #endif
   } else if ([command isEqualToString:@"hint"]) {
     KPShowHomeHint();
+  } else if ([command isEqualToString:@"key"]) {
+    // A key the game reads as typed, by SDL's name (key return, key up): how a run reaches the game
+    // itself, since controllers don't while KartPad is in the background.
+    SDL_Event event{};
+    event.type = SDL_EVENT_KEY_DOWN;
+    event.key.scancode = SDL_GetScancodeFromName(argument.UTF8String);
+    event.key.down = true;
+    SDL_PushEvent(&event);
+    event.type = SDL_EVENT_KEY_UP;
+    event.key.down = false;
+    SDL_PushEvent(&event);
+    KPQALog([NSString stringWithFormat:@"key %@ scancode=%d", argument, (int)event.key.scancode]);
   }
   else if ([command isEqualToString:@"restart"]) KPRestartWithCurtain(@"Restarting", @"");
   else if ([command isEqualToString:@"quit"]) [Controller() quitKartPad:nil];

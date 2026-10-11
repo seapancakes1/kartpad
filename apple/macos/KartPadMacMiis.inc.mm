@@ -16,6 +16,8 @@ static bool KPOverlayTakesPads();
 static void KPOverlayPadPress(KartPadMiiPadButton button, BOOL down);
 static void KPHomeTick();
 static void KPOverlayGameTick();
+// What Discord shows (KartPadDiscordPresence.inc.mm).
+static void KPDiscordPresenceTick();
 
 static NSWindow *KPGameWindow() {
   // The SDL game window has no window controller; the Mii editor has one.
@@ -476,6 +478,7 @@ extern "C" void KartPadControllersTick() {
     KPPadShortcutsTick();
     KPHomeTick();
     KPOverlayGameTick();
+    KPDiscordPresenceTick();
   }
 }
 // The runtime keeps pad and keyboard input from the game (and the pointer visible) while this is

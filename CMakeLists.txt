@@ -380,6 +380,12 @@ if(BUILD_TESTING)
     $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-UNDEBUG>)
   add_test(NAME kartpad_mii_database_tests COMMAND kartpad_mii_database_tests)
 
+  add_executable(kartpad_discord_race_presence_tests runtime/tests/discord_race_presence_tests.cpp)
+  target_include_directories(kartpad_discord_race_presence_tests PRIVATE runtime/include)
+  target_compile_features(kartpad_discord_race_presence_tests PRIVATE cxx_std_20)
+  target_compile_options(kartpad_discord_race_presence_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME kartpad.discord.race-presence COMMAND kartpad_discord_race_presence_tests)
+
   add_executable(kartpad_host_contract_tests runtime/tests/host_contract_tests.cpp)
   target_link_libraries(kartpad_host_contract_tests PRIVATE kartpad_host)
   target_compile_features(kartpad_host_contract_tests PRIVATE cxx_std_20)

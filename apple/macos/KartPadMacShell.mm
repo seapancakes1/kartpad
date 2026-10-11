@@ -539,6 +539,7 @@ static bool KPBackgroundPauseEnabled() {
 #include "KartPadControllers.inc.mm"
 #include "KartPadControllerRoster.inc.mm"
 #include "KartPadMacMiis.inc.mm"
+#include "KartPadDiscordPresence.inc.mm"
 // A KartPad screen over the game from the menus and shortcuts (KartPadHomeScreen.inc.mm): "home",
 // "settings", "controllers", "miis" or "pair-wii". NO when there's no game window to show it in.
 static bool KPShowScreen(NSString *which);

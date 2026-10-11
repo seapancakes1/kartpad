@@ -63,7 +63,8 @@
     @"audio.ui_volume":@(c.audioUiVolume.value_or(1.0f)),
     @"audio.voices_volume":@(c.audioVoicesVolume.value_or(1.0f)),
     @"audio.muted":@(c.audioMuted.value_or(false)),
-    @"audio.mix_worker":@(c.audioMixWorker.value_or(true))};
+    @"audio.mix_worker":@(c.audioMixWorker.value_or(true)),
+    @"discord.enabled":@(c.discordPresenceEnabled.value_or(true))};
   for(NSString *key in self.settingControls) {
     NSControl *control=self.settingControls[key];id value=values[key];
     if([control isKindOfClass:NSPopUpButton.class]) {
@@ -329,9 +330,10 @@ static NSArray<NSNumber *> *KPVibrationStrengths() { return @[@0,@0.25,@0.5,@1];
     self.backgroundPauseSwitch=[NSButton checkboxWithTitle:@"Pause the game while another app is in front" target:self action:@selector(backgroundPauseChanged:)];
     self.backgroundPauseSwitch.frame=NSMakeRect(24,350,715,28);[data addSubview:self.backgroundPauseSwitch];
     [self settingsLabel:@"It keeps going while it loads and while you’re online. Turn this off to keep playing with a controller while another app is in front." page:data y:300];
-    [self settingsButton:@"Open Application Support" action:@selector(showApplicationSupport:) page:data y:240];
-    [self settingsButton:@"Open Cache Folder" action:@selector(showCache:) page:data y:195];
-    [self settingsButton:@"Control Reference…" action:@selector(showControls:) page:data y:125];
+    [self setting:@"discord.enabled" checkbox:@"Show what you’re playing in your Discord status" page:data y:255];
+    [self settingsButton:@"Open Application Support" action:@selector(showApplicationSupport:) page:data y:195];
+    [self settingsButton:@"Open Cache Folder" action:@selector(showCache:) page:data y:150];
+    [self settingsButton:@"Control Reference…" action:@selector(showControls:) page:data y:80];
 
     NSView *advanced=[self settingsPage:@"Advanced"];
     [self settingsLabel:@"Advanced & Diagnostics" page:advanced y:680].font=[NSFont boldSystemFontOfSize:19];
