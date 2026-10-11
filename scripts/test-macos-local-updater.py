@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-import errno,importlib.util,io,json,os,tempfile,time,unittest,urllib.error,zipfile
+"""Local Mac updater tests: temporary folders and fake downloads only (no network, app or real state).
+Runs on the stock macOS python3 (3.9) and newer."""
+import errno,hashlib,importlib.util,io,json,os,shutil,subprocess,sys,tempfile,time,unittest,urllib.error,zipfile
 from pathlib import Path,PurePosixPath
 from unittest.mock import patch
+REAL_RUN=subprocess.run
 spec=importlib.util.spec_from_file_location('updater',Path(__file__).with_name('macos-local-updater.py'))
 u=importlib.util.module_from_spec(spec);spec.loader.exec_module(u)
 ROOMY=type('Disk',(),{'free':20_000_000_000})()
+SAVE='save/RetroWFC/RMCP/rksys.dat'
+
+def sha(data):return hashlib.sha256(data if isinstance(data,bytes) else data.encode()).hexdigest()
 
 def zip_bytes(files):
     data=io.BytesIO()
@@ -16,19 +22,84 @@ class Response(io.BytesIO):
     def __init__(self,data,status=200):
         super().__init__(data);self.status=status;self.headers={'Content-Length':str(len(data))}
 
+PATCH=zip_bytes({'RetroRewind6/version.txt':'6.13.2','RetroRewind6/code':'new code','RetroRewind6/xml':'new xml'})
+
+def review(version='6.13.2',code='new code',xml='new xml',archive=PATCH):
+    """A maintainers' profile as upstream publishes it, pinning the 6.13.2 update."""
+    return {'retroRewind':{'version':version,'root':'RetroRewind6',
+        'archive':{'url':u.CDN+'6.13.0-full.zip','bytes':1938862721,'sha256':'2d'*32,'maximumExpandedBytes':2200000000},
+        'updateArchive':{'url':u.CDN+'6.13.2.zip','bytes':len(archive),'sha256':sha(archive),'maximumExpandedBytes':36000000},
+        'codePul':{'path':'code','bytes':len(code),'sha256':sha(code)},
+        'riivolutionXml':{'path':'xml','bytes':len(xml),'sha256':sha(xml)}}}
+
 class Updates(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
-        self.root=Path(self.tmp.name).resolve()
+        self.root=Path(self.tmp.name).resolve();self.clock=1_700_000_000
+        # No network, no app launches or signing: only file copies run for real.
+        run=u.subprocess.run
+        def copies_only(command,*args,**kwargs):
+            if command[0]!='/bin/cp':raise AssertionError(command[0]+' not expected')
+            return run(command,*args,**kwargs)
+        for target,name,fake in ((u.urllib.request,'urlopen',AssertionError('network not expected')),(u.subprocess,'run',copies_only),(u,'relaunch',AssertionError('relaunch not expected'))):
+            guard=patch.object(target,name,side_effect=fake);guard.start();self.addCleanup(guard.stop)
+    # A KartPad install: the app, its original pack with saves beside it, the config and state folder.
+    def world(self):
+        self.state=state=self.root/'state';state.mkdir()
+        self.app=app=self.root/'Apps/KartPad.app';(app/'Contents/MacOS').mkdir(parents=True)
+        (app/'Contents/MacOS/KartPad').write_text('old')
+        self.old=old=self.root/'Old/RetroRewind6';(old/'Tracks').mkdir(parents=True)
+        (old/'version.txt').write_text('6.13.1');(old/'code').write_text('old code');(old/'xml').write_text('old xml')
+        (old/'Tracks/gone.szs').write_text('removed in 6.13.2')
+        profile=self.root/'old-profile.json'
+        profile.write_text(json.dumps({'retroRewind':{'version':'6.13.1',**{key:{'path':name,'bytes':(old/name).stat().st_size,'sha256':u.digest(old/name)} for key,name in [('codePul','code'),('riivolutionXml','xml')]}}}))
+        self.initial={'version':'6.13.1','root':str(old),'profile':str(profile)}
+        self.config=config=self.root/'Config.toml'
+        config.write_text('[paths]\nretro_rewind_root = '+json.dumps(str(old))+'\nkeep = true\n')
+        self.play(old,'progress on 6.13.1')
+        self.settings={'initial':self.initial,'repo':str(self.root),'state':str(state),'config':str(config),'buildCommand':['fake-build','{profile}','{app}']}
+        return state,app,config
+    def play(self,root,text):
+        """The game saves beside the pack it runs from; each save is later than the one before."""
+        path=u.riivolution(root)/SAVE;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(text)
+        self.clock+=60;os.utime(path,(self.clock,self.clock))
+    def saved(self,root):
+        path=u.riivolution(root)/SAVE
+        return path.read_text() if path.exists() else None
+    def pending(self,version='6.13.2',runtime='new'):
+        """A finished build of version, as check() leaves it."""
+        stage=self.state/(version+'-abc');candidate=stage/'KartPad.app';(candidate/'Contents/MacOS').mkdir(parents=True)
+        (candidate/'Contents/MacOS/KartPad').write_text(runtime)
+        root=stage/'pack/RetroRewind6';root.mkdir(parents=True);(root/'version.txt').write_text(version)
+        (root/'code').write_text('code '+version);(root/'xml').write_text('xml '+version)
+        profile=stage/'profile.json';profile.write_text(json.dumps({'retroRewind':{k:{'path':name,'sha256':u.digest(root/name)} for k,name in [('codePul','code'),('riivolutionXml','xml')]}}))
+        u.atomic_json(self.state/'pending.json',{'version':version,'url':u.CDN+version+'.zip','root':str(root),'profile':str(profile),'app':str(candidate),'runtimeSha256':u.digest(candidate/'Contents/MacOS/KartPad')})
+        return root
+    def activate(self):
+        return u.activate(self.state,self.app,self.config,lambda p:None,self.initial)
+    def backups(self):
+        return sorted(p.name for p in (self.state/u.BACKUPS).iterdir())
+
     def test_error_messages_can_offer_specific_recovery(self):
         self.assertEqual(u.error_kind(urllib.error.URLError('offline')),'network')
         self.assertEqual(u.error_kind(TimeoutError('slow')),'network')
         self.assertEqual(u.error_kind(OSError(errno.ENOSPC,'disk full')),'storage')
         self.assertEqual(u.error_kind(u.StorageError('At least 8 GB of free disk space is needed to rebuild')),'storage')
         self.assertEqual(u.error_kind(u.VerificationError('Pending pack integrity check failed')),'verification')
+        self.assertEqual(u.error_kind(u.Unverified('mismatch','code differs')),'unverified')
         # Wording no longer decides the kind: a settings mismatch is configuration.
         self.assertEqual(u.error_kind(ValueError('Updater settings do not match this app version')),'configuration')
 
+    def test_bundled_helper_writes_nothing_into_the_signed_app(self):
+        bundle=self.root/'LocalUpdater';bundle.mkdir()
+        for name,bundled in (('macos-local-updater.py','updater.py'),('update-retro-rewind-profile.py','update-retro-rewind-profile.py')):
+            shutil.copy2(Path(__file__).with_name(name),bundle/bundled)
+        REAL_RUN([sys.executable,'-I',str(bundle/'updater.py'),'--help'],check=True,capture_output=True)
+        self.assertEqual(sorted(p.name for p in bundle.iterdir()),['update-retro-rewind-profile.py','updater.py'])
+    def test_feed_parsing_shares_upstreams_version_order(self):
+        self.assertEqual(u.FEED,u.pins.VERSION_FEED);self.assertTrue(u.DELETIONS.endswith('/RetroRewindDelete.txt'))
+        self.assertEqual(u.version('6.13.10'),u.pins.version_key('6.13.10'))
+        with self.assertRaises(u.VerificationError):u.version('6.13.2b')
     def test_feed_orders_all_intermediate_patches(self):
         text='6.13.2 '+u.CDN+'6.13.2.zip\n6.13.0 '+u.CDN+'6.13.0.zip\n6.13.1 '+u.CDN+'6.13.1.zip'
         self.assertEqual([v for v,url in u.releases(text,'6.12.8')],['6.13.0','6.13.1','6.13.2'])
@@ -65,6 +136,15 @@ class Updates(unittest.TestCase):
         u.clone(source,self.root/'copy')
         (self.root/'copy/sub/file').write_text('patched')
         self.assertEqual((source/'sub/file').read_text(),'original')
+    def test_move_between_volumes_copies_then_deletes(self):
+        source=self.root/'a/KartPad.app';(source/'Contents').mkdir(parents=True);(source/'Contents/file').write_text('app')
+        target=self.root/'b/KartPad-6.13.1.app';target.parent.mkdir();replace=os.replace
+        def cross(a,b):
+            if Path(a).parent!=Path(b).parent:raise OSError(errno.EXDEV,'cross-device link')
+            replace(a,b)
+        with patch.object(u.os,'replace',side_effect=cross):u.move(source,target)
+        self.assertEqual((target/'Contents/file').read_text(),'app')
+        self.assertEqual(list((self.root/'a').iterdir()),[]);self.assertEqual(list((self.root/'b').iterdir()),[target])
 
     def test_download_resumes_after_an_interrupted_transfer(self):
         data=b'x'*3000;calls=[]
@@ -79,75 +159,71 @@ class Updates(unittest.TestCase):
             u.download(u.CDN+'6.13.2.zip',self.root/'patch.zip',lambda done,size:None)
         self.assertEqual((self.root/'patch.zip').read_bytes(),data)
         self.assertEqual(calls,[0,1000])
+    def test_reviewed_profile_must_come_from_the_repository_host(self):
+        for url in ('https://evil.example/profile.json','http://raw.githubusercontent.com/x.json'):
+            with self.assertRaises(u.VerificationError):u.reviewed({'reviewedProfile':url})
+        self.assertEqual(u.source_host(u.REVIEWED),'raw.githubusercontent.com')
+        class Redirected(Response):url='https://evil.example/profile.json'
+        with patch.object(u.urllib.request,'urlopen',return_value=Redirected(b'{}')):
+            with self.assertRaises(u.VerificationError):u.fetch(u.REVIEWED,1000)
+        with patch.object(u,'manifest',return_value='{"retroRewind":{"version":"6.13.2"}}'):
+            with self.assertRaises(u.VerificationError):u.reviewed({})
 
-    def pending(self):
-        state=self.root/'state';state.mkdir()
-        app=self.root/'Apps/KartPad.app';(app/'Contents/MacOS').mkdir(parents=True)
-        (app/'Contents/MacOS/KartPad').write_text('old')
-        stage=state/'6.13.2-abc';candidate=stage/'KartPad.app';(candidate/'Contents/MacOS').mkdir(parents=True)
-        (candidate/'Contents/MacOS/KartPad').write_text('new')
-        root=stage/'pack/RetroRewind6';root.mkdir(parents=True);(root/'version.txt').write_text('6.13.2')
-        (root/'code').write_text('code');(root/'xml').write_text('xml')
-        profile=stage/'profile.json';profile.write_text(json.dumps({'retroRewind':{k:{'path':name,'sha256':u.digest(root/name)} for k,name in [('codePul','code'),('riivolutionXml','xml')]}}))
-        old=self.root/'old-pack';old.mkdir();(old/'version.txt').write_text('6.13.1')
-        self.initial={'version':'6.13.1','root':str(old),'profile':str(self.root/'old-profile.json')}
-        config=self.root/'Config.toml';config.write_text('[paths]\nretro_rewind_root = "old-pack"\nkeep = true\n')
-        u.atomic_json(state/'pending.json',{'version':'6.13.2','url':u.CDN+'6.13.2.zip','root':str(root),'profile':str(profile),'app':str(candidate),'runtimeSha256':u.digest(candidate/'Contents/MacOS/KartPad')})
-        return state,app,config
-    def activate(self,state,app,config):
-        return u.activate(state,app,config,lambda p:None,self.initial)
-
-    def test_activate_app_and_pack_together_keeps_backup(self):
-        state,app,config=self.pending()
-        self.assertTrue(self.activate(state,app,config))
+    def test_activate_app_and_pack_together_keeps_backup_out_of_applications(self):
+        state,app,config=self.world();root=self.pending()
+        self.assertTrue(self.activate())
         self.assertEqual((app/'Contents/MacOS/KartPad').read_text(),'new')
-        self.assertEqual((app.with_name('KartPad.before-6.13.2.app')/'Contents/MacOS/KartPad').read_text(),'old')
-        self.assertIn('keep = true',config.read_text());self.assertIn(str(state/'6.13.2-abc/pack/RetroRewind6'),config.read_text())
+        self.assertEqual(sorted(p.name for p in app.parent.iterdir()),['KartPad.app'])
+        self.assertEqual(self.backups(),['KartPad-6.13.1.app'])
+        self.assertEqual((state/u.BACKUPS/'KartPad-6.13.1.app/Contents/MacOS/KartPad').read_text(),'old')
+        self.assertIn('keep = true',config.read_text());self.assertIn(str(root),config.read_text())
         self.assertFalse((state/'pending.json').exists())
         self.assertEqual(u.load(state/'trial.json'),{'version':'6.13.2','launches':0})
         self.assertEqual(u.load(state/'rollback.json')['version'],'6.13.1')
+        self.assertEqual(u.load(state/'installed.json'),{'app':str(app),'version':'6.13.2','runtimeSha256':u.digest(app/'Contents/MacOS/KartPad')})
     def test_activation_removes_the_spare_candidate_and_older_versions(self):
-        state,app,config=self.pending()
+        state,app,config=self.world();self.pending()
         older=state/'6.12.8-old';(older/'pack').mkdir(parents=True)
-        stale=app.with_name('KartPad.before-6.12.8.app');stale.mkdir()
-        self.activate(state,app,config)
+        stale=state/u.BACKUPS/'KartPad-6.12.8.app';stale.mkdir(parents=True)
+        self.activate()
         self.assertFalse((state/'6.13.2-abc/KartPad.app').exists())
         self.assertTrue((state/'6.13.2-abc/pack/RetroRewind6/code').exists())
         self.assertFalse(older.exists());self.assertFalse(stale.exists())
-        self.assertTrue(app.with_name('KartPad.before-6.13.2.app').exists())
+        self.assertEqual(self.backups(),['KartPad-6.13.1.app'])
     def test_existing_backup_name_does_not_block_activation(self):
-        state,app,config=self.pending()
-        app.with_name('KartPad.before-6.13.2.app').mkdir()
-        self.assertTrue(self.activate(state,app,config))
-        self.assertEqual(Path(u.load(state/'rollback.json')['app']).name,'KartPad.before-6.13.2-2.app')
+        state,app,config=self.world();self.pending()
+        (state/u.BACKUPS/'KartPad-6.13.1.app').mkdir(parents=True)
+        self.assertTrue(self.activate())
+        self.assertEqual(Path(u.load(state/'rollback.json')['app']).name,'KartPad-6.13.1-2.app')
     def test_leftover_unjournaled_copy_does_not_block_activation(self):
-        state,app,config=self.pending()
+        state,app,config=self.world();self.pending()
         (app.with_name('.KartPad.update.app')/'partial').mkdir(parents=True)
-        self.assertTrue(self.activate(state,app,config))
+        self.assertTrue(self.activate())
         self.assertFalse(app.with_name('.KartPad.update.app').exists())
     def test_bad_runtime_cannot_replace_working_app(self):
-        state,app,config=self.pending();original=config.read_text()
+        state,app,config=self.world();self.pending();original=config.read_text()
         (state/'6.13.2-abc/KartPad.app/Contents/MacOS/KartPad').write_text('tampered')
-        with self.assertRaises(ValueError):self.activate(state,app,config)
+        with self.assertRaises(ValueError):self.activate()
         self.assertEqual((app/'Contents/MacOS/KartPad').read_text(),'old');self.assertEqual(config.read_text(),original)
     def test_rejected_build_is_discarded_so_updates_continue(self):
-        state,app,config=self.pending();(state/'6.13.2-abc/pack/RetroRewind6/code').write_text('tampered')
-        with self.assertRaises(ValueError):self.activate(state,app,config)
+        state,app,config=self.world();self.pending();(state/'6.13.2-abc/pack/RetroRewind6/code').write_text('tampered')
+        with self.assertRaises(ValueError):self.activate()
         self.assertEqual((app/'Contents/MacOS/KartPad').read_text(),'old')
         self.assertFalse((state/'pending.json').exists());self.assertFalse((state/'6.13.2-abc').exists())
         failure=u.load(state/'failure.json')
         self.assertEqual((failure['kind'],failure['version']),('verification','6.13.2'))
-    def test_activation_failure_restores_app_config_and_state(self):
-        state,app,config=self.pending();original=config.read_text();atomic=u.atomic_json
+    def test_activation_failure_restores_app_config_state_and_saves(self):
+        state,app,config=self.world();root=self.pending();original=config.read_text();atomic=u.atomic_json
         def fail(path,value):
             if path.name=='active.json':raise OSError(errno.ENOSPC,'disk full')
             atomic(path,value)
         with patch.object(u,'atomic_json',side_effect=fail):
-            with self.assertRaises(OSError):self.activate(state,app,config)
+            with self.assertRaises(OSError):self.activate()
         self.assertEqual((app/'Contents/MacOS/KartPad').read_text(),'old');self.assertEqual(config.read_text(),original)
         # Out of space is worth retrying, so the build stays pending.
         self.assertTrue((state/'pending.json').exists());self.assertFalse((state/'activation.json').exists())
         self.assertFalse((state/'trial.json').exists());self.assertFalse((state/'rollback.json').exists())
+        self.assertIsNone(self.saved(root));self.assertEqual(self.saved(self.old),'progress on 6.13.1')
     def test_duplicate_worker_cannot_acquire_lock(self):
         with u.locked(self.root/'state') as first:
             with u.locked(self.root/'state') as second:
@@ -155,19 +231,68 @@ class Updates(unittest.TestCase):
     def test_config_changes_only_pack_path(self):
         original='[paths]\nretro_rewind_root = "old"\n[video]\nvsync = true\n'
         self.assertEqual(u.updated_config(original,Path('/new')),original.replace('"old"','"/new"'))
+    def test_configured_root_reads_the_games_setting(self):
+        config=self.root/'Config.toml'
+        for text,expected in (('# retro_rewind_root = "x"\nretro_rewind_root = "/a/b"\n','/a/b'),('retro_rewind_root = "rel/RetroRewind6"\n',str(self.root/'rel/RetroRewind6')),
+                              ("retro_rewind_root = '/lit/x' # note\n",'/lit/x'),('[paths]\n',None)):
+            config.write_text(text);self.assertEqual(u.configured_root(config) and str(u.configured_root(config)),expected)
+
+    # Saves (riivolution/ beside each pack) follow the player through updates and going back.
+    def test_update_carries_saves_made_after_the_build(self):
+        state,app,config=self.world();root=self.pending()
+        self.play(self.old,'raced after the update was built')
+        self.activate()
+        self.assertEqual(self.saved(root),'raced after the update was built')
+        self.assertEqual(self.saved(self.old),'raced after the update was built')  # copied, never moved
+        self.assertFalse((u.riivolution(root)/'.kartpad-replaced').exists())
+    def test_progress_survives_two_updates_and_pruning(self):
+        state,app,config=self.world()
+        second=self.pending('6.13.2');self.activate();self.play(second,'progress on 6.13.2')
+        third=self.pending('6.13.3');self.activate()
+        self.assertEqual(self.saved(third),'progress on 6.13.2');self.play(third,'progress on 6.13.3')
+        fourth=self.pending('6.13.4');self.activate()
+        self.assertEqual(self.saved(fourth),'progress on 6.13.3')
+        self.assertFalse((state/'6.13.2-abc').exists())  # its progress lives on in 6.13.4
+        self.assertTrue((state/'6.13.3-abc').exists())  # the version to go back to
+        self.assertEqual(self.saved(self.old),'progress on 6.13.1')
+        self.assertEqual(self.backups(),['KartPad-6.13.3.app'])
+    def test_pruning_keeps_a_pack_with_newer_saves(self):
+        state,app,config=self.world()
+        second=self.pending('6.13.2');self.activate();self.pending('6.13.3');self.activate()
+        self.play(second,'newer than anything the game uses now')
+        self.pending('6.13.4');self.activate()
+        self.assertEqual(self.saved(second),'newer than anything the game uses now')
+    def test_going_back_brings_progress_along(self):
+        state,app,config=self.world();root=self.pending();self.activate()
+        self.play(root,'progress on 6.13.2')
+        u.rollback(state,app,config,lambda p:None,'manual')
+        self.assertEqual(self.saved(self.old),'progress on 6.13.2')
+        self.assertEqual(u.configured_root(config),self.old)
+    def test_interrupted_going_back_keeps_the_older_saves(self):
+        state,app,config=self.world();root=self.pending();self.activate();self.play(root,'progress on 6.13.2')
+        move=u.move
+        def fail(source,target):
+            if Path(source)==Path(u.load(state/'rollback.json')['app']):raise OSError(errno.EIO,'disk error')
+            move(source,target)
+        with patch.object(u,'move',side_effect=fail):
+            with self.assertRaises(OSError):u.rollback(state,app,config,lambda p:None,'manual')
+        self.assertEqual(self.saved(self.old),'progress on 6.13.1');self.assertEqual(self.saved(root),'progress on 6.13.2')
+        self.assertEqual((app/'Contents/MacOS/KartPad').read_text(),'new');self.assertEqual(u.configured_root(config),root)
 
     def test_rollback_restores_previous_app_pack_and_later_settings(self):
-        state,app,config=self.pending();self.activate(state,app,config)
+        state,app,config=self.world();self.pending();self.activate()
         config.write_text(config.read_text()+'changed_after_update = true\n')
         u.rollback(state,app,config,lambda p:None,'manual')
         self.assertEqual((app/'Contents/MacOS/KartPad').read_text(),'old')
         self.assertIn('retro_rewind_root = '+json.dumps(self.initial['root']),config.read_text())
         self.assertIn('changed_after_update = true',config.read_text())
         self.assertFalse((state/'active.json').exists());self.assertFalse((state/'rollback.json').exists())
-        self.assertEqual(u.load(state/'failure.json')['kind'],'declined')
+        self.assertEqual(u.load(state/'declined.json')['version'],'6.13.2')
         self.assertEqual(u.load(state/'status.json')['phase'],'rolledBack')
+        self.assertEqual(u.load(state/'installed.json'),{'app':str(app),'version':'6.13.1','runtimeSha256':u.digest(app/'Contents/MacOS/KartPad')})
+        self.assertEqual(self.backups(),[])
     def test_new_app_that_keeps_failing_is_rolled_back(self):
-        state,app,config=self.pending();self.activate(state,app,config)
+        state,app,config=self.world();self.pending();self.activate()
         verify=lambda p:None
         for launch in range(u.TRIAL_LAUNCHES):
             self.assertFalse(u.trial(state,app,config,verify,'6.13.2'))
@@ -176,133 +301,244 @@ class Updates(unittest.TestCase):
         self.assertEqual((app/'Contents/MacOS/KartPad').read_text(),'old')
         self.assertEqual(u.load(state/'status.json')['reason'],'unstable')
     def test_failed_automatic_rollback_is_reported_once(self):
-        state,app,config=self.pending();self.activate(state,app,config)
+        state,app,config=self.world();self.pending();self.activate()
         u.atomic_json(state/'trial.json',{'version':'6.13.2','launches':u.TRIAL_LAUNCHES})
         def missing(path):raise u.subprocess.CalledProcessError(1,['codesign'])
         with self.assertRaises(u.subprocess.CalledProcessError):u.trial(state,app,config,missing,'6.13.2')
         self.assertFalse((state/'trial.json').exists())
         self.assertEqual((app/'Contents/MacOS/KartPad').read_text(),'new')
     def test_confirmed_app_is_not_rolled_back(self):
-        state,app,config=self.pending();self.activate(state,app,config)
+        state,app,config=self.world();self.pending();self.activate()
         (state/'trial.json').unlink()  # the app removes it once it has run long enough
         self.assertFalse(u.trial(state,app,config,lambda p:None,'6.13.2'))
         self.assertEqual((app/'Contents/MacOS/KartPad').read_text(),'new')
 
-    def installed(self,state):
-        old=self.root/'old-pack';old.mkdir(exist_ok=True);(old/'version.txt').write_text('6.13.1')
-        (old/'code').write_text('old code');(old/'xml').write_text('old xml');(old/'Tracks').mkdir(exist_ok=True)
-        (old/'Tracks/gone.szs').write_text('removed in 6.13.2')
-        profile=self.root/'old-profile.json'
-        profile.write_text(json.dumps({'retroRewind':{'version':'6.13.1',**{key:{'path':name,'bytes':(old/name).stat().st_size,'sha256':u.digest(old/name)} for key,name in [('codePul','code'),('riivolutionXml','xml')]}}}))
-        return {'initial':{'version':'6.13.1','root':str(old),'profile':str(profile)},'repo':str(self.root),'buildCommand':['fake-build','{profile}','{app}']},old
-    def feed(self,calls=None):
-        patch_zip=zip_bytes({'RetroRewind6/version.txt':'6.13.2','RetroRewind6/code':'new code','RetroRewind6/xml':'new xml'})
-        def fetch(url,limit,offset=0):
-            if calls is not None:calls.append(url)
-            if url==u.FEED:return Response(('6.13.2 '+u.CDN+'6.13.2.zip /6.13.2.zip Assets').encode())
-            if url==u.DELETIONS:return Response(b'6.13.2 /RetroRewind6/Tracks/gone.szs\n6.13.2 /6.13.2.zip\n')
-            return Response(patch_zip)
-        return fetch
-    def fake_run(self,command,settings,log):
-        if command[0]=='fake-build':
-            profile=json.loads(Path(command[1]).read_text())['retroRewind']
-            target=Path(command[2]);(target/'Contents/MacOS').mkdir(parents=True)
-            (target/'Contents/MacOS/KartPad').write_text('new runtime '+profile['codePul']['sha256']+' '+profile['riivolutionXml']['sha256'])
-    def run_check(self,settings,state,app,fetch=None,run=None,**options):
-        with patch.object(u,'fetch',side_effect=fetch or self.feed()),patch.object(u,'run',side_effect=run or self.fake_run),patch.object(u.shutil,'disk_usage',return_value=ROOMY):
-            u.check(settings,'6.13.1',state,app,**options)
-
-    def test_background_check_builds_pending_without_installing(self):
-        state,app,config=self.pending();(state/'pending.json').unlink()
-        settings,old=self.installed(state);original=config.read_text()
-        self.run_check(settings,state,app)
-        pending=json.loads((state/'pending.json').read_text())
-        self.assertEqual(pending['version'],'6.13.2')
-        root=Path(pending['root'])
-        self.assertFalse((root/'Tracks/gone.szs').exists())  # applied from the official delete list
-        self.assertTrue((old/'Tracks/gone.szs').exists())
-        self.assertEqual(list(root.parent.parent.glob('patch-*.zip')),[])
-        self.assertEqual((app/'Contents/MacOS/KartPad').read_text(),'old')
-        self.assertEqual(config.read_text(),original)
-        self.assertEqual((old/'code').read_text(),'old code')
-        self.assertEqual(json.loads((state/'status.json').read_text())['phase'],'ready')
-    def test_failed_build_is_not_repeated_until_forced(self):
-        state,app,config=self.pending();(state/'pending.json').unlink()
-        settings,old=self.installed(state);builds=[]
-        def broken(command,settings,log):
-            builds.append(command[0])
-            if command[0]=='fake-build':raise u.subprocess.CalledProcessError(1,command)
-        with self.assertRaises(u.subprocess.CalledProcessError):self.run_check(settings,state,app,run=broken)
-        self.assertEqual(u.load(state/'failure.json')['kind'],'build')
-        self.run_check(settings,state,app,run=broken)
-        self.assertEqual(builds,['fake-build'])
-        with self.assertRaises(u.subprocess.CalledProcessError):self.run_check(settings,state,app,run=broken,force=True)
-        self.assertEqual(builds,['fake-build','fake-build'])
-        self.assertEqual([p.name for p in state.iterdir() if u.STAGE.fullmatch(p.name)],[])
-    def test_offline_checks_back_off_until_forced(self):
-        state,app,config=self.pending();(state/'pending.json').unlink()
-        settings,old=self.installed(state);calls=[]
-        def offline(url,limit,offset=0):
-            calls.append(url);raise urllib.error.URLError('offline')
-        with self.assertRaises(urllib.error.URLError):self.run_check(settings,state,app,fetch=offline)
-        self.run_check(settings,state,app,fetch=offline)
-        self.assertEqual(calls,[u.FEED])
-        self.run_check(settings,state,app,fetch=self.feed(),force=True)
-        self.assertTrue((state/'pending.json').exists());self.assertFalse((state/'failure.json').exists())
-    def test_declined_version_needs_explicit_approval(self):
-        state,app,config=self.pending();(state/'pending.json').unlink()
-        settings,old=self.installed(state)
-        u.remember(state,'declined','6.13.2')
-        self.run_check(settings,state,app)
-        self.assertFalse((state/'pending.json').exists())
-        self.run_check(settings,state,app,force=True)
-        self.assertEqual(u.load(state/'status.json')['phase'],'declined')
-        self.run_check(settings,state,app,force=True,allow_declined=True)
-        self.assertTrue((state/'pending.json').exists())
-    def test_offline_check_leaves_installed_app_and_pack_alone(self):
-        state,app,config=self.pending();(state/'pending.json').unlink()
-        source=self.root/'pack';source.mkdir();(source/'version.txt').write_text('6.13.1')
-        (source/'code').write_text('code');(source/'xml').write_text('xml')
-        profile=self.root/'profile.json'
-        profile.write_text(json.dumps({'retroRewind':{k:{'path':name,'sha256':u.digest(source/name)} for k,name in [('codePul','code'),('riivolutionXml','xml')]}}))
-        settings={'initial':{'version':'6.13.1','root':str(source),'profile':str(profile)}}
-        original=config.read_text()
-        with patch.object(u,'fetch',side_effect=urllib.error.URLError('offline')):
-            with self.assertRaises(urllib.error.URLError):u.check(settings,'6.13.1',state,app)
-        self.assertEqual(config.read_text(),original)
-        self.assertEqual((app/'Contents/MacOS/KartPad').read_text(),'old')
-        self.assertFalse((state/'pending.json').exists())
-
-    def test_crash_recovery_restores_previous_active_metadata(self):
-        state,app,config=self.pending();original=config.read_text()
-        pending=json.loads((state/'pending.json').read_text())
-        previous={'version':'6.13.1','root':'old-pack','profile':'old-profile'}
-        backup=self.root/'backup.app';app.rename(backup)
-        app.mkdir();(app/'bad').write_text('interrupted installation')
-        config.write_text('interrupted config')
-        u.atomic_json(state/'active.json',{'version':'6.13.2'})
-        u.atomic_json(state/'activation.json',{'app':str(app),'backup':str(backup),'config':str(config),'originalConfig':original,'previousActive':previous,'pending':pending,'staged':str(self.root/'staged.app')})
-        u.recover(state)
-        self.assertEqual(config.read_text(),original)
-        self.assertEqual((app/'Contents/MacOS/KartPad').read_text(),'old')
-        self.assertEqual(json.loads((state/'active.json').read_text()),previous)
     def test_interrupted_transaction_is_undone_at_every_step(self):
-        for completed in range(3):
-            with self.subTest(completed=completed):
+        steps=('journal','aside','carried','backed up','replaced','written')
+        for completed in range(len(steps)):
+            with self.subTest(step=steps[completed]):
                 self.root=Path(self.tmp.name).resolve()/f'run{completed}';self.root.mkdir()
-                state,app,config=self.pending();original=config.read_text();before=u.snapshot(state)
-                staged=app.with_name('.KartPad.update.app');u.clone(state/'6.13.2-abc/KartPad.app',staged)
-                backup=app.with_name('KartPad.before-6.13.2.app');moves=[(app,backup),(staged,app)]
-                u.atomic_json(state/'activation.json',{'moves':[[str(a),str(b)] for a,b in moves],'config':str(config),'originalConfig':original,'previous':before})
-                for source,target in moves[:completed]:os.replace(source,target)
-                if completed==2:config.write_text('half written');u.atomic_json(state/'active.json',{'version':'6.13.2'})
+                state,app,config=self.world();original=config.read_text();before=u.snapshot(state)
+                target=self.root/'Target/RetroRewind6';target.mkdir(parents=True);self.play(target,'older saves')
+                staged=app.with_name('.KartPad.update.app');(staged/'Contents/MacOS').mkdir(parents=True);(staged/'Contents/MacOS/KartPad').write_text('new')
+                backup=state/u.BACKUPS/'KartPad-6.13.1.app';backup.parent.mkdir(parents=True);moves=[(app,backup),(staged,app)]
+                saves=u.carry_plan(u.riivolution(self.old),u.riivolution(target))
+                u.atomic_json(state/'activation.json',{'moves':[[str(a),str(b)] for a,b in moves],'config':str(config),'originalConfig':original,'previous':before,'saves':saves})
+                if completed>=1:
+                    aside=Path(saves['aside']);aside.mkdir();os.replace(u.riivolution(target)/'save',aside/'save')
+                if completed>=2:u.clone(u.riivolution(self.old)/'save',u.riivolution(target)/'save')
+                for source,dest in moves[:max(0,completed-2)]:os.replace(source,dest)
+                if completed==5:config.write_text('half written');u.atomic_json(state/'active.json',{'version':'6.13.2'})
                 u.recover(state)
                 self.assertEqual((app/'Contents/MacOS/KartPad').read_text(),'old')
                 self.assertEqual(config.read_text(),original);self.assertEqual(u.snapshot(state),before)
                 self.assertFalse(backup.exists());self.assertFalse((state/'activation.json').exists())
+                self.assertEqual(self.saved(target),'older saves');self.assertEqual(self.saved(self.old),'progress on 6.13.1')
+                self.assertEqual(sorted(p.name for p in u.riivolution(target).iterdir()),['save'])
 
+    # Only the installed app acts; a backup or another copy leaves everything alone.
+    def main(self,app,action='activate',*options):
+        settings=self.root/'settings.json';settings.write_text(json.dumps(self.settings))
+        argv=['updater',action,'--settings',str(settings),'--app',str(app),'--version',options[0] if options else '6.13.1','--pid','1',*options[1:]]
+        with patch.object(sys,'argv',argv),patch.object(u,'relaunch') as relaunch:
+            return u.main(),relaunch.called
+    def test_backup_or_other_copy_leaves_state_alone(self):
+        state,app,config=self.world();root=self.pending();self.activate();self.pending('6.13.3')
+        before,original=u.snapshot(state),config.read_text()
+        backup=state/u.BACKUPS/'KartPad-6.13.1.app'
+        with patch.object(u,'fetch',side_effect=AssertionError('network not expected')):
+            self.assertEqual(self.main(backup),(0,False))
+            self.assertEqual(self.main(backup,'check','6.13.1','--force'),(0,False))
+        self.assertEqual(u.snapshot(state),before);self.assertEqual(config.read_text(),original)
+        self.assertEqual(u.load(state/'trial.json'),{'version':'6.13.2','launches':0})
+        self.assertEqual((app/'Contents/MacOS/KartPad').read_text(),'new');self.assertTrue(backup.exists())
+    def test_settings_can_name_the_installed_app(self):
+        state,app,config=self.world();self.settings['app']=str(app)
+        copy=self.root/'QA/KartPad.app';u.clone(app,copy)
+        self.assertEqual(self.main(copy),(0,False));self.assertFalse((state/'installed.json').exists())
+        self.assertEqual(self.main(app),(0,False))
+        self.assertEqual(u.load(state/'installed.json')['app'],str(app))
+    def test_first_launch_records_the_installed_app(self):
+        state,app,config=self.world();self.pending();original=config.read_text()
+        self.assertTrue(u.other_copy(state,self.settings,app) is False)
+        u.adopt(state,self.settings,app,config,'6.13.1',False)
+        self.assertEqual(u.load(state/'installed.json')['runtimeSha256'],u.digest(app/'Contents/MacOS/KartPad'))
+        self.assertTrue((state/'pending.json').exists());self.assertEqual(config.read_text(),original)
+        self.assertTrue(u.recognised(state,app,'6.13.1'))
+
+    # A package built by hand after an update becomes the new starting point.
+    def test_hand_built_app_after_an_update_is_adopted(self):
+        state,app,config=self.world();root=self.pending();self.activate();self.play(root,'progress on 6.13.2')
+        self.pending('6.13.3')
+        (app/'Contents/MacOS/KartPad').write_text('hand-built 6.13.1')
+        self.assertFalse(u.recognised(state,app,'6.13.1'))
+        self.assertEqual(u.adopt(state,self.settings,app,config,'6.13.1',False),'deferred')
+        self.assertEqual(u.configured_root(config),root)
+        self.assertEqual(u.adopt(state,self.settings,app,config,'6.13.1',True),'moved')
+        self.assertEqual(u.configured_root(config),self.old);self.assertIn('keep = true',config.read_text())
+        self.assertEqual(self.saved(self.old),'progress on 6.13.2')
+        for name in ('active.json','pending.json','trial.json','rollback.json','activation.json'):self.assertFalse((state/name).exists(),name)
+        self.assertFalse((state/'6.13.3-abc/KartPad.app').exists())
+        self.assertTrue(u.recognised(state,app,'6.13.1'))
+        with patch.object(u,'fetch',side_effect=self.feed(review('6.13.1'))),patch.object(u.shutil,'disk_usage',return_value=ROOMY):
+            u.check(self.settings,'6.13.1',state,app)
+        self.assertEqual(u.load(state/'status.json')['phase'],'unverified')  # checks run again, from 6.13.1
+    def test_hand_built_app_finds_an_earlier_updates_pack(self):
+        state,app,config=self.world();second=self.pending('6.13.2');self.activate()
+        third=self.pending('6.13.3');self.activate()
+        (app/'Contents/MacOS/KartPad').write_text('hand-built 6.13.2')
+        self.assertEqual(self.main(app,'activate','6.13.2'),(10,True))  # relaunches onto the right files
+        self.assertEqual(u.configured_root(config),second)
+        self.assertEqual(u.load(state/'active.json')['root'],str(second))
+        self.assertTrue(u.recognised(state,app,'6.13.2'))
+    def test_hand_rebuild_of_the_same_version_keeps_the_way_back(self):
+        state,app,config=self.world();root=self.pending();self.activate();self.pending('6.13.3')
+        (app/'Contents/MacOS/KartPad').write_text('hand-built 6.13.2')
+        self.assertEqual(u.adopt(state,self.settings,app,config,'6.13.2',False),'recorded')
+        self.assertEqual(u.configured_root(config),root);self.assertTrue((state/'rollback.json').exists())
+        self.assertFalse((state/'trial.json').exists());self.assertFalse((state/'pending.json').exists())
+    def test_check_waits_for_launch_to_move_the_game(self):
+        state,app,config=self.world();root=self.pending();self.activate();original=config.read_text()
+        (app/'Contents/MacOS/KartPad').write_text('hand-built 6.13.1')
+        with patch.object(u,'fetch',side_effect=AssertionError('network not expected')):
+            self.assertEqual(self.main(app,'check','6.13.1'),(0,False))
+        self.assertEqual(config.read_text(),original);self.assertEqual(u.load(state/'active.json')['version'],'6.13.2')
+
+    # Background checks: the official feed, the maintainers' review and fake downloads.
+    def feed(self,pin=None,calls=None,archive=PATCH):
+        pin=review() if pin is None else pin
+        def fetch(url,limit,offset=0):
+            if calls is not None:calls.append(url)
+            if url==u.FEED:return Response(('6.13.2 '+u.CDN+'6.13.2.zip /6.13.2.zip Assets').encode())
+            if url==u.DELETIONS:return Response(b'6.13.2 /RetroRewind6/Tracks/gone.szs\n6.13.2 /6.13.2.zip\n')
+            if url==u.REVIEWED:return Response(json.dumps(pin).encode())
+            if url==u.CDN+'6.13.2.zip':return Response(archive)
+            raise AssertionError('unexpected download '+url)
+        return fetch
+    def fake_run(self,command,settings,log):
+        self.builds.append(command[0])
+        if command[0]=='fake-build':
+            profile=json.loads(Path(command[1]).read_text())['retroRewind']
+            target=Path(command[2]);(target/'Contents/MacOS').mkdir(parents=True)
+            (target/'Contents/MacOS/KartPad').write_text('new runtime '+profile['codePul']['sha256']+' '+profile['riivolutionXml']['sha256'])
+            if not self.unbundled:  # the package script bundles the helper when the build names its settings
+                (target/'Contents/Resources/LocalUpdater').mkdir(parents=True);(target/'Contents/Resources/LocalUpdater/updater.py').write_text('helper')
+    unbundled=False
+    def run_check(self,fetch=None,run=None,**options):
+        self.builds=getattr(self,'builds',[])
+        with patch.object(u,'fetch',side_effect=fetch or self.feed()),patch.object(u,'run',side_effect=run or self.fake_run),patch.object(u.shutil,'disk_usage',return_value=ROOMY):
+            u.check(self.settings,'6.13.1',self.state,self.app,**options)
+    def status(self):return u.load(self.state/'status.json')
+
+    def test_reviewed_update_builds_pending_without_installing(self):
+        state,app,config=self.world();original=config.read_text();calls=[]
+        self.run_check(self.feed(calls=calls))
+        pending=u.load(state/'pending.json')
+        self.assertEqual((pending['version'],pending['reviewed']),('6.13.2',True))
+        root=Path(pending['root'])
+        self.assertFalse((root/'Tracks/gone.szs').exists())  # applied from the official delete list
+        self.assertTrue((self.old/'Tracks/gone.szs').exists())
+        self.assertEqual(list(root.parent.parent.glob('patch-*.zip')),[])
+        self.assertEqual((app/'Contents/MacOS/KartPad').read_text(),'old')
+        self.assertEqual(config.read_text(),original)
+        self.assertEqual((self.old/'code').read_text(),'old code')
+        self.assertEqual(self.status()['phase'],'ready')
+        profile=u.load(Path(pending['profile']))['retroRewind']
+        self.assertEqual((profile['version'],profile['codePul']['sha256'],profile['updateArchive']),('6.13.2',sha('new code'),review()['retroRewind']['updateArchive']))
+        self.assertTrue(u.load(Path(pending['profile']))['localBuildUpdates'][-1]['reviewed'])
+        self.assertEqual(calls,[u.FEED,u.REVIEWED,u.DELETIONS,u.CDN+'6.13.2.zip'])
+    def test_rebuild_without_the_helper_is_not_installed(self):
+        state,app,config=self.world();self.unbundled=True
+        with self.assertRaises(u.VerificationError):self.run_check()
+        self.assertFalse((state/'pending.json').exists());self.assertEqual(u.load(state/'failure.json')['kind'],'verification')
+    def test_feed_ahead_of_the_review_waits_for_the_player(self):
+        state,app,config=self.world();calls=[]
+        self.run_check(self.feed(review('6.13.1'),calls))
+        self.assertEqual(calls,[u.FEED,u.REVIEWED])  # nothing downloaded, nothing deleted
+        self.assertEqual({k:self.status()[k] for k in ('phase','version','reason','reviewed')},
+                         {'phase':'unverified','version':'6.13.2','reason':'unreviewed','reviewed':'6.13.1'})
+        self.assertFalse((state/'pending.json').exists());self.assertEqual(self.builds,[])
+        self.run_check(self.feed(review('6.13.1')),force=True)
+        self.assertFalse((state/'pending.json').exists())
+        # The maintainers catch up: it installs as reviewed with no further approval.
+        self.run_check(self.feed());self.assertTrue(u.load(state/'pending.json')['reviewed'])
+    def test_pinned_archive_mismatch_is_never_built(self):
+        state,app,config=self.world();calls=[]
+        tampered=zip_bytes({'RetroRewind6/version.txt':'6.13.2','RetroRewind6/code':'new code','RetroRewind6/xml':'new xml','RetroRewind6/extra':'x'})
+        self.run_check(self.feed(archive=tampered,calls=calls))
+        self.assertEqual((self.status()['phase'],self.status()['reason']),('unverified','mismatch'))
+        self.assertEqual(self.builds,[]);self.assertFalse((state/'pending.json').exists())
+        self.assertEqual(u.load(state/'failure.json')['kind'],'unverified')
+        self.assertEqual([p.name for p in state.iterdir() if u.STAGE.fullmatch(p.name)],[])
+        # Automatic checks don't download it again until the review changes or the player asks.
+        del calls[:];self.run_check(self.feed(archive=tampered,calls=calls))
+        self.assertNotIn(u.CDN+'6.13.2.zip',calls)
+        del calls[:];self.run_check(self.feed(archive=tampered,calls=calls),force=True)
+        self.assertIn(u.CDN+'6.13.2.zip',calls);self.assertEqual(self.builds,[])
+        del calls[:];self.run_check(self.feed(review(archive=tampered),archive=tampered,calls=calls))
+        self.assertIn(u.CDN+'6.13.2.zip',calls);self.assertTrue((state/'pending.json').exists())
+    def test_code_mismatch_after_extraction_is_never_built(self):
+        state,app,config=self.world()
+        self.run_check(self.feed(review(code='reviewed code')))
+        self.assertEqual((self.status()['phase'],self.status()['reason']),('unverified','mismatch'))
+        self.assertIn('code differs',self.status()['message'])
+        self.assertEqual(self.builds,[]);self.assertFalse((state/'pending.json').exists())
+    def test_player_can_install_an_unreviewed_version(self):
+        state,app,config=self.world()
+        self.run_check(self.feed(review('6.13.1')))
+        self.run_check(self.feed(review('6.13.1')),force=True,allow_unverified='6.13.3')  # not what the feed offers
+        self.assertFalse((state/'pending.json').exists())
+        self.run_check(self.feed(review('6.13.1')),force=True,allow_unverified='6.13.2')
+        self.assertEqual(u.load(state/'approved.json')['version'],'6.13.2')
+        pending=u.load(state/'pending.json');self.assertFalse(pending['reviewed'])
+        self.assertFalse((Path(pending['root'])/'Tracks/gone.szs').exists())  # deletions apply once approved
+        self.activate();self.assertFalse((state/'approved.json').exists())
+    def test_approval_still_checks_against_a_review(self):
+        state,app,config=self.world()
+        self.run_check(self.feed(review(code='reviewed code')))
+        self.run_check(self.feed(review(code='reviewed code')),force=True,allow_unverified='6.13.2')
+        self.assertFalse(u.load(state/'pending.json')['reviewed'])
+        self.assertFalse(u.load(Path(u.load(state/'pending.json')['profile']))['localBuildUpdates'][-1]['packReviewed'])
+    def test_failed_build_is_not_repeated_until_forced(self):
+        state,app,config=self.world();self.builds=[]
+        def broken(command,settings,log):
+            self.builds.append(command[0])
+            if command[0]=='fake-build':raise u.subprocess.CalledProcessError(1,command)
+        with self.assertRaises(u.subprocess.CalledProcessError):self.run_check(run=broken)
+        self.assertEqual(u.load(state/'failure.json')['kind'],'build')
+        self.run_check(run=broken)
+        self.assertEqual(self.builds,['fake-build'])
+        with self.assertRaises(u.subprocess.CalledProcessError):self.run_check(run=broken,force=True)
+        self.assertEqual(self.builds,['fake-build','fake-build'])
+        self.assertEqual([p.name for p in state.iterdir() if u.STAGE.fullmatch(p.name)],[])
+    def test_offline_checks_back_off_until_forced(self):
+        state,app,config=self.world();calls=[]
+        def offline(url,limit,offset=0):
+            calls.append(url);raise urllib.error.URLError('offline')
+        with self.assertRaises(urllib.error.URLError):self.run_check(offline)
+        self.run_check(offline)
+        self.assertEqual(calls,[u.FEED])
+        self.run_check(self.feed(),force=True)
+        self.assertTrue((state/'pending.json').exists());self.assertFalse((state/'failure.json').exists())
+    def test_declined_version_needs_explicit_approval(self):
+        state,app,config=self.world()
+        u.atomic_json(state/'declined.json',{'version':'6.13.2','url':None})
+        self.run_check()
+        self.assertFalse((state/'pending.json').exists())
+        self.run_check(force=True)
+        self.assertEqual(self.status()['phase'],'declined')
+        with self.assertRaises(urllib.error.URLError):self.run_check(urllib.error.URLError('offline'))
+        self.run_check(force=True);self.assertEqual(self.status()['phase'],'declined')  # remembered past failures
+        self.run_check(force=True,allow_declined=True)
+        self.assertTrue((state/'pending.json').exists());self.assertFalse((state/'declined.json').exists())
+    def test_offline_check_leaves_installed_app_and_pack_alone(self):
+        state,app,config=self.world();original=config.read_text()
+        with self.assertRaises(urllib.error.URLError):self.run_check(urllib.error.URLError('offline'))
+        self.assertEqual(config.read_text(),original)
+        self.assertEqual((app/'Contents/MacOS/KartPad').read_text(),'old')
+        self.assertFalse((state/'pending.json').exists())
     def test_pending_update_does_not_rebuild_or_touch_config(self):
-        state,app,config=self.pending();original=config.read_text()
+        state,app,config=self.world();self.pending();original=config.read_text()
         with patch.object(u,'fetch',side_effect=AssertionError('network not expected')):
             u.check({},'6.13.1',state,app)
         self.assertEqual(config.read_text(),original)

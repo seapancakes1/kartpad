@@ -380,13 +380,15 @@ static NSString *ChooseAndValidateRetroRewindData() {
   alert.messageText = @"Unsupported Retro Rewind Data";
   NSString *detail = error.localizedDescription.length > 0
       ? error.localizedDescription : validation;
+  NSString *newer = KPLocalUpdateSettings() != nil
+      ? @"Retro Rewind Updates… in the Game menu installs newer packs."
+      : @"To use a newer pack, first check KartPad's GitHub Releases for a KartPad build that supports it. "
+         "Retro Rewind updates are not installed automatically.";
   alert.informativeText = [NSString stringWithFormat:
       @"%@\n\nThis KartPad build supports Retro Rewind %@. Choose the matching "
-       "pack. To use a newer pack, first check KartPad's GitHub Releases for a "
-       "KartPad build that supports it. Retro Rewind updates are not installed "
-       "automatically.\n\nKeep your existing game data and saves; the selected "
+       "pack. %@\n\nKeep your existing game data and saves; the selected "
        "folder has not been changed.",
-      detail, @KARTPAD_RR_VERSION];
+      detail, @KARTPAD_RR_VERSION, newer];
   [alert runModal];
   return @"";
 }
@@ -1379,21 +1381,6 @@ static void InstallMenu() {
     }
   }
 
-#if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)
-  if (KPLocalUpdateSettings() != nil) {
-    NSMenuItem *updates = [[NSMenuItem alloc] initWithTitle:@"Automatic Updates…"
-        action:@selector(showAutomaticUpdates:) keyEquivalent:@""];
-    updates.target = Controller();
-    [appMenu insertItem:updates atIndex:MAX(0, (NSInteger)appMenu.numberOfItems - 1)];
-    if (NSString *revertTitle = KPLocalUpdateRevertTitle()) {
-      NSMenuItem *revert = [[NSMenuItem alloc] initWithTitle:revertTitle
-          action:@selector(revertAutomaticUpdate:) keyEquivalent:@""];
-      revert.target = Controller();
-      [appMenu insertItem:revert atIndex:[appMenu indexOfItem:updates] + 1];
-    }
-  }
-#endif
-
   // SDL makes a Window menu only when it creates the app itself; KartPad creates the app first (to
   // take the focus at launch), so it makes its own: Minimize, Zoom and the window list.
   if (NSApp.windowsMenu == nil) {
@@ -1450,6 +1437,19 @@ static void InstallMenu() {
   retro.state = [activeProfile isEqualToString:kKartPadRetroProfile]
       ? NSControlStateValueOn : NSControlStateValueOff;
   [gameMenu addItem:retro];
+  // The Retro Rewind pack's own updates (Help → Check for Updates… is KartPad's).
+  if (KPLocalUpdateSettings() != nil) {
+    NSMenuItem *updates = [[NSMenuItem alloc] initWithTitle:@"Retro Rewind Updates…"
+        action:@selector(showAutomaticUpdates:) keyEquivalent:@""];
+    updates.target = Controller();
+    [gameMenu addItem:updates];
+    if (NSString *revertTitle = KPLocalUpdateRevertTitle()) {
+      NSMenuItem *revert = [[NSMenuItem alloc] initWithTitle:revertTitle
+          action:@selector(revertAutomaticUpdate:) keyEquivalent:@""];
+      revert.target = Controller();
+      [gameMenu addItem:revert];
+    }
+  }
   [gameMenu addItem:NSMenuItem.separatorItem];
 #endif
   NSMenuItem *settings = [[NSMenuItem alloc]

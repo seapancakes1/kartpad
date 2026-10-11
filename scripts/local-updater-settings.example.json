@@ -1,0 +1,27 @@
+{
+  "python": "/usr/bin/python3",
+  "repo": "/Users/YOU/src/kartpad",
+  "state": "/Users/YOU/Library/Application Support/KartPad/LocalUpdater",
+  "config": "/Users/YOU/Library/Application Support/KartPad/Config.toml",
+  "app": "/Applications/KartPad.app",
+  "initial": {
+    "version": "6.13.1",
+    "root": "/Users/YOU/src/kartpad/private/builder/retro-rewind-downloads/6.13.1-extracted/RetroRewind6",
+    "profile": "/Users/YOU/src/kartpad/private/retro-rewind-6.13.1-profile.json"
+  },
+  "buildCommand": [
+    "/bin/bash",
+    "/Users/YOU/src/kartpad/scripts/macos-local-rebuild.sh",
+    "{root}",
+    "{profile}",
+    "{app}"
+  ],
+  "environment": {
+    "PATH": "/opt/homebrew/bin:/opt/homebrew/opt/dotnet@8/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+    "KARTPAD_LOCAL_UPDATER_SETTINGS": "/Users/YOU/src/kartpad/private/local-updater-settings.json",
+    "KARTPAD_DISC_IMAGE": "/Users/YOU/src/kartpad/ref/Mario Kart Wii.wbfs",
+    "KARTPAD_RUNTIME_SOURCE": "/Users/YOU/src/kartpad/build/self-build-macos-source",
+    "KARTPAD_RUNTIME_BUILD": "/Users/YOU/src/kartpad/build/self-build-macos-build"
+  },
+  "reviewedProfile": "https://raw.githubusercontent.com/chrissotraidis/kartpad/main/builder/profiles/mkwii-rmcp01-rev0.json"
+}

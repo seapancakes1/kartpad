@@ -155,7 +155,8 @@ for shell_contract in \
 done
 
 # Local Mac builds may carry the automatic-update helper; it must be complete
-# and match this checkout so a rebuilt app never ships a stale updater.
+# and match this checkout so a rebuilt app never ships a stale updater, and its
+# settings' interpreter must be able to run it (Python 3.9 or newer).
 local_updater="${contents}/Resources/LocalUpdater"
 if [[ -n "${KARTPAD_LOCAL_UPDATER_SETTINGS:-}" && ! -d "${local_updater}" ]]; then
   echo "package lacks the requested local updater" >&2
@@ -163,8 +164,15 @@ if [[ -n "${KARTPAD_LOCAL_UPDATER_SETTINGS:-}" && ! -d "${local_updater}" ]]; th
 fi
 if [[ -e "${local_updater}" ]]; then
   if [[ "${product}" != dual ]] ||
+     [[ "$(ls -A "${local_updater}" | sort | tr '\n' ' ')" != "settings.json update-retro-rewind-profile.py updater.py " ]] ||
      ! cmp -s "${local_updater}/updater.py" "${repo_root}/scripts/macos-local-updater.py" ||
-     ! python3 "${repo_root}/scripts/check-local-updater-settings.py" "${local_updater}/settings.json"; then
+     ! cmp -s "${local_updater}/update-retro-rewind-profile.py" "${repo_root}/scripts/update-retro-rewind-profile.py" ||
+     { [[ -n "${KARTPAD_LOCAL_UPDATER_SETTINGS:-}" ]] &&
+       ! cmp -s "${local_updater}/settings.json" "${KARTPAD_LOCAL_UPDATER_SETTINGS}"; } ||
+     ! python3 "${repo_root}/scripts/check-local-updater-settings.py" "${local_updater}/settings.json" ||
+     ! "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["python"])' "${local_updater}/settings.json")" -I -c \
+       'import ast, sys; [ast.parse(open(path).read(), path) for path in sys.argv[1:]]' \
+       "${local_updater}/updater.py" "${local_updater}/update-retro-rewind-profile.py"; then
     echo "package local updater is incomplete or out of date" >&2
     exit 70
   fi

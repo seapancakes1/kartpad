@@ -1,10 +1,15 @@
-// Local builds opt in by bundling their rebuild settings and Python helper.
+// Local builds opt in by bundling their rebuild settings and Python helper. They sit in the signed
+// bundle, which an update replaces rather than edits, so they are read once per launch.
 static NSDictionary *KPLocalUpdateSettings() {
-  NSURL *url = [NSBundle.mainBundle.resourceURL URLByAppendingPathComponent:@"LocalUpdater/settings.json"];
-  NSData *data = [NSData dataWithContentsOfURL:url];
-  if (data == nil) return nil;
-  id settings = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
-  return [settings isKindOfClass:NSDictionary.class] ? settings : nil;
+  static NSDictionary *settings;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    NSData *data = [NSData dataWithContentsOfURL:
+        [NSBundle.mainBundle.resourceURL URLByAppendingPathComponent:@"LocalUpdater/settings.json"]];
+    id parsed = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+    settings = [parsed isKindOfClass:NSDictionary.class] ? parsed : nil;
+  });
+  return settings;
 }
 
 static NSString *KPLocalUpdateStatePath(NSString *name) {
@@ -24,6 +29,20 @@ static BOOL KPLocalUpdateStateExists(NSString *name) {
   return path != nil && [NSFileManager.defaultManager fileExistsAtPath:path];
 }
 
+// The app the updater looks after: the settings' "app", else the one it installed or first saw.
+static NSString *KPLocalUpdateInstalledPath() {
+  NSString *path = KPLocalUpdateSettings()[@"app"];
+  if (![path isKindOfClass:NSString.class]) path = KPLocalUpdateRead(@"installed.json")[@"app"];
+  return [path isKindOfClass:NSString.class] && path.length ? path : nil;
+}
+
+// A backup or another copy of KartPad leaves updates alone (as the helper's other_copy does).
+static BOOL KPLocalUpdateIsInstalledCopy() {
+  NSString *installed = KPLocalUpdateInstalledPath();
+  return installed == nil || [installed.stringByResolvingSymlinksInPath
+      isEqualToString:NSBundle.mainBundle.bundlePath.stringByResolvingSymlinksInPath];
+}
+
 static NSPanel *kpUpdatePanel;
 static NSTextField *kpUpdateHeading;
 static NSTextField *kpUpdateLabel;
@@ -37,6 +56,7 @@ static NSTimer *kpUpdateDismissTimer;
 static NSWindow *kpUpdateParent;
 static id kpUpdateResizeObserver;
 static NSString *kpUpdatePhase;
+static NSString *kpUpdateVersion;  // of the status on screen
 static BOOL kpUpdateDismissed;
 // Checks the player asked for show every result; automatic ones only show news.
 static BOOL kpUpdateInteractive;
@@ -183,6 +203,7 @@ static void KPRenderUpdateStatus(NSDictionary *status) {
   BOOL changed = ![kpUpdatePhase isEqualToString:phase];
   kpUpdatePhase = phase;
   NSString *version = [status[@"version"] isKindOfClass:NSString.class] ? status[@"version"] : @"";
+  kpUpdateVersion = version;
   if ([phase isEqualToString:@"building"]) {
     NSString *step = status[@"step"];
     NSString *title = @"Preparing update";
@@ -238,6 +259,18 @@ static void KPRenderUpdateStatus(NSDictionary *status) {
     KPUpdateNotice(@"You’re up to date", [NSString stringWithFormat:@"Retro Rewind %@ is the latest version.", version], NO);
     KPUpdateNoticeIcon(@"checkmark.circle.fill", NSColor.systemGreenColor, @"Up to date");
     KPHideUpdateNoticeAfter(4.0);
+  } else if ([phase isEqualToString:@"unverified"] && changed) {
+    // A version KartPad's maintainers haven't reviewed, or whose files differ from the review.
+    BOOL mismatch = [status[@"reason"] isEqualToString:@"mismatch"];
+    NSString *seen = [NSString stringWithFormat:@"%@ %@", version, status[@"reason"]];
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    if (!kpUpdateInteractive && [seen isEqualToString:[defaults stringForKey:@"KartPadLocalUpdateLastUnverified"]]) return;
+    [defaults setObject:seen forKey:@"KartPadLocalUpdateLastUnverified"];
+    KPUpdateNotice([NSString stringWithFormat:mismatch ? @"Retro Rewind %@ wasn’t installed" : @"Retro Rewind %@ isn’t reviewed yet", version],
+        mismatch ? @"Its files don’t match the ones KartPad checked." : @"It installs by itself once KartPad has checked it.", NO);
+    KPUpdateNoticeIcon(@"exclamationmark.shield", NSColor.systemOrangeColor, @"Update not reviewed");
+    kpUpdateFootnote.stringValue = @"Your current version stays installed";
+    kpUpdateAction.title = @"Install anyway"; kpUpdateAction.hidden = NO;
   } else if ([phase isEqualToString:@"declined"]) {
     KPUpdateNotice([NSString stringWithFormat:@"Retro Rewind %@ is skipped", version],
         @"Automatic updates skip versions you went back from.", NO);
@@ -251,7 +284,7 @@ static void KPRenderUpdateStatus(NSDictionary *status) {
         : [NSString stringWithFormat:@"Retro Rewind %@ was removed. Automatic updates will skip it.", from];
     KPUpdateNotice([NSString stringWithFormat:@"Back on Retro Rewind %@", version], detail, NO);
     KPUpdateNoticeIcon(@"arrow.uturn.backward.circle.fill", NSColor.systemBlueColor, @"Previous version restored");
-    kpUpdateFootnote.stringValue = @"Automatic Updates… can install it later";
+    kpUpdateFootnote.stringValue = @"Retro Rewind Updates… can install it later";
     KPHideUpdateNoticeAfter(10.0);
   } else return;
   KPShowUpdateNotice();
@@ -264,7 +297,8 @@ static NSTask *KPLocalUpdateTask(NSString *action, NSArray<NSString *> *options)
   NSURL *resources = [NSBundle.mainBundle.resourceURL URLByAppendingPathComponent:@"LocalUpdater"];
   NSTask *task = [NSTask new];
   task.executableURL = [NSURL fileURLWithPath:python];
-  NSMutableArray<NSString *> *arguments = [NSMutableArray arrayWithObjects:
+  // Isolated from the user's Python setup, and never writing bytecode into the signed bundle.
+  NSMutableArray<NSString *> *arguments = [NSMutableArray arrayWithObjects:@"-I", @"-B",
       [resources URLByAppendingPathComponent:@"updater.py"].path, action, nil];
   [arguments addObjectsFromArray:options];
   [arguments addObjectsFromArray:@[@"--settings", [resources URLByAppendingPathComponent:@"settings.json"].path,
@@ -277,12 +311,16 @@ static NSTask *KPLocalUpdateTask(NSString *action, NSArray<NSString *> *options)
 }
 
 // Runs before game files open: installs a finished update, or counts a launch of a
-// newly installed app and returns to the previous version if it keeps failing.
+// newly installed app and returns to the previous version if it keeps failing. An app the
+// updater didn't install (the first launch with it, or a package built by hand) becomes its
+// starting point, and the game is pointed at that version's files.
 static void KPCurtainDone();  // KartPadCurtain.inc.mm
 
 static BOOL KPActivateLocalUpdate() {
+  if (KPLocalUpdateSettings() == nil || !KPLocalUpdateIsInstalledCopy()) return NO;
   BOOL installing = KPLocalUpdateStateExists(@"pending.json") || KPLocalUpdateStateExists(@"activation.json");
-  if (!installing && !KPLocalUpdateStateExists(@"trial.json")) return NO;
+  BOOL unknown = ![KPLocalUpdateRead(@"installed.json")[@"version"] isEqual:@KARTPAD_RR_VERSION];
+  if (!installing && !unknown && !KPLocalUpdateStateExists(@"trial.json")) return NO;
   // A restart's curtain mustn't hide the install notice (or stay up while this process hands over).
   if (installing) KPCurtainDone();
   NSTask *task = KPLocalUpdateTask(@"activate", @[]);
@@ -302,6 +340,7 @@ static BOOL KPActivateLocalUpdate() {
 
 // A new app has proved itself once it has run for a while or quit cleanly.
 static void KPConfirmLocalUpdate() {
+  if (!KPLocalUpdateIsInstalledCopy()) return;
   NSDictionary *trial = KPLocalUpdateRead(@"trial.json");
   if ([trial[@"version"] isEqual:@KARTPAD_RR_VERSION])
     [NSFileManager.defaultManager removeItemAtPath:KPLocalUpdateStatePath(@"trial.json") error:nil];
@@ -332,7 +371,7 @@ static void KPCheckLocalUpdates(BOOL interactive, NSArray<NSString *> *options) 
         [status[@"checkedAt"] doubleValue] >= started.timeIntervalSince1970;
     if ([phase isEqualToString:@"building"] && KPLocalUpdateHelperRunning(status)) {
       KPRenderUpdateStatus(status);
-    } else if (fresh && phase && [@[@"ready", @"error", @"current", @"declined"] containsObject:phase]) {
+    } else if (fresh && phase && [@[@"ready", @"error", @"current", @"declined", @"unverified"] containsObject:phase]) {
       KPRenderUpdateStatus(status); [timer invalidate];
     } else if (finished) {
       if ([kpUpdatePhase isEqualToString:@"checking"] || [kpUpdatePhase isEqualToString:@"building"])
@@ -344,7 +383,7 @@ static void KPCheckLocalUpdates(BOOL interactive, NSArray<NSString *> *options) 
 
 // Called once the shell is up: one-time notices from the last launch, then a quiet check.
 static void KPStartLocalUpdates() {
-  if (KPLocalUpdateSettings() == nil) return;
+  if (KPLocalUpdateSettings() == nil || !KPLocalUpdateIsInstalledCopy()) return;
   NSDictionary *status = KPLocalUpdateRead(@"status.json");
   BOOL failed = kpUpdateLaunchFailure;
   kpUpdateLaunchFailure = NO;
@@ -396,6 +435,17 @@ static void KPFinishLocalUpdateAndQuit(NSString *then, id sender) {
   (void)sender;
   if ([kpUpdatePhase isEqualToString:@"error"]) { KPCheckLocalUpdates(YES, @[]); return; }
   if ([kpUpdatePhase isEqualToString:@"declined"]) { KPCheckLocalUpdates(YES, @[@"--allow-declined"]); return; }
+  if ([kpUpdatePhase isEqualToString:@"unverified"]) {
+    NSString *version = kpUpdateVersion;
+    [kpUpdateDismissTimer invalidate]; kpUpdateDismissTimer = nil;
+    NSAlert *alert = [NSAlert new];
+    alert.messageText = [NSString stringWithFormat:@"Install Retro Rewind %@ without a review?", version];
+    alert.informativeText = @"KartPad rebuilds itself from files its maintainers haven’t checked.";
+    [alert addButtonWithTitle:@"Install Anyway"];
+    [alert addButtonWithTitle:@"Cancel"];
+    if ([alert runModal] == NSAlertFirstButtonReturn) KPCheckLocalUpdates(YES, @[@"--allow-unverified", version]);
+    return;
+  }
   if (![kpUpdatePhase isEqualToString:@"ready"]) return;
   [kpUpdateDismissTimer invalidate]; kpUpdateDismissTimer = nil;
   NSAlert *alert = [NSAlert new];
@@ -412,6 +462,15 @@ static void KPShowLocalUpdateStatus() {
   NSDictionary *status = KPLocalUpdateRead(@"status.json");
   NSString *phase = status[@"phase"];
   kpUpdateDismissed = NO; kpUpdatePhase = nil; kpUpdateInteractive = YES;
+  if (!KPLocalUpdateIsInstalledCopy()) {
+    KPUpdateNotice(@"This copy doesn’t update", [NSString stringWithFormat:@"Retro Rewind updates go to %@.",
+        KPLocalUpdateInstalledPath().stringByAbbreviatingWithTildeInPath], NO);
+    KPUpdateNoticeIcon(@"info.circle", NSColor.secondaryLabelColor, @"Updates off");
+    kpUpdateFootnote.stringValue = @"";
+    KPShowUpdateNotice();
+    KPHideUpdateNoticeAfter(8.0);
+    return;
+  }
   if ([phase isEqualToString:@"ready"] || [phase isEqualToString:@"error"] ||
       ([phase isEqualToString:@"building"] && KPLocalUpdateHelperRunning(status))) {
     KPRenderUpdateStatus(status);
@@ -420,12 +479,14 @@ static void KPShowLocalUpdateStatus() {
 
 // Menu title for returning to the version the last update replaced, or nil.
 static NSString *KPLocalUpdateRevertTitle() {
+  if (!KPLocalUpdateIsInstalledCopy()) return nil;
   NSDictionary *rollback = KPLocalUpdateRead(@"rollback.json");
   if (![rollback[@"version"] isKindOfClass:NSString.class]) return nil;
   return [NSString stringWithFormat:@"Go Back to Retro Rewind %@…", rollback[@"version"]];
 }
 
 static void KPRevertLocalUpdate(id sender) {
+  if (!KPLocalUpdateIsInstalledCopy()) return;
   NSDictionary *rollback = KPLocalUpdateRead(@"rollback.json");
   if (![rollback[@"version"] isKindOfClass:NSString.class]) return;
   NSAlert *alert = [NSAlert new];

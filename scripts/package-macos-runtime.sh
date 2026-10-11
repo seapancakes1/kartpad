@@ -178,8 +178,10 @@ if find "${staged_app}" \( -name portable.txt -o -name UserData -o -name Config.
 fi
 
 # Local Mac builds opt in to automatic Retro Rewind updates by naming their
-# private rebuild settings (see docs/macos-local-auto-update.md). Packages built
-# without KARTPAD_LOCAL_UPDATER_SETTINGS never include the helper.
+# private rebuild settings (see docs/macos-local-auto-update.md and
+# scripts/local-updater-settings.example.json). Packages built without
+# KARTPAD_LOCAL_UPDATER_SETTINGS never include the helper. The helper imports
+# the maintainers' feed parsing from update-retro-rewind-profile.py beside it.
 if [[ -n "${KARTPAD_LOCAL_UPDATER_SETTINGS:-}" ]]; then
   if [[ "${runtime_target}" != KartPadDual ]]; then
     echo "local updates require the KartPadDual runtime" >&2
@@ -189,6 +191,7 @@ if [[ -n "${KARTPAD_LOCAL_UPDATER_SETTINGS:-}" ]]; then
   mkdir -p "${resources}/LocalUpdater"
   cp "${KARTPAD_LOCAL_UPDATER_SETTINGS}" "${resources}/LocalUpdater/settings.json"
   cp "${repo_root}/scripts/macos-local-updater.py" "${resources}/LocalUpdater/updater.py"
+  cp "${repo_root}/scripts/update-retro-rewind-profile.py" "${resources}/LocalUpdater/update-retro-rewind-profile.py"
 fi
 
 codesign --force --deep --sign - \
