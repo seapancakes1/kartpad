@@ -3,12 +3,27 @@
 #include "kartpad/mii/editor.h"
 #include <memory>
 #include <atomic>
+#include <mutex>
 #include "KartPadStyle.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 __asm__(".linker_option \"-framework\", \"UniformTypeIdentifiers\"");
 #include "KartPadMiiPreview.inc.mm"
 #include "KartPadMiiSounds.inc.mm"
-static NSString *KPMiiResourcePath() {
+// Path, size and date: unchanged files skip the read and hash that every preview refresh used to pay.
+static NSString *KPMiiFileStamp(NSString *path){NSDictionary *a=path?[NSFileManager.defaultManager attributesOfItemAtPath:path error:nil]:nil;return a?[NSString stringWithFormat:@"%@|%@|%f",path,a[NSFileSize],a.fileModificationDate.timeIntervalSince1970]:nil;}
+// Config.toml, whose dvd_root names the imported game-data folder.
+static NSString *KPMiiConfigPath(){
+#if TARGET_OS_OSX
+#if defined(KARTPAD_MII_MANAGER_TESTING)
+    return nil;
+#else
+    return [NSString stringWithUTF8String:RuntimeConfigFile::ResolveConfigPath().string().c_str()];
+#endif
+#else
+    return [[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/KartPad"] stringByAppendingPathComponent:@"Config.toml"];
+#endif
+}
+static NSString *KPMiiFindResourcePath() {
 #if TARGET_OS_OSX
 #if defined(KARTPAD_MII_MANAGER_TESTING)
     return [SupportRoot() stringByAppendingPathComponent:@"GameData/files/contents/RFLRes01.arc"];
@@ -40,6 +55,14 @@ static NSString *KPMiiResourcePath() {
     return [root stringByAppendingPathComponent:@"files/contents/RFLRes01.arc"];
 #endif
     return nil;
+}
+// Portraits, the preview and the sounds all ask; the answer is kept until Config.toml changes.
+static NSString *KPMiiResourcePath(){
+    static std::mutex lock;static NSString *path,*stamp;
+    NSString *config=KPMiiConfigPath(),*now=KPMiiFileStamp(config)?:@"";
+    {std::lock_guard<std::mutex> hold(lock);if(path&&[now isEqual:stamp])return path;}
+    NSString *found=KPMiiFindResourcePath();
+    std::lock_guard<std::mutex> hold(lock);path=found;stamp=now;return found;
 }
 static NSString *KPMiiSoundArchivePath(){return [[[KPMiiResourcePath() stringByDeletingLastPathComponent] stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"sound/revo_kart.brsar"];}
 static NSString *KPMiiDigest(NSData *data) {
@@ -121,12 +144,15 @@ static KPMiiImage *KPMiiImageFromPixels(const kartpad::mii::Image &image, BOOL c
     CGImageRelease(cg);return result;
 }
 static dispatch_queue_t KPMiiWorkQueue(){static dispatch_queue_t q;static dispatch_once_t once;dispatch_once(&once,^{q=dispatch_queue_create("dev.kartpad.mii-preview",DISPATCH_QUEUE_SERIAL);});return q;}
-// Path, size and date: unchanged files skip the read and hash that every preview refresh used to pay.
-static NSString *KPMiiFileStamp(NSString *path){NSDictionary *a=path?[NSFileManager.defaultManager attributesOfItemAtPath:path error:nil]:nil;return a?[NSString stringWithFormat:@"%@|%@|%f",path,a[NSFileSize],a.fileModificationDate.timeIntervalSince1970]:nil;}
-// Only touched on the serial worker; platform images and GPU state are installed on main.
+// Only touched on the serial worker; platform images and GPU state are installed on main. A missing
+// or damaged archive fails again without being read, hashed and parsed, until the file (or the
+// game-data folder) changes.
 static std::shared_ptr<kartpad::mii::Resources> KPMiiLoadResources(){
-    static std::shared_ptr<kartpad::mii::Resources> resource;static NSString *digest,*stamp;
+    static std::shared_ptr<kartpad::mii::Resources> resource;static NSString *digest,*stamp,*failedStamp,*failure;
     NSString *path=KPMiiResourcePath(),*now=KPMiiFileStamp(path);if(resource&&now&&[now isEqual:stamp])return resource;
+    NSString *attempt=now?:[NSString stringWithFormat:@"%@|missing",path];
+    if(failure&&[attempt isEqual:failedStamp])throw std::runtime_error(failure.UTF8String);
+    try{
     NSData *data=[NSData dataWithContentsOfFile:path];
     if(!data)throw std::runtime_error("Preview resources unavailable. Reimport your game-data folder.");
     NSString *key=KPMiiDigest(data);if(resource&&[key isEqual:digest]){stamp=now;return resource;}
@@ -136,15 +162,19 @@ static std::shared_ptr<kartpad::mii::Resources> KPMiiLoadResources(){
     NSDictionary *disk=[NSDictionary dictionaryWithContentsOfFile:file];BOOL loaded=NO;
     if([disk[@"digest"] isEqual:key]&&[disk[@"catalog"] isKindOfClass:NSData.class]&&[disk[@"catalog"] length]<64*1024*1024){try{next->DecodeCache(Bytes(disk[@"catalog"]));loaded=YES;}catch(...){}}
     if(!loaded){auto decoded=next->EncodeCache();[NSFileManager.defaultManager createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:nil];[@{@"digest":key,@"catalog":[NSData dataWithBytes:decoded.data() length:decoded.size()]}writeToFile:file atomically:YES];}
-    resource=next;digest=key;stamp=now;return resource;
+    resource=next;digest=key;stamp=now;failure=nil;return resource;
+    }catch(const std::exception &e){failedStamp=attempt;failure=@(e.what());throw;}
 }
+// Like KPMiiLoadResources, a damaged body archive isn't parsed again until it changes.
 static std::shared_ptr<kartpad::mii::BodyResources> KPMiiLoadBody(){
-    static std::shared_ptr<kartpad::mii::BodyResources> body;static NSString *digest,*stamp;
+    static std::shared_ptr<kartpad::mii::BodyResources> body;static NSString *digest,*stamp,*failedStamp,*failure;
     NSString *path=[[[KPMiiResourcePath() stringByDeletingLastPathComponent] stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"Scene/Model/MiiBody.szs"];
     NSString *now=KPMiiFileStamp(path);if(body&&now&&[now isEqual:stamp])return body;
+    if(failure&&now&&[now isEqual:failedStamp])throw std::runtime_error(failure.UTF8String);
     NSData *data=[NSData dataWithContentsOfFile:path];if(!data)return nullptr;
     NSString *key=KPMiiDigest(data);if(body&&[key isEqual:digest]){stamp=now;return body;}
-    auto next=std::make_shared<kartpad::mii::BodyResources>(Bytes(data));body=next;digest=key;stamp=now;return body;
+    try{auto next=std::make_shared<kartpad::mii::BodyResources>(Bytes(data));body=next;digest=key;stamp=now;failure=nil;return body;}
+    catch(const std::exception &e){failedStamp=now;failure=@(e.what());throw;}
 }
 // Tiles show each feature in the Mii's own colours, as the Mii Channel does.
 static KPMiiImage *KPMiiFeatureImage(const kartpad::mii::Resources&r,unsigned field,unsigned value,const kartpad::mii::Appearance&current){
@@ -202,8 +232,20 @@ static const NSUInteger KPMiiPortraitLimit=128;
 static KPMiiPortraitStore *KPMiiPortraits(){static KPMiiPortraitStore *store;static dispatch_once_t once;dispatch_once(&once,^{store=[KPMiiPortraitStore new];});return store;}
 static NSString *KPMiiPortraitProblem;
 static NSMutableSet<NSData*> *KPMiiPortraitsRendering(){static NSMutableSet *set;static dispatch_once_t once;dispatch_once(&once,^{set=[NSMutableSet set];});return set;}
+// The game data portraits render from (the archive's path, size and date), checked at most once a
+// second: HOME and Controllers ask for portraits on every redraw. Main thread only.
+static NSString *KPMiiPortraitResources(){
+    static NSString *resources;static CFTimeInterval checked;CFTimeInterval now=CACurrentMediaTime();
+    if(!resources||now-checked>=1){checked=now;NSString *path=KPMiiResourcePath();resources=KPMiiFileStamp(path)?:[NSString stringWithFormat:@"%@|missing",path];}
+    return resources;
+}
+// Miis whose portrait failed with the current game data. They aren't tried again (each try read
+// and parsed the archive) until the game data changes. Main thread only.
+static NSMutableDictionary<NSData*,NSString*> *KPMiiPortraitFailures(){static NSMutableDictionary *failures;static dispatch_once_t once;dispatch_once(&once,^{failures=[NSMutableDictionary dictionary];});return failures;}
 static void KPMiiRequestPortrait(NSData *mii,void(^ready)(void)){
     if(mii.length!=kartpad::mii::kMiiBlockSize||[KPMiiPortraits() objectForKey:mii]||[KPMiiPortraitsRendering() containsObject:mii])return;
+    NSString *resources=KPMiiPortraitResources();
+    if([KPMiiPortraitFailures()[mii] isEqual:resources])return;
     [KPMiiPortraitsRendering() addObject:mii];
     dispatch_async(KPMiiWorkQueue(),^{
         KPMiiImage *image=nil;NSString *problem=nil;
@@ -211,7 +253,9 @@ static void KPMiiRequestPortrait(NSData *mii,void(^ready)(void)){
         catch(const std::exception &e){problem=@(e.what());}
         dispatch_async(dispatch_get_main_queue(),^{
             [KPMiiPortraitsRendering() removeObject:mii];
-            if(image){[KPMiiPortraits() setObject:image forKey:mii];KPMiiPortraitProblem=nil;}else KPMiiPortraitProblem=problem;
+            NSMutableDictionary *failures=KPMiiPortraitFailures();
+            if(image){[KPMiiPortraits() setObject:image forKey:mii];[failures removeObjectForKey:mii];KPMiiPortraitProblem=nil;}
+            else{if(failures.count>=256||![failures.allValues.firstObject?:resources isEqual:resources])[failures removeAllObjects];failures[mii]=resources;KPMiiPortraitProblem=problem;}
             ready();
         });
     });
