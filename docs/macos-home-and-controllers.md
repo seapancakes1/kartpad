@@ -195,6 +195,11 @@ button press.
   `KARTPAD_CURTAIN` (no Dock icon) holding the card in a window at the same
   place, and quits. The curtain reopens KartPad (`open -n`) and fades when the
   new process says its game is up (`KPCurtainDone`), or before any alert.
+  Every restart goes this way. HOME calls `KPRestartWithCurtain` itself; the
+  Miis window, the menus, Settings and the restart alerts call
+  `restartKartPad:`, which names the card for the reason (a game switch, Mii
+  changes, or plain "Restarting"). Quitting and reopening (`relaunchKartPad:`)
+  is only the fallback without a game window.
 - **Setup** runs before the runtime in its own window (it has a window
   controller, so it's never taken for the game window), with SDL's gamepad
   subsystem started for it and shut down again before the game, so Aurora sees
@@ -261,7 +266,8 @@ anything a run changed.
 - Pairing inside KartPad needs checking with each kind of controller in
   pairing mode. Newer Xbox controllers (Bluetooth LE) still pair in the Mac's
   Bluetooth settings.
-- The game itself still restarts to switch games; the curtain covers the gap.
+- The game itself still restarts to switch games or apply changes (Miis,
+  settings); the curtain covers the gap.
   The Dock icon disappears for that moment.
 - Taking the focus at launch can only be checked by opening KartPad from the
   Dock or Finder; automated runs never take the focus.

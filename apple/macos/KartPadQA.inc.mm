@@ -168,7 +168,7 @@ static void KPQARun(NSString *line) {
     SDL_PushEvent(&event);
     KPQALog([NSString stringWithFormat:@"key %@ scancode=%d", argument, (int)event.key.scancode]);
   }
-  else if ([command isEqualToString:@"restart"]) KPRestartWithCurtain(@"Restarting", @"");
+  else if ([command isEqualToString:@"restart"]) [Controller() restartKartPad:nil];  // as the menus do
   else if ([command isEqualToString:@"quit"]) [Controller() quitKartPad:nil];
   else if ([command isEqualToString:@"resize"] && words.count >= 3) {
     NSWindow *game = KPGameWindow();

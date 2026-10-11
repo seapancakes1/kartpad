@@ -574,6 +574,9 @@ static bool KPShowScreen(NSString *which);
 @property(nonatomic, strong) NSMenuItem *restartItem;
 @end
 
+static void KPRestartWithCurtain(NSString *heading, NSString *detail);  // KartPadCurtain.inc.mm
+static NSString *KPGameTitle(NSString *profile);                       // KartPadHomeScreen.inc.mm
+
 @implementation KartPadMacShellController
 
 - (void)showSimpleAlert:(NSString *)title message:(NSString *)message {
@@ -598,9 +601,22 @@ static bool KPShowScreen(NSString *which);
   if ([self closeWindows:sender]) [self finishQuitting:sender];
 }
 
-// Quits as usual, and a small helper reopens the app once this process has exited, so pending Mii
-// changes apply on the way back in.
+// Only the game starts again, as far as the player can tell: the window stays, with a card over it,
+// while a new process takes over (KartPadCurtain.inc.mm). Pending Mii changes apply on the way in.
 - (void)restartKartPad:(id)sender {
+  (void)sender;
+  NSString *heading = @"Restarting";
+  if ([self.restartReasons containsObject:@"game"])
+    heading = [NSString stringWithFormat:@"Starting %@",
+        KPGameTitle([NSUserDefaults.standardUserDefaults stringForKey:kKartPadRuntimeProfileDefaultsKey])];
+  else if (KartPadHasPendingMiiChanges())
+    heading = @"Applying your Mii changes";
+  KPRestartWithCurtain(heading, @"");
+}
+
+// Quits as usual, and a small helper reopens the app once this process has exited: the curtain's
+// fallback when there's no game window or app bundle.
+- (void)relaunchKartPad:(id)sender {
   NSString *app = NSBundle.mainBundle.bundlePath;
   if (![app.pathExtension isEqualToString:@"app"]) {
     [self showSimpleAlert:@"KartPad Can’t Restart Itself Here"

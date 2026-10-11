@@ -76,10 +76,13 @@ static void KPRestartWithCurtain(NSString *heading, NSString *detail) {
   if (![Controller() closeWindows:nil]) return;
   if (game == nil || ![app.pathExtension isEqualToString:@"app"]) {
     [KPOverlay() closeAll];
-    [Controller() restartKartPad:nil];
+    [Controller() relaunchKartPad:nil];
     return;
   }
   AppendSessionLine(@"restart=curtain");
+  // Windows over the game (the Miis window, Settings) go now, so only the card shows.
+  for (NSWindow *window in NSApp.windows)
+    if (window != game && window.visible) [window orderOut:nil];
   // The card shows in the window first.
   KPCurtainScreen *card = [[KPCurtainScreen alloc] initWithFrame:NSZeroRect];
   card.heading = heading;
@@ -121,7 +124,7 @@ static void KPRestartWithCurtain(NSString *heading, NSString *detail) {
   if (![handoff writeToURL:[NSURL fileURLWithPath:path] error:&error] || ![task launchAndReturnError:&error]) {
     AppendSessionLine(@"restart=curtain-failed; falling back");
     [KPOverlay() closeAll];
-    [Controller() restartKartPad:nil];
+    [Controller() relaunchKartPad:nil];
     return;
   }
   // Quit once the curtain is up (or after a moment if it never says so).
