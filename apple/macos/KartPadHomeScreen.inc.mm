@@ -41,23 +41,6 @@ static BOOL KPCanSwitchGames() {
 #endif
 }
 
-// Changes waiting for a restart, as what the restart will do ("start Retro Rewind").
-static NSArray<NSString *> *KPRestartReasonsText() {
-  NSMutableArray *reasons = [NSMutableArray array];
-  NSSet *pending = Controller().restartReasons;
-  if ([pending containsObject:@"game"]) [reasons addObject:[NSString stringWithFormat:@"start %@", KPGameTitle(KPOtherProfile())]];
-  if (KartPadHasPendingMiiChanges()) [reasons addObject:@"apply your Mii changes"];
-  if ([pending containsObject:@"game-data"] || [pending containsObject:@"retro-data"]) [reasons addObject:@"use the new game files"];
-  if ([pending containsObject:@"online-service"]) [reasons addObject:@"switch the online service"];
-  if ([pending containsObject:@"vsync"] || [pending containsObject:@"notch"]) [reasons addObject:@"apply your display settings"];
-  return reasons;
-}
-// "a, b and c"
-static NSString *KPListText(NSArray<NSString *> *items) {
-  if (items.count < 2) return items.firstObject ?: @"";
-  return [[[items subarrayWithRange:NSMakeRange(0, items.count - 1)] componentsJoinedByString:@", "]
-      stringByAppendingFormat:@" and %@", items.lastObject];
-}
 static BOOL KPRestartWaiting() { return Controller().restartPending || KartPadHasPendingMiiChanges(); }
 
 // Restarting (to switch game or apply changes) goes through the curtain, which keeps the window
@@ -603,31 +586,24 @@ static KPScreen *KPMakeMiisScreen();
     return;
   }
 #endif
-  NSString *message = KartPadHasPendingMiiChanges()
-      ? @"KartPad restarts to switch. Saves and settings are kept, and your Mii changes are applied."
-      : @"KartPad restarts to switch. Saves and settings are kept.";
 #if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)
-  KPAsk([NSString stringWithFormat:@"Switch to %@?", title], message, @[@"Switch", @"Cancel"], 0, -1, ^(NSInteger choice) {
+  KPAskWarning([NSString stringWithFormat:@"Switch to %@?", title], @"Unsaved progress will be lost.", @[@"Switch", @"Cancel"], 0,
+               -1, ^(NSInteger choice) {
     if (choice != 0) return;
     [Controller() chooseRuntimeProfile:other];
     KPRestartWithCurtain([NSString stringWithFormat:@"Starting %@", title], @"");
   });
-#else
-  (void)message;
 #endif
 }
 
 - (void)askToRestart {
-  NSArray *reasons = KPRestartReasonsText();
-  NSString *list = reasons.count ? KPListText(reasons) : @"apply your changes";
-  KPAsk(@"Restart KartPad?", [NSString stringWithFormat:@"This will %@. The race in progress ends; saves are kept.", list],
-        @[@"Restart", @"Later"], 0, -1, ^(NSInteger choice) {
-          if (choice == 0) KPRestartWithCurtain(@"Restarting", @"");
-        });
+  KPAskWarning(@"Restart KartPad?", @"Unsaved progress will be lost.", @[@"Restart", @"Later"], 0, -1, ^(NSInteger choice) {
+    if (choice == 0) KPRestartWithCurtain(@"Restarting", @"");
+  });
 }
 
 - (void)askToQuit {
-  KPAsk(@"Quit KartPad?", @"Anything not saved in the game is lost.", @[@"Quit", @"Cancel"], 1, 0, ^(NSInteger choice) {
+  KPAskWarning(@"Quit KartPad?", @"Unsaved progress will be lost.", @[@"Quit", @"Cancel"], 1, 0, ^(NSInteger choice) {
     if (choice == 0) dispatch_async(dispatch_get_main_queue(), ^{ [Controller() quitKartPad:nil]; });
   });
 }
@@ -665,6 +641,38 @@ static void KPToggleHome() {
   else KPOpenHome();
 }
 
+// macOS answers a controller's HOME itself (on macOS 26 it opens the Game Overlay) unless the app in
+// front asks for the button. SDL asks when a controller connects or opens, but gives the button back
+// whenever one closes (setup closes the pads it opened) and doesn't ask again for pads it reads
+// directly (a DualShock 4). So KartPad asks for every controller's HOME itself, a few times a second;
+// macOS hands it back by itself while KartPad isn't in front. The session log says when the button
+// had gone back to macOS, and on each press what macOS reports, so a log shows which side had it.
+static void KPKeepHomeButtons(bool pressed) {
+  static NSTimeInterval last;
+  static NSMapTable<GCController *, NSNumber *> *claims;
+  if (claims == nil) claims = [NSMapTable weakToStrongObjectsMapTable];
+  const NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
+  if (!pressed && now - last < 0.25) return;
+  last = now;
+  for (GCController *controller in GCController.controllers) {
+    GCControllerButtonInput *home = controller.physicalInputProfile.buttons[GCInputButtonHome];
+    if (home == nil) continue;
+    NSString *name = controller.vendorName ?: controller.productCategory;
+    if (home.preferredSystemGestureState != GCSystemGestureStateDisabled) {
+      home.preferredSystemGestureState = GCSystemGestureStateDisabled;
+      // A few lines per controller, in case macOS won't keep the setting.
+      const int count = [claims objectForKey:controller].intValue + 1;
+      [claims setObject:@(count) forKey:controller];
+      if (count <= 3) AppendSessionLine([NSString stringWithFormat:@"homeButton=claimed; controller=%@", name]);
+    }
+    if (pressed)
+      AppendSessionLine([NSString stringWithFormat:@"homeButton=pressed; controller=%@; gesture=%@; kept=%@; active=%@",
+          name, home.boundToSystemGesture ? @"bound" : @"none",
+          home.preferredSystemGestureState == GCSystemGestureStateDisabled ? @"yes" : @"no",
+          NSApp.active ? @"yes" : @"no"]);
+  }
+}
+
 // The HOME / Guide / PS button on any controller, and a Wii Remote's own HOME (a raw button on SDL's
 // Wii driver). One press per controller, so holding it doesn't flicker.
 static void KPHomeTick() {
@@ -686,6 +694,7 @@ static void KPHomeTick() {
   }
   SDL_free(ids);
   [held setSet:now];
+  KPKeepHomeButtons(pressed);
   if (!pressed || !NSApp.active || KPOverlay().hostWindow) return;
   // The old-style windows (the Mii editor, the classic Settings) keep HOME to themselves.
   if (!KPOverlay().active && (KartPadMiiWindowsVisible() || KPControllers().panel.visible)) return;
@@ -860,7 +869,7 @@ static void KPShowHomeHint() {
   const int slot = device.slot;
   NSString *heading = slot >= 0 ? [NSString stringWithFormat:@"Player %d's controller disconnected", slot + 1]
                                 : [NSString stringWithFormat:@"%@ disconnected", device.name];
-  [KPOverlay() toast:heading detail:@"Turn it back on to keep playing."
+  [KPOverlay() toast:heading detail:nil
               stripe:slot >= 0 ? KPPlayerColors[slot] : 0 icon:^(CGContextRef c, CGRect r) {
     KPDrawGlyph(c, KPUIGlyph::Pad, r, KPP->secondaryText);
   } image:nil];

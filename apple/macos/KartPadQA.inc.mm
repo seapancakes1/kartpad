@@ -2,10 +2,10 @@
 // app reads commands, one per line, from commands.txt in that folder as lines are added, and writes
 // what it's asked to photograph there as PNGs (the window as drawn: game and screens together). Run
 // it with KARTPAD_MUTED=1 KARTPAD_BACKGROUND=1 so it stays silent and never takes the focus.
-//   home | close | screen settings|controllers|miis|pair-wii | pad up|down|left|right|a|b|x|y|lb|rb|start
+//   home | close | screen settings|controllers|miis|pair-wii|pair-phone | pad up|down|left|right|a|b|x|y|lb|rb|start
 //   shot NAME | resize W H | fullscreen | appearance light|dark|system | restart | quit | wait SECONDS
 //   focus LABEL | click LABEL | where | navmap | roster | vpad add|press|release|remove | key NAME
-//   move IDENTIFIER|vpadN SLOT
+//   move IDENTIFIER|vpadN SLOT | phone start|status|background-input
 // Included by KartPadMacShell.mm at the end.
 
 #import <objc/objc-exception.h>
@@ -241,6 +241,15 @@ static void KPQARun(NSString *line) {
                                      [argument isEqualToString:@"press"]);
       }
     }
+  } else if ([command isEqualToString:@"phone"]) {
+    // Phone controllers without a camera: phone start (the server, as Connect a Controller → Phone
+    // starts it) | phone status (the link, which a test script opens as a phone would, and the phones)
+    // | phone background-input (SDL keeps controller input while KartPad is in the background, so a
+    // hidden run sees what the phones press; Aurora refuses to start with the environment variable).
+    if ([argument isEqualToString:@"start"]) [KPPhoneServer.shared start];
+    if ([argument isEqualToString:@"background-input"])
+      SDL_SetHintWithPriority(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1", SDL_HINT_OVERRIDE);
+    KPQALog([@"phone " stringByAppendingString:[KPPhoneServer.shared status]]);
   } else if ([command isEqualToString:@"navmap"]) {
     // Where each direction leads from every control (by layout; a screen's own handling and controls
     // that change in place with left and right are noted, not followed).

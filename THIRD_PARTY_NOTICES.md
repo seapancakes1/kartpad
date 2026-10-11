@@ -26,6 +26,11 @@ WorkManager (Apache-2.0), rather than Apple's Metal/GameController host paths.
 | SunPad | `e43f0ea6b797e5110787171957c9dc3c6213269c` | GPL-3.0; Apple touch, menu, and runtime integration reference |
 | SDL 3 | `3.4.4` | zlib; platform and runtime support |
 | Mbed TLS | `4.1.1` | Apache-2.0 OR GPL-2.0-or-later; Android native TLS primitive |
+| [libdatachannel](https://github.com/paullouisageneau/libdatachannel) | `v0.24.6` | MPL-2.0; Mac phone controllers' WebRTC data channels (`cmake/KartPadPhoneLink.cmake`) |
+| [libjuice](https://github.com/paullouisageneau/libjuice) | `b89c792e3612faf2f12cf35bcc56857313a06be3` (libdatachannel's pin) | MPL-2.0; ICE for the phone link |
+| [usrsctp](https://github.com/paullouisageneau/usrsctp) | `fec583d54493f879d2ae44a743423bf8a04371ab` (libdatachannel's pin) | BSD-3-Clause; SCTP for the phone link's data channels |
+| [plog](https://github.com/SergiusTheBest/plog) | `94899e0b926ac1b0f4750bfbd495167b4a6ae9ef` (libdatachannel's pin) | MIT; libdatachannel's logging |
+| Mbed TLS (Mac) | `3.6.7` | Apache-2.0 OR GPL-2.0-or-later; DTLS for the Mac phone link |
 | Minizip-NG | Dolphin-pinned source | zlib; tvOS Retro Rewind archive extraction |
 | WiimotePairPlus | `8e7f9b12db2da520e4f868305c4861cdf58fa15f` | GPL-2.0-or-later; experimental macOS Wii Remote Bluetooth pairing flow derived from Dolphin WiimotePair |
 | Abseil, Dear ImGui, fmt, FreeType, libpng, Tracy, xxHash, zstd | exact package-build inputs | Their included upstream license files apply |

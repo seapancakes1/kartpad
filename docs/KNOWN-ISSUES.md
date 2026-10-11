@@ -70,6 +70,10 @@ the [archive](archive/known-issues-through-2026-09.md).
   fixed several cases (ipega and other "keyboard" gamepads, a controller left
   with no player). Still waiting on confirmation. [#378](https://github.com/chrissotraidis/kartpad/issues/378)
 - **Single Joy-Cons** aren't supported. [#324](https://github.com/chrissotraidis/kartpad/issues/324)
+- **Mac: phone controllers on campus, hotel or guest Wi‑Fi:** networks that
+  keep devices apart stop phones reaching the Mac. Use a home network instead.
+- **Mac: the tilt page needs internet on the phone** to open (it's published
+  over HTTPS). Offline, use **Code Without Tilt**, which is touch only.
 - **Mac: Wii Remote with Classic Controller Pro** has input lag and no D-pad.
   [#306](https://github.com/chrissotraidis/kartpad/issues/306)
 

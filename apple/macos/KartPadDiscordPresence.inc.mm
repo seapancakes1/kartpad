@@ -1,7 +1,7 @@
 // Discord shows the course and the mode while a Mario Kart Wii race runs, and "In the menus"
 // otherwise (kartpad/discord/race_presence.h), under WiiCompiled's Discord application. Retro Rewind
 // sends its own status through /dev/dolphin, so this reads nothing there. The runtime's
-// DiscordPresence sends from its own thread, and only while Settings → Game → Show on Discord
+// DiscordPresence sends from its own thread, and only while Settings → Game → Discord Rich Presence
 // ([discord] enabled) is on. Included by KartPadMacShell.mm after KartPadMacMiis.inc.mm, whose
 // game-loop tick calls this.
 

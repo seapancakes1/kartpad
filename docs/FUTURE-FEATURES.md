@@ -83,6 +83,18 @@ Do not schedule this ahead of current import reliability, lifecycle stability,
 performance, physical-device coverage, or production online acceptance. It is a
 medium-to-large reusable feature, not a small menu addition.
 
+## Phone controllers on Apple TV and iPad
+
+**Status:** Not started. Mac phone controllers, with tilt, are in
+[Phones as controllers](MULTIPLAYER.md#phones-as-controllers-mac).
+
+The phone page (`web/phone`), its protocol
+(`runtime/include/kartpad/network/phone_pad.h`) and the WebRTC link
+(`cmake/KartPadPhoneLink.cmake`) don't depend on the Mac. Another host needs the
+small web server, the helper page and `/signal`, and a way to feed a player
+slot (on tvOS and iOS, KartPad's own controller slots rather than SDL virtual
+pads). This is a no-install alternative to the DSU approach below.
+
 ## DSU / Cemuhook motion controllers on Apple TV
 
 **Status:** Reviewed; deferred for an optional experimental build. Not implemented

@@ -984,6 +984,7 @@ static KPUIButton *KPUINearest(NSArray<KPUIButton *> *candidates, KPUIButton *fr
 @property(nonatomic, copy) NSString *heading, *message;
 @property(nonatomic, copy) NSArray<NSString *> *choices;
 @property(nonatomic) NSInteger primary, destructive;
+@property(nonatomic) BOOL warning;  // the message is a warning, drawn in red
 @property(nonatomic, copy) void (^done)(NSInteger choice);
 @end
 
@@ -1057,22 +1058,33 @@ static KPUIButton *KPUINearest(NSArray<KPUIButton *> *candidates, KPUIButton *fr
   KPTextWeight(self.heading, CGRectMake(card.origin.x + 40, card.origin.y + 30, card.size.width - 80, 44), 31, KPP->text,
                NSFontWeightBold, NSTextAlignmentLeft);
   KPTextWeight(self.message, CGRectMake(card.origin.x + 40, card.origin.y + 92, card.size.width - 80, card.size.height - 92 - 104), 21,
-               KPP->secondaryText, NSFontWeightRegular, NSTextAlignmentLeft);
+               self.warning ? KPP->danger : KPP->secondaryText, self.warning ? NSFontWeightMedium : NSFontWeightRegular,
+               NSTextAlignmentLeft);
 }
 @end
 
 // Asks over the current screen (or over the game, opening the overlay).
-static void KPAsk(NSString *heading, NSString *message, NSArray<NSString *> *choices, NSInteger primary,
-                  NSInteger destructive, void (^done)(NSInteger choice)) {
+static void KPAskShowing(NSString *heading, NSString *message, BOOL warning, NSArray<NSString *> *choices,
+                         NSInteger primary, NSInteger destructive, void (^done)(NSInteger choice)) {
   KPDialogScreen *dialog = [[KPDialogScreen alloc] initWithFrame:NSZeroRect];
   dialog.heading = heading;
   dialog.message = message;
+  dialog.warning = warning;
   dialog.choices = choices;
   dialog.primary = primary;
   dialog.destructive = destructive;
   dialog.done = done;
   dialog.solid = NO;
   [KPOverlay() present:dialog];
+}
+static void KPAsk(NSString *heading, NSString *message, NSArray<NSString *> *choices, NSInteger primary,
+                  NSInteger destructive, void (^done)(NSInteger choice)) {
+  KPAskShowing(heading, message, NO, choices, primary, destructive, done);
+}
+// Like KPAsk, with the message in red: for a choice that loses something.
+static void KPAskWarning(NSString *heading, NSString *warning, NSArray<NSString *> *choices, NSInteger primary,
+                         NSInteger destructive, void (^done)(NSInteger choice)) {
+  KPAskShowing(heading, warning, YES, choices, primary, destructive, done);
 }
 
 #pragma mark Menus

@@ -46,6 +46,42 @@ read that could lose a short press. The regression fixture fails against the
 cover four slots, repeated connection probes, short A presses, disconnect and
 reconnect. These tests do not establish a physical three-controller race.
 
+## Phones as controllers (Mac)
+
+Guests can play on a Mac with their own phone and nothing to install. Choose
+**Controls → Add Phone Controller…** (or **HOME → Controllers → Connect a
+Controller → Phone**), scan the QR code with the phone's camera, open the link
+and tap **Join**. A second tab opens for a moment to link the phone to the Mac,
+then closes. Choose **Use Tilt** to steer by turning the phone like a wheel, or
+drag anywhere on the left half to steer with a stick; **A**, **Drift**, **Item**,
+**B**, **Trick**, **Pause** and **HOME** are on the right and top. Hold A for a
+second to lock acceleration, and tap it to unlock, as on iPhone.
+
+- **Tilt** works like KartPad's iPhone motion steering: it follows the phone's
+  angle (from the phone's gyro-steadied gravity), not how hard it's moved, so
+  swinging or jolting the phone doesn't steer. **⟲** recenters; the **⚙** sheet
+  has sensitivity (0.5×, 1×, 2×), direction, shake for tricks, and the link's
+  delay. Touching the stick area steers with the stick meanwhile.
+- The tilt page is published over HTTPS (browsers only give motion to such
+  pages), so the phone needs internet to open it. **Code Without Tilt** on the
+  Mac switches to a touch-only page the Mac serves itself, which works offline.
+  After the page opens, input goes straight from the phone to the Mac over a
+  WebRTC data channel on your Wi‑Fi; nothing passes through the internet.
+
+- Up to four phones join, each as its own controller (`Phone 1` to `Phone 4`)
+  on the first free player. Controllers and Player Order move them like any
+  other controller, and the phone shows its player number and colour.
+- The phone must be on the same Wi‑Fi as the Mac. Networks that keep devices
+  apart, common on campus, hotel and guest Wi‑Fi, block it.
+- A phone that locks or drops keeps its player for a minute. The touch page
+  rejoins by itself; the tilt page shows **Reconnect** (one tap, since it opens
+  the linking tab again). **Leave** (in the ⚙ sheet on the tilt page) frees it at
+  once.
+- The link changes each time KartPad starts, so scan again after a restart.
+- iPhones don't vibrate; Android phones do when the game rumbles.
+- A phone's player lasts for that session only; it is never saved, so a phone
+  that joined first doesn't take Player 1 from a controller next time.
+
 ## DualShock and DualSense
 
 DualShock 4, DualSense and DualSense Edge can pair with supported Apple devices

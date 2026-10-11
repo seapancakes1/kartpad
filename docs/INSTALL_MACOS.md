@@ -81,6 +81,13 @@ The first time KartPad opens it walks you through finding your game files.
 Settings and saves are in `~/Library/Application Support/KartPad`, graphics
 caches in `~/Library/Caches/KartPad`. Replacing the app keeps both.
 
+## Phones as controllers
+
+**Controls → Add Phone Controller…** shows a QR code that any phone on the same
+Wi‑Fi can scan to play, with nothing to install, steering by tilt or touch. See
+[Phones as controllers](MULTIPLAYER.md#phones-as-controllers-mac). If the macOS
+firewall is on, allow KartPad to accept incoming connections when asked.
+
 ## Experimental Wii Remote and Nunchuk
 
 In **HOME → Controllers → Connect a Controller → Wii Remote** (or **Controls →

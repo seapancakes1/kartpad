@@ -7,6 +7,7 @@
 
 #import <AppKit/AppKit.h>
 #import <CommonCrypto/CommonDigest.h>
+#import <GameController/GameController.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 
@@ -538,6 +539,8 @@ static bool KPBackgroundPauseEnabled() {
 
 #include "KartPadControllers.inc.mm"
 #include "KartPadControllerRoster.inc.mm"
+#include "KartPadPhonePage.inc.mm"
+#include "KartPadPhoneControllers.inc.mm"
 #include "KartPadMacMiis.inc.mm"
 #include "KartPadDiscordPresence.inc.mm"
 // A KartPad screen over the game from the menus and shortcuts (KartPadHomeScreen.inc.mm): "home",
@@ -672,7 +675,7 @@ static bool KPShowScreen(NSString *which);
     return;
   }
   [self offerRestart:@"Game Data Ready"
-             message:@"KartPad validated the RMCP01 data. It’s used once KartPad restarts."
+             message:@"Restart KartPad to use it."
               reason:@"game-data"];
 }
 
@@ -688,12 +691,12 @@ static bool KPShowScreen(NSString *which);
   }
   if ([RunningRuntimeProfile() isEqualToString:kKartPadRetroProfile]) {
     [self offerRestart:@"Retro Rewind Ready"
-               message:@"KartPad validated the exact supported pack. It’s used once KartPad restarts."
+               message:@"Restart KartPad to use it."
                 reason:@"retro-data"];
     return;
   }
   if ([self askToRestart:@"Retro Rewind Ready"
-                 message:@"KartPad validated the exact supported pack. Switch to Retro Rewind now? KartPad restarts to switch games. Your saves and settings are kept."
+                 message:@"Switch to Retro Rewind now?"
                   action:@"Switch and Restart"]) {
     [self chooseRuntimeProfile:kKartPadRetroProfile];
     [self restartKartPad:nil];
@@ -719,7 +722,7 @@ static bool KPShowScreen(NSString *which);
   [self chooseRuntimeProfile:profile];
   if ([profile isEqualToString:RunningRuntimeProfile()]) return;
   if ([self askToRestart:[NSString stringWithFormat:@"Switch to %@?", title]
-                 message:@"KartPad restarts to switch games. Your saves and settings are kept."
+                 message:@"Unsaved progress will be lost."
                   action:@"Restart Now"]) {
     [self restartKartPad:nil];
   }
@@ -869,7 +872,7 @@ static bool KPShowScreen(NSString *which);
     NSAlert *warning = [NSAlert new];
     warning.messageText = @"Enable Experimental Wii Remote Support?";
     warning.informativeText =
-        @"This direct Bluetooth path is intended for original Wii Remote and Wii Remote Plus hardware with a Nunchuk. It uses a private macOS pairing interface, may change across macOS updates, and can conflict with DolphinBar controller mode.";
+        @"For original Wii Remotes with a Nunchuk. It can stop working after a macOS update and may conflict with a DolphinBar.";
     [warning addButtonWithTitle:@"Enable and Pair"];
     [warning addButtonWithTitle:@"Cancel"];
     if ([warning runModal] != NSAlertFirstButtonReturn) return;
@@ -900,7 +903,7 @@ static bool KPShowScreen(NSString *which);
   (void)sender;
   NSAlert *alert = [NSAlert new];
   alert.messageText = @"KartPad Multiplayer";
-  alert.informativeText = @"Local: choose Multiplayer in either game, then register each controller with A. Use Controls → Controller Settings to assign players.\n\nPrivate friend rooms: use the same game, content version, and service. In Nintendo WFC → Friends, exchange friend codes; the host creates a room and friends join from their roster. Original Mario Kart Wii requires a compatible private Wii server. MeleePad room codes and chat are not available.";
+  alert.informativeText = @"Local: choose Multiplayer in the game, then press A on each controller.\n\nOnline with friends: everyone needs the same game and server. Swap friend codes in Nintendo WFC → Friends. Original Mario Kart Wii needs a private Wii server.";
   [alert addButtonWithTitle:@"Done"];
   [alert addButtonWithTitle:@"Private Wii Server…"];
   if ([alert runModal] == NSAlertSecondButtonReturn) [self showPrivateServer:sender];
@@ -910,7 +913,7 @@ static bool KPShowScreen(NSString *which);
   (void)sender;
   NSAlert *alert = [NSAlert new];
   alert.messageText = @"Private Wii Server";
-  alert.informativeText = @"Experimental setup for both games. Enter a compatible Wii WFC server's hostname or IPv4 address. Everyone must use the same server. Legacy Wii traffic is unencrypted. Changes apply after quitting and reopening KartPad.";
+  alert.informativeText = @"Enter the server's hostname or IPv4 address. Everyone you play with needs the same server. Wii online traffic isn't encrypted. Applies after a restart.";
   NSTextField *field = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 340, 26)];
   field.stringValue = KartPadPrivateServerHost();
   field.placeholderString = @"Server hostname or IPv4 address";
@@ -937,7 +940,7 @@ static bool KPShowScreen(NSString *which);
     [NSUserDefaults.standardUserDefaults setObject:host forKey:@"KartPadPrivateWfcHost"];
   }
   [self offerRestart:@"Online Service Saved"
-             message:@"It’s used once KartPad restarts. Private-server compatibility and complete races still need testing."
+             message:@"Applies after a restart."
               reason:@"online-service"];
 }
 
@@ -946,7 +949,7 @@ static bool KPShowScreen(NSString *which);
   (void)sender;
   if (self.controlsPanel == nil) {
     self.controlsPanel = [[NSPanel alloc]
-        initWithContentRect:NSMakeRect(0, 0, 560, 540)
+        initWithContentRect:NSMakeRect(0, 0, 560, 480)
                   styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable)
                     backing:NSBackingStoreBuffered
                       defer:NO];
@@ -954,12 +957,6 @@ static bool KPShowScreen(NSString *which);
     self.controlsPanel.releasedWhenClosed = NO;
   }
   {
-
-    NSTextField *intro = [self label:
-        @"Player 1 can use the keyboard or any mapped game controller. Keyboard holds are analog-aware during races."];
-    intro.maximumNumberOfLines = 2;
-    intro.lineBreakMode = NSLineBreakByWordWrapping;
-
     NSMutableArray<NSArray<NSString *> *> *bindings = [@[
       @[@"Steer", @"W A S D"],
       @[@"Accelerate / confirm", @"U or Return"],
@@ -993,16 +990,7 @@ static bool KPShowScreen(NSString *which);
       [rows addObject:row];
     }
 
-    NSTextField *more = [self label:
-        @"Use Controller Settings… to assign connected controllers, customize buttons and sticks, or manage Players 2–4."];
-    more.textColor = NSColor.secondaryLabelColor;
-    more.maximumNumberOfLines = 2;
-    more.lineBreakMode = NSLineBreakByWordWrapping;
-
-    NSMutableArray<NSView *> *views = [NSMutableArray arrayWithObject:intro];
-    [views addObjectsFromArray:rows];
-    [views addObject:more];
-    NSStackView *content = [NSStackView stackViewWithViews:views];
+    NSStackView *content = [NSStackView stackViewWithViews:rows];
     content.translatesAutoresizingMaskIntoConstraints = NO;
     content.orientation = NSUserInterfaceLayoutOrientationVertical;
     content.alignment = NSLayoutAttributeLeading;
@@ -1017,9 +1005,7 @@ static bool KPShowScreen(NSString *which);
       [content.topAnchor constraintEqualToAnchor:self.controlsPanel.contentView.topAnchor
                                          constant:24.0],
       [content.bottomAnchor constraintLessThanOrEqualToAnchor:self.controlsPanel.contentView.bottomAnchor
-                                                      constant:-20.0],
-      [intro.widthAnchor constraintEqualToAnchor:content.widthAnchor],
-      [more.widthAnchor constraintEqualToAnchor:content.widthAnchor]
+                                                      constant:-20.0]
     ]];
   }
 
@@ -1086,7 +1072,7 @@ static bool KPShowScreen(NSString *which);
   ];
   NSAlert *choice = [NSAlert new];
   choice.messageText = @"Where should this report go?";
-  choice.informativeText = @"KartPad: device, controls, setup, or unsure. WiiCompiled: a known shared runtime issue. Search both trackers for existing reports. Save and review diagnostics before attaching them. Only confirm upstream checks you have tested.";
+  choice.informativeText = @"Not sure? Choose KartPad.";
   [choice addButtonWithTitle:@"KartPad"];
   [choice addButtonWithTitle:@"WiiCompiled"];
   [choice addButtonWithTitle:@"Cancel"];
@@ -1178,6 +1164,10 @@ static bool KPShowScreen(NSString *which) {
     KPScreen *connect = KPMakeConnectScreen();
     [KPOverlay() present:connect];
     [(KPConnectScreen *)connect chooseKind:KPPairKind::WiiRemote];
+  } else if ([which isEqualToString:@"pair-phone"]) {
+    KPScreen *connect = KPMakeConnectScreen();
+    [KPOverlay() present:connect];
+    [(KPConnectScreen *)connect chooseKind:KPPairKind::Phone];
   }
   return true;
 }
@@ -1192,6 +1182,12 @@ static bool KPShowScreen(NSString *which) {
 - (void)openHome:(id)sender {
   (void)sender;
   KPShowScreen(@"home");
+}
+- (void)addPhoneController:(id)sender {
+  (void)sender;
+  if (KPShowScreen(@"pair-phone")) return;
+  [self showSimpleAlert:@"Start the Game First"
+                message:@"Phones join once Mario Kart is running. Then choose Controls → Add Phone Controller… again."];
 }
 @end
 
@@ -1523,6 +1519,10 @@ static void InstallMenu() {
   controls.keyEquivalentModifierMask = NSEventModifierFlagCommand;
   controls.target = Controller();
   [controlsMenu addItem:controls];
+  NSMenuItem *phone = [[NSMenuItem alloc]
+      initWithTitle:@"Add Phone Controller…" action:@selector(addPhoneController:) keyEquivalent:@""];
+  phone.target = Controller();
+  [controlsMenu addItem:phone];
   [controlsMenu addItem:NSMenuItem.separatorItem];
   NSMenuItem *experimentalWiimote = [[NSMenuItem alloc]
       initWithTitle:@"Experimental Wii Remote + Nunchuk"
@@ -1618,7 +1618,7 @@ bool KartPadMacShellPrepareGameData(void) {
       KPCurtainDone();
       NSAlert *failure = [NSAlert new];
       failure.messageText = @"Pending Mii Changes Couldn’t Be Applied";
-      failure.informativeText = miiError.localizedDescription ?: @"Restart KartPad to retry. Backups and pending changes have been retained.";
+      failure.informativeText = miiError.localizedDescription ?: @"Restart KartPad to try again. Nothing was lost.";
       if (discardable) {
         failure.informativeText = [failure.informativeText stringByAppendingString:
             @"\n\nDiscard Mii Changes drops the waiting Mii and license changes and starts the game. Miis and licenses stay as they are now."];
@@ -1734,7 +1734,7 @@ bool KartPadMacShellPrepareGameData(void) {
       NSAlert *required = [NSAlert new];
       required.messageText = @"Game Data Required";
       required.informativeText =
-          @"KartPad does not include Mario Kart Wii. Choose your own extracted RMCP01 DATA folder to continue. Disc-image extraction and translation remain part of the Mac self-build workflow.";
+          @"KartPad does not include Mario Kart Wii. Choose your own extracted RMCP01 DATA folder to continue.";
       [required addButtonWithTitle:@"Choose Extracted Folder…"];
       [required addButtonWithTitle:@"Quit"];
       if ([required runModal] != NSAlertFirstButtonReturn) {

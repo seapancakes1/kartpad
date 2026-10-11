@@ -61,14 +61,15 @@ so you can tell which one is yours.
   controllers with a colour light).
 - A on a card: Change controller, Set up buttons, Choose a Mii, Find it, Stop
   playing. A controller in the Not playing tray offers each player directly.
-- **Connect** explains pairing mode for each kind, then KartPad finds the
-  controller and pairs it right there (PlayStation, Pro Controller, Joy-Con,
-  most others, and Wii Remotes). Newer Xbox controllers use Bluetooth LE, which
-  KartPad can't pair, so Xbox and Another controller also offer the Mac's
-  Bluetooth settings, which KartPad watches. When the new controller turns up
-  it celebrates and gives it the first free player. The search stops after
-  about a minute, since it slows other Bluetooth while it runs, and automated
-  runs (`KARTPAD_BACKGROUND=1`) don't search.
+- **Connect** asks what's being connected: a controller, a Wii Remote or a
+  phone. Every controller but the Wii Remote pairs the same way, so they share
+  one page listing how to put each brand in pairing mode; KartPad then finds
+  the controller and pairs it right there. Newer Xbox controllers use Bluetooth
+  LE, which KartPad can't pair, so the page also has Bluetooth Settings, which
+  KartPad watches. When the new controller turns up it celebrates and gives it
+  the first free player. The search stops after about a minute, since it slows
+  other Bluetooth while it runs, and automated runs (`KARTPAD_BACKGROUND=1`)
+  don't search.
 - **The keyboard** is a controller too: by default it plays as the first
   player without a controller, so a pad on Player 1 now works alongside it.
   Settings → Controls → Keyboard plays as pins it to a player.
@@ -110,7 +111,7 @@ data folder. It keeps going while you play.
 what you're playing. In Mario Kart Wii that's the course, then the mode and
 class ("Luigi Circuit", "Grand Prix · 150cc") during a race, and "In the menus"
 otherwise, under WiiCompiled's Discord application. Retro Rewind shows its own
-status. Settings → Game → Show on Discord turns it off (`[discord] enabled` in
+status. Settings → Game → Discord Rich Presence turns it off (`[discord] enabled` in
 Config.toml). It only talks to the Discord app on this Mac.
 
 **The first few launches** show a hint, "Press HOME for menus", after your first
@@ -161,6 +162,15 @@ button press.
   hands presses to the screen on top. While Controllers waits for a press on a
   particular controller (Change controller, Player Order) it reads each pad's
   A, B and Start itself and sets `KPPadListening`, which keeps the reader quiet.
+- **HOME and macOS.** macOS answers a controller's HOME itself (on macOS 26
+  it opens the Game Overlay) unless the app in front asks for the button.
+  SDL asks only when a controller connects or opens, and gives it back when
+  one closes, so `KPKeepHomeButtons` (`KartPadHomeScreen.inc.mm`) sets every
+  controller's HOME to `GCSystemGestureStateDisabled` a few times a second.
+  macOS hands it back while KartPad isn't in front, and ⌘Esc still opens
+  the Game Overlay. The session log gets `homeButton=claimed` when the
+  button had gone back to macOS, and `homeButton=pressed` with what macOS
+  reports on each press.
 - **Sound.** `WaitWhileOverlayOpen` holds the game's audio output
   (`AudioBackend::SetHeld`: gain 0, and what queued meanwhile is dropped on
   release) for as long as a screen holds the game, including the frames a
@@ -201,14 +211,18 @@ echo "home" >> /path/to/qa/commands.txt
 echo "shot home" >> /path/to/qa/commands.txt # /path/to/qa/home.png
 ```
 
-Commands: `home`, `close`, `screen settings|controllers|miis|pair-wii`,
+Commands: `home`, `close`, `screen settings|controllers|miis|pair-wii|pair-phone`,
 `pad up|down|left|right|a|b|x|y|lb|rb|start`, `focus LABEL`, `click LABEL` (a
 mouse click on a control: what the window's hit test finds, then the click),
 `where` (the focused control), `navmap` (where each direction leads from every
 control on the screen), `vpad add|press N BUTTON|release N BUTTON|remove N`
 (SDL virtual controllers, to check choosing controllers by pressing and joining),
 `move IDENTIFIER|vpadN SLOT` (put a controller on a player, or take it off with
--1, without benching it), `key NAME` (a key the game reads as typed, by SDL's
+-1, without benching it), `phone start|status|background-input` (phone
+controllers: start the server, log the touch and tilt links and each phone's
+player and what its pad presses, or keep SDL input while KartPad is in the
+background),
+`key NAME` (a key the game reads as typed, by SDL's
 name: `key return` is A for the keyboard's player; a backgrounded game ignores
 controllers but takes these), `shot NAME`,
 `shotwindow NAME`, `resize W H`, `appearance light|dark|system`, `frames` (the
@@ -236,6 +250,10 @@ anything a run changed.
 
 - Real controllers, HOME/Guide on each kind, the Bluetooth hand-off and
   the Wii Remote flow need checking with physical hardware.
+- Whether macOS 26 lets KartPad keep HOME from the Game Overlay needs
+  checking with each kind of controller (Xbox, PlayStation, Pro
+  Controller); `homeButton=` lines in the session log show what macOS
+  reported.
 - Pairing inside KartPad needs checking with each kind of controller in
   pairing mode. Newer Xbox controllers (Bluetooth LE) still pair in the Mac's
   Bluetooth settings.

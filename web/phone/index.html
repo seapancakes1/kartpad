@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#15171d">
+<meta name="robots" content="noindex">
+<title>KartPad Controller</title>
+<!--
+  KartPad's phone controller with tilt steering, published over HTTPS (GitHub Pages) because
+  browsers only give pages served that way the phone's motion. The QR code on the Mac opens it
+  with the Mac's address and this launch's key after the # (never sent to the page's host).
+  Joining opens the Mac's helper page in a second tab, which swaps WebRTC details with KartPad
+  (apple/macos/KartPadPhoneControllers.inc.mm) and closes; input then goes straight to the Mac
+  over a data channel. Messages are those of runtime/include/kartpad/network/phone_pad.h.
+  The touch-only page the Mac serves itself is apple/macos/KartPadPhonePage.inc.mm.
+-->
+<style>
+:root { --accent: #8a8f9c; --bg: #15171d; --key: #262a33; --keyDown: #3a404c; --text: #f2f3f5; --dim: #9aa0ab; }
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { position: fixed; inset: 0; margin: 0; overflow: hidden; background: var(--bg); color: var(--text);
+  font: 600 16px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  touch-action: none; overscroll-behavior: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+#pad { position: absolute; inset: 0; }
+.key { position: absolute; display: flex; align-items: center; justify-content: center; border-radius: 50%;
+  background: var(--key); border: 2px solid rgba(255,255,255,.08); color: var(--text); letter-spacing: .04em; }
+.key.down { background: var(--keyDown); transform: scale(.94); }
+.key small { font-size: 11px; color: var(--dim); display: block; text-align: center; }
+#a { width: 34vmin; height: 34vmin; right: calc(4vw + env(safe-area-inset-right)); bottom: 8vh; font-size: 13vmin;
+  background: var(--accent); color: #111; border-color: rgba(0,0,0,.15); }
+#a.down { filter: brightness(.82); }
+#a.locked { background: #3ad0e6; box-shadow: 0 0 0 4px rgba(58,208,230,.35); }
+#r { width: 26vmin; height: 26vmin; right: calc(4vw + 38vmin + env(safe-area-inset-right)); bottom: 6vh; border-radius: 30%; font-size: 4.2vmin; }
+#l { width: 22vmin; height: 22vmin; right: calc(4vw + 6vmin + env(safe-area-inset-right)); bottom: calc(8vh + 38vmin); font-size: 4.2vmin; }
+#b { width: 17vmin; height: 17vmin; right: calc(4vw + 42vmin + env(safe-area-inset-right)); bottom: calc(6vh + 30vmin); font-size: 7vmin; }
+#up { width: 14vmin; height: 14vmin; right: calc(4vw + 44vmin + env(safe-area-inset-right)); bottom: calc(6vh + 50vmin); border-radius: 30%; font-size: 3.4vmin; }
+.top { top: calc(3vmin + env(safe-area-inset-top)); height: 11vmin; min-height: 38px; border-radius: 99px; padding: 0 3.5vmin; font-size: 3.4vmin; }
+#home { left: calc(3vw + env(safe-area-inset-left)); }
+#start { left: calc(3vw + 21vmin + env(safe-area-inset-left)); }
+#mode { right: calc(3vw + 29vmin + env(safe-area-inset-right)); min-width: 17vmin; }
+#mode.on { background: var(--accent); color: #111; }
+#center { right: calc(3vw + 15vmin + env(safe-area-inset-right)); width: 11vmin; min-width: 38px; padding: 0; font-size: 5vmin; }
+#gear { right: calc(3vw + env(safe-area-inset-right)); width: 11vmin; min-width: 38px; padding: 0; font-size: 5vmin; }
+#badge { position: absolute; top: calc(3vmin + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 2vmin;
+  padding: 0 4vmin; height: 11vmin; min-height: 38px; border-radius: 99px; background: var(--key); font-size: 4.4vmin; white-space: nowrap; }
+#badge i { width: 2.6vmin; height: 2.6vmin; min-width: 9px; min-height: 9px; border-radius: 50%; background: #e5484d; }
+#badge.live i { background: #30b85c; }
+#badge b { color: var(--accent); }
+#stickzone { position: absolute; left: 0; top: 16vmin; bottom: 0; width: 52vw; }
+#base, #knob { position: absolute; border-radius: 50%; pointer-events: none; transform: translate(-50%, -50%); }
+#base { width: 36vmin; height: 36vmin; border: 2px solid rgba(255,255,255,.14); background: rgba(255,255,255,.04); }
+#knob { width: 17vmin; height: 17vmin; background: var(--accent); opacity: .9; }
+#base.idle, #knob.idle { opacity: .35; }
+#hint { position: absolute; left: 26vw; bottom: 5vh; transform: translateX(-50%); color: var(--dim); font-size: 3.4vmin; pointer-events: none; text-align: center; }
+#wheel { position: absolute; left: 26vw; top: 50%; width: 30vmin; height: 30vmin; margin: -15vmin 0 0 -15vmin; border-radius: 50%;
+  border: 3px solid rgba(255,255,255,.18); pointer-events: none; display: none; }
+#wheel::after { content: ""; position: absolute; left: 50%; top: -3px; width: 4px; height: 7vmin; margin-left: -2px; background: var(--accent); border-radius: 2px; }
+#wheel.flat { opacity: .3; }
+body.tilt #wheel { display: block; }
+.sheet { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4vmin;
+  background: var(--bg); text-align: center; padding: 6vmin; z-index: 5; }
+.sheet h1 { margin: 0; font-size: max(26px, 7vmin); }
+.sheet p { margin: 0; color: var(--dim); font-weight: 500; max-width: 36em; }
+.sheet button { font: inherit; font-size: max(20px, 5vmin); padding: 3vmin 12vmin; border-radius: 99px; border: 0; background: #f2b51e; color: #111; }
+.sheet button.plain { background: var(--key); color: var(--text); font-size: max(16px, 4vmin); padding: 2.4vmin 7vmin; }
+#settings { background: rgba(21,23,29,.97); gap: 3vmin; }
+.row { display: flex; gap: 2vmin; align-items: center; justify-content: center; flex-wrap: wrap; }
+.row span { color: var(--dim); min-width: 22vmin; text-align: right; }
+.row button { padding: 2vmin 5vmin; font-size: max(15px, 3.8vmin); background: var(--key); color: var(--text); }
+.row button.on { background: var(--accent); color: #111; }
+.hidden { display: none !important; }
+#turn { display: none; z-index: 9; }
+@media (orientation: portrait) { #turn.wanted { display: flex; } }
+</style>
+</head>
+<body>
+<div id="pad">
+  <div id="stickzone"></div>
+  <div id="wheel"></div>
+  <div id="base" class="idle"></div><div id="knob" class="idle"></div>
+  <div id="hint">Steer: touch and drag anywhere here</div>
+  <div class="key top" id="home" data-bit="4096">HOME</div>
+  <div class="key top" id="start" data-bit="128">PAUSE</div>
+  <div id="badge"><i></i><span id="who">Connecting…</span></div>
+  <div class="key top" id="mode">TILT</div>
+  <div class="key top" id="center" aria-label="Recenter">⟲</div>
+  <div class="key top" id="gear" aria-label="Settings">⚙︎</div>
+  <div class="key" id="up" data-bit="256"><span>TRICK<small>▲</small></span></div>
+  <div class="key" id="b" data-bit="2">B</div>
+  <div class="key" id="l" data-bit="16">ITEM</div>
+  <div class="key" id="r" data-bit="32">DRIFT</div>
+  <div class="key" id="a" data-bit="1">A</div>
+</div>
+<div class="sheet" id="join">
+  <h1>KartPad</h1>
+  <p id="joinText">Use this phone as a controller. Hold it sideways.</p>
+  <button id="joinButton" disabled>Join</button>
+  <p id="joinNote"></p>
+</div>
+<div class="sheet hidden" id="message">
+  <h1 id="messageTitle"></h1><p id="messageText"></p>
+  <button id="messageButton">Try Again</button>
+  <button class="plain hidden" id="touchButton">Use the Touch-Only Link</button>
+</div>
+<div class="sheet hidden" id="tiltAsk">
+  <h1>Steer by tilting?</h1>
+  <p>Turn the phone like a steering wheel.</p>
+  <div class="row"><button id="useTilt">Use Tilt</button><button id="useStick">Use the Stick</button></div>
+</div>
+<div class="sheet hidden" id="settings">
+  <h1>Controller</h1>
+  <div class="row"><span>Tilt sensitivity</span><button data-sens="0.5">0.5×</button><button data-sens="1">1×</button><button data-sens="2">2×</button></div>
+  <div class="row"><span>Tilt direction</span><button id="invert">Inverted</button></div>
+  <div class="row"><span>Shake for tricks</span><button id="shake">On</button></div>
+  <p id="link"></p>
+  <div class="row"><button id="closeSettings">Done</button><button id="leave">Leave</button></div>
+</div>
+<div class="sheet" id="turn"><h1>Turn your phone sideways</h1><p>The controller works in landscape.</p></div>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const fragment = new URLSearchParams(location.hash.slice(1));
+const mac = fragment.get("mac") || "";
+const key = fragment.get("k") || "";
+const macOrigin = "http://" + mac;
+const tokenKey = "kartpad-phone-" + key;
+let joined = false, wanted = false, buttons = 0, stickX = 0, stickY = 0, seq = 0, lastSent = "";
+let aLocked = false, aLockTimer = 0, wakeLock = null;
+
+function store(name, value) { try { value == null ? sessionStorage.removeItem(name) : sessionStorage.setItem(name, value); } catch (e) {} }
+function stored(name) { try { return sessionStorage.getItem(name); } catch (e) { return null; } }
+function pref(name, fallback) { try { const v = localStorage.getItem("kartpad-" + name); return v == null ? fallback : JSON.parse(v); } catch (e) { return fallback; } }
+function setPref(name, value) { try { localStorage.setItem("kartpad-" + name, JSON.stringify(value)); } catch (e) {} }
+function buzz(ms) { try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) {} }
+const b64url = (s) => btoa(unescape(encodeURIComponent(s))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+function show(sheet) {
+  for (const id of ["join", "message", "settings", "tiltAsk"]) $(id).classList.toggle("hidden", id !== sheet);
+  $("turn").classList.toggle("wanted", sheet == null || sheet === "settings" || sheet === "tiltAsk");
+}
+function message(title, text, button, touch) {
+  $("messageTitle").textContent = title;
+  $("messageText").textContent = text;
+  $("messageButton").textContent = button || "Try Again";
+  $("touchButton").classList.toggle("hidden", !touch);
+  show("message");
+}
+function setLive(live, text) { $("badge").classList.toggle("live", live); $("who").textContent = text; }
+function player(n) {
+  if (n >= 1) { $("who").innerHTML = "<b>P" + n + "</b>"; $("badge").classList.add("live"); }
+  else { setLive(true, "Not playing"); document.documentElement.style.setProperty("--accent", "#8a8f9c"); }
+}
+
+// ---- The WebRTC link. The offer is made before Join is tapped, so the tap can open the helper
+// tab at once: a tab opened after waiting counts as a pop-up and is blocked.
+let pc = null, padChannel = null, controlChannel = null, offer = null, openTimer = 0;
+const pings = new Map(), rtts = [];
+let pingId = 0;
+
+function closeLink() {
+  clearTimeout(openTimer);
+  if (pc) { pc.onconnectionstatechange = null; try { pc.close(); } catch (e) {} }
+  pc = padChannel = controlChannel = null;
+  offer = null;
+}
+
+// Join and Try Again wait for the offer: the tap itself has to open the helper tab.
+function ready(yes) { $("joinButton").disabled = $("messageButton").disabled = !yes; }
+
+async function prepare() {
+  closeLink();
+  ready(false);
+  const link = new RTCPeerConnection({iceServers: []});
+  pc = link;
+  padChannel = link.createDataChannel("pad", {ordered: false, maxRetransmits: 0});
+  controlChannel = link.createDataChannel("control");
+  padChannel.binaryType = controlChannel.binaryType = "arraybuffer";
+  padChannel.onmessage = (event) => {
+    const bytes = new Uint8Array(event.data);
+    if (bytes.length === 3 && bytes[0] === 3) answerPing(bytes[1] | (bytes[2] << 8));
+  };
+  controlChannel.onopen = () => { clearTimeout(openTimer); setLive(false, "Joining…"); };
+  controlChannel.onmessage = (event) => { if (typeof event.data === "string") onControl(event.data); };
+  controlChannel.onclose = () => { if (pc === link) lost(); };
+  link.onconnectionstatechange = () => { if (pc === link && link.connectionState === "failed") lost(); };
+  await link.setLocalDescription(await link.createOffer());
+  await new Promise((resolve) => {
+    if (link.iceGatheringState === "complete") return resolve();
+    link.addEventListener("icegatheringstatechange", () => link.iceGatheringState === "complete" && resolve());
+    setTimeout(resolve, 3000);
+  });
+  if (pc !== link) return;
+  offer = link.localDescription.sdp;
+  ready(mac && key);
+}
+
+function join() {
+  if (!offer) return;
+  wanted = true;
+  keepAwake();
+  const token = stored(tokenKey) || "";
+  const helper = window.open(macOrigin + "/link#k=" + key + "&t=" + token + "&o=" + b64url(offer), "kartpad-link");
+  if (!helper) {
+    message("Couldn’t open the link tab", "Allow pop-ups for this page, then try again.", "Try Again", true);
+    return;
+  }
+  show(null);
+  setLive(false, "Linking…");
+  // Nothing within 20 s (the Mac's helper page never answered, or the link never opened).
+  openTimer = setTimeout(() => {
+    if (!joined) failed("The phone and the Mac couldn’t connect directly.");
+  }, 20000);
+}
+
+window.addEventListener("message", async (event) => {
+  if (event.origin !== macOrigin || !event.data || !pc) return;
+  if (event.data.t === "link-error") return failed("KartPad couldn’t link this phone (" + event.data.why + ").");
+  if (event.data.t !== "answer") return;
+  setLive(false, "Connecting…");
+  try { await pc.setRemoteDescription({type: "answer", sdp: event.data.sdp}); }
+  catch (e) { failed("KartPad’s answer didn’t work here."); }
+});
+
+function failed(why) {
+  wanted = false;
+  joined = false;
+  letGo();
+  message("Couldn’t connect", why + " Make sure the phone is on the same Wi‑Fi as the Mac.", "Try Again", true);
+  prepare().catch(() => {});
+}
+
+// The link went away (Wi‑Fi, the phone slept, KartPad quit). Coming back needs a tap, since it
+// opens the helper tab again; the token keeps this phone's player for a minute.
+function lost() {
+  const was = joined;
+  joined = false;
+  letGo();
+  closeLink();
+  prepare().catch(() => {});
+  if (!wanted) return;
+  if (was) message("Connection lost", "Reconnect within a minute to keep your player.", "Reconnect", true);
+  else failed("The connection closed.");
+}
+
+function onControl(text) {
+  let m;
+  try { m = JSON.parse(text); } catch (e) { return; }
+  if (m.t === "welcome") {
+    const first = !joined && stored(tokenKey) !== m.token;
+    store(tokenKey, m.token);
+    joined = true;
+    player(m.player);
+    send(true);
+    // Motion access needs a tap of its own, so tilt is offered once joined (and comes back on with
+    // one tap after a reconnect).
+    if (!tilt && pref("tilt", true) && (first || !askedTilt)) { askedTilt = true; show("tiltAsk"); }
+    else show(null);
+  }
+  else if (m.t === "player") player(m.player);
+  else if (m.t === "color") document.documentElement.style.setProperty("--accent", m.rgb);
+  else if (m.t === "rumble") buzz(m.on ? 4000 : 0);
+  else if (m.t === "bye") goodbye(m.reason);
+}
+
+function goodbye(reason) {
+  wanted = false;
+  joined = false;
+  letGo();
+  closeLink();
+  prepare().catch(() => {});
+  if (reason === "full") message("Four phones are already playing", "Ask someone to leave, then try again.");
+  else if (reason === "replaced") message("Opened somewhere else", "This controller is now in another tab or window.", "Use It Here");
+  else if (reason === "left") { store(tokenKey, null); show("join"); }
+  else message("KartPad closed", "Open KartPad on the Mac and scan the code again.");
+}
+
+// ---- Sending: whenever anything changes, and every 50 ms so KartPad knows the phone is there.
+function send(force) {
+  if (!joined || !padChannel || padChannel.readyState !== "open") return;
+  const x = currentX(), state = buttons + ":" + x + ":" + stickY;
+  if (!force && state === lastSent) return;
+  lastSent = state;
+  const bytes = new Uint8Array(8);
+  bytes[0] = 1; bytes[1] = seq = (seq + 1) & 255;
+  bytes[2] = buttons & 255; bytes[3] = buttons >> 8;
+  bytes[4] = x & 255; bytes[5] = stickY & 255;
+  padChannel.send(bytes);
+}
+setInterval(() => send(true), 50);
+function letGo() { buttons = 0; stickX = 0; stickY = 0; aLocked = false; clearTimeout(aLockTimer); render(); send(true); }
+
+// Link delay: a ping every half second, timed on its way back.
+setInterval(() => {
+  if (!joined || !padChannel || padChannel.readyState !== "open") return;
+  pingId = (pingId + 1) & 0xffff;
+  pings.set(pingId, performance.now());
+  padChannel.send(new Uint8Array([3, pingId & 255, pingId >> 8]));
+  for (const [id, t] of pings) if (performance.now() - t > 2000) pings.delete(id);
+}, 500);
+function answerPing(id) {
+  const t = pings.get(id);
+  if (t === undefined) return;
+  pings.delete(id);
+  rtts.push(performance.now() - t);
+  if (rtts.length > 60) rtts.shift();
+  const sorted = [...rtts].sort((p, q) => p - q);
+  $("link").textContent = "Link to the Mac: " + sorted[Math.floor(sorted.length / 2)].toFixed(0) + " ms there and back (worst " +
+                          sorted[sorted.length - 1].toFixed(0) + " ms lately).";
+}
+
+async function keepAwake() {
+  try { if (navigator.wakeLock && document.visibilityState === "visible") wakeLock = await navigator.wakeLock.request("screen"); } catch (e) {}
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") letGo();
+  else if (wanted) {
+    keepAwake();
+    if (pc && controlChannel && controlChannel.readyState !== "open" && joined) lost();
+  }
+});
+
+$("joinButton").onclick = join;
+$("messageButton").onclick = join;
+$("touchButton").onclick = () => { location.href = macOrigin + "/#" + key; };
+if (!mac || !key) {
+  $("joinButton").classList.add("hidden");
+  $("joinNote").textContent = "Scan the QR code in KartPad on the Mac: Controls → Add Phone Controller…";
+} else if (!window.RTCPeerConnection) {
+  $("joinText").textContent = "This browser can’t make the direct link that tilt needs.";
+  $("joinButton").classList.add("hidden");
+  $("touchButton").classList.remove("hidden");
+  message("Tilt isn’t available here", "This browser can’t make the direct link that tilt needs. The touch-only link still works.", "Try Again", true);
+} else {
+  prepare().catch((e) => { $("joinNote").textContent = "Couldn’t get ready: " + e; });
+}
+show(window.RTCPeerConnection || !mac ? "join" : "message");
+
+// ---- Tilt steering, as in KartPad's iPhone motion steering (apple/mobile/KartPadMotionSteering.mm):
+// the wheel angle is the direction of gravity in the screen's plane, from the phone's gyro-fused
+// gravity estimate, so swinging or jolting the phone doesn't steer. Browsers give it as
+// accelerationIncludingGravity minus acceleration (the motion the phone itself makes). Turning
+// the phone is measured from where it was when tilt came on, or from Recenter.
+const DEAD_ZONE = 0.045, FULL_LOCK = 0.70;           // radians, at 1× sensitivity
+const SHAKE_REARM = 0.35, SHAKE_TRIGGER = 1.35, SHAKE_COOLDOWN = 0.45;  // g, g, seconds
+const G = 9.80665;
+let askedTilt = false;
+let tilt = false, tiltSteer = 0, tiltAngle = null, center = null, flat = false, filtered = null;
+let sensitivity = pref("sensitivity", 1), inverted = pref("inverted", false), shakeTricks = pref("shake", true);
+let shakeArmed = false, lastShake = -1, shakeUntil = 0;
+
+function steering(angle, centerAngle) {
+  let delta = angle - centerAngle;
+  while (delta > Math.PI) delta -= 2 * Math.PI;
+  while (delta < -Math.PI) delta += 2 * Math.PI;
+  const fullLock = FULL_LOCK / Math.min(2, Math.max(0.5, sensitivity));
+  const magnitude = Math.abs(delta);
+  if (magnitude <= DEAD_ZONE) return 0;
+  const value = Math.sign(delta) * Math.min(1, (magnitude - DEAD_ZONE) / (fullLock - DEAD_ZONE));
+  return inverted ? -value : value;
+}
+
+function onMotion(event) {
+  const all = event.accelerationIncludingGravity, own = event.acceleration;
+  if (!all || all.x == null) return;
+  let gx, gy;
+  if (own && own.x != null) {
+    gx = all.x - own.x;
+    gy = all.y - own.y;
+  } else {
+    // No separate motion reading on this phone: smooth the raw one instead (slower to follow).
+    filtered = filtered ? {x: filtered.x + (all.x - filtered.x) * 0.1, y: filtered.y + (all.y - filtered.y) * 0.1} : {x: all.x, y: all.y};
+    gx = filtered.x;
+    gy = filtered.y;
+  }
+  // A phone lying flat has no wheel angle: hold the wheel straight.
+  flat = Math.hypot(gx, gy) / G < 0.08;
+  if (flat) {
+    tiltSteer = 0;
+  } else {
+    tiltAngle = Math.atan2(gy, gx);
+    if (center === null) center = tiltAngle;
+    tiltSteer = steering(tiltAngle, center);
+  }
+  $("wheel").classList.toggle("flat", flat);
+  $("wheel").style.transform = "rotate(" + (tiltSteer * 90) + "deg)";
+  if (shakeTricks && own && own.x != null) shake(Math.hypot(own.x, own.y, own.z || 0) / G, event.timeStamp / 1000);
+  send();
+}
+
+// A sharp shake presses Trick (D-pad Up) briefly; the phone has to settle before the next one.
+function shake(magnitude, now) {
+  if (magnitude <= SHAKE_REARM) { shakeArmed = true; return; }
+  if (!shakeArmed || magnitude < SHAKE_TRIGGER) return;
+  shakeArmed = false;
+  if (lastShake >= 0 && now - lastShake < SHAKE_COOLDOWN) return;
+  lastShake = now;
+  shakeUntil = performance.now() + 150;
+  render();
+  send();
+  setTimeout(() => { render(); send(); }, 160);
+}
+
+// The stick's x: the thumb when it's on the stick (it overrides tilt, as on iPhone), else tilt.
+function currentX() {
+  if (stick || !tilt) return stickX;
+  return Math.round(tiltSteer * 127);
+}
+
+async function setTilt(on) {
+  let refused = false;
+  if (on && typeof DeviceMotionEvent !== "undefined" && typeof DeviceMotionEvent.requestPermission === "function") {
+    try { refused = (await DeviceMotionEvent.requestPermission()) !== "granted"; } catch (e) { refused = true; }
+    if (refused) on = false;
+  }
+  tilt = on;
+  setPref("tilt", on);
+  center = null;
+  tiltSteer = 0;
+  if (on) window.addEventListener("devicemotion", onMotion);
+  else window.removeEventListener("devicemotion", onMotion);
+  document.body.classList.toggle("tilt", on);
+  $("mode").classList.toggle("on", on);
+  $("mode").textContent = on ? "TILT" : "STICK";
+  $("center").classList.toggle("hidden", !on);
+  $("hint").textContent = on ? "Turn the phone like a wheel. Touch here for the stick."
+                       : refused ? "Motion access refused. Drag here to steer."
+                                 : "Steer: touch and drag anywhere here";
+  send();
+}
+$("useTilt").onclick = () => { show(null); setTilt(true); };
+$("useStick").onclick = () => { setPref("tilt", false); show(null); setTilt(false); };
+// Motion access needs a tap on iPhone, so tilt comes back on with the first tap of the mode key.
+$("mode").textContent = "STICK";
+$("center").classList.add("hidden");
+
+function syncSettings() {
+  for (const b of document.querySelectorAll("[data-sens]")) b.classList.toggle("on", Number(b.dataset.sens) === sensitivity);
+  $("invert").classList.toggle("on", inverted);
+  $("invert").textContent = inverted ? "Inverted" : "Normal";
+  $("shake").classList.toggle("on", shakeTricks);
+  $("shake").textContent = shakeTricks ? "On" : "Off";
+}
+for (const b of document.querySelectorAll("[data-sens]"))
+  b.onclick = () => { sensitivity = Number(b.dataset.sens); setPref("sensitivity", sensitivity); syncSettings(); };
+$("invert").onclick = () => { inverted = !inverted; setPref("inverted", inverted); syncSettings(); };
+$("shake").onclick = () => { shakeTricks = !shakeTricks; setPref("shake", shakeTricks); syncSettings(); };
+$("closeSettings").onclick = () => show(null);
+$("leave").onclick = () => {
+  if (controlChannel && controlChannel.readyState === "open") controlChannel.send(new Uint8Array([2]));
+  else goodbye("left");
+};
+syncSettings();
+
+// ---- Touch: each finger is the stick or a button, and can slide from one button to another.
+const keys = Array.from(document.querySelectorAll(".key[data-bit]"));
+const fingers = new Map();  // pointerId → key element, "stick" or "unlock"
+let stick = null;           // {id, x, y}
+function keyAt(x, y) {
+  const el = document.elementFromPoint(x, y);
+  return el && el.closest ? el.closest(".key[data-bit]") : null;
+}
+function radius() { return Math.min(innerWidth, innerHeight) * 0.18; }
+function fingersOn(k) { for (const t of fingers.values()) if (t === k) return true; return false; }
+function render() {
+  let held = 0;
+  for (const target of fingers.values()) if (typeof target !== "string") held |= Number(target.dataset.bit);
+  if (aLocked) held |= 1;
+  if (performance.now() < shakeUntil) held |= 256;
+  buttons = held;
+  for (const k of keys) k.classList.toggle("down", (held & Number(k.dataset.bit)) !== 0 && !(k.id === "a" && aLocked && !fingersOn(k)));
+  $("a").classList.toggle("locked", aLocked);
+}
+function placeStick(cx, cy, kx, ky, idle) {
+  $("base").style.left = cx + "px"; $("base").style.top = cy + "px";
+  $("knob").style.left = kx + "px"; $("knob").style.top = ky + "px";
+  $("base").classList.toggle("idle", idle); $("knob").classList.toggle("idle", idle);
+}
+function restStick() {
+  const zone = $("stickzone").getBoundingClientRect();
+  const cx = zone.left + zone.width * 0.45, cy = zone.top + zone.height * 0.55;
+  placeStick(cx, cy, cx, cy, true);
+}
+// Hold A for a second to keep accelerating; a tap while locked unlocks without pressing.
+function pressA(down) {
+  if (down) {
+    if (aLocked) { aLocked = false; return false; }
+    clearTimeout(aLockTimer);
+    aLockTimer = setTimeout(() => { if (fingersOn($("a"))) { aLocked = true; buzz(30); render(); send(); } }, 1000);
+  } else clearTimeout(aLockTimer);
+  return true;
+}
+const topKeys = {mode: () => setTilt(!tilt), center: () => { center = tiltAngle; buzz(15); },
+                 gear: () => { syncSettings(); show("settings"); }};
+document.addEventListener("pointerdown", (e) => {
+  if (!joined || (e.target.closest && e.target.closest(".sheet"))) return;
+  const top = e.target.closest && e.target.closest("#mode, #center, #gear");
+  if (top) { topKeys[top.id](); return; }
+  const k = keyAt(e.clientX, e.clientY);
+  if (k) {
+    if (k.id === "a" && !pressA(true)) { fingers.set(e.pointerId, "unlock"); render(); send(); return; }
+    fingers.set(e.pointerId, k); buzz(8);
+  } else if (!stick && e.clientX < innerWidth * 0.55 && e.clientY > innerHeight * 0.16) {
+    stick = {id: e.pointerId, x: e.clientX, y: e.clientY};
+    fingers.set(e.pointerId, "stick");
+    placeStick(e.clientX, e.clientY, e.clientX, e.clientY, false);
+  }
+  render(); send();
+});
+document.addEventListener("pointermove", (e) => {
+  const was = fingers.get(e.pointerId);
+  if (was === undefined || was === "unlock") return;
+  if (was === "stick") {
+    let dx = e.clientX - stick.x, dy = e.clientY - stick.y;
+    const r = radius(), d = Math.hypot(dx, dy);
+    if (d > r) { dx *= r / d; dy *= r / d; }
+    stickX = Math.round(dx / r * 127); stickY = Math.round(dy / r * 127);
+    placeStick(stick.x, stick.y, stick.x + dx, stick.y + dy, false);
+  } else {
+    const k = keyAt(e.clientX, e.clientY);
+    if (k && k !== was) {
+      if (was.id === "a") pressA(false);
+      if (k.id === "a" && !pressA(true)) return;
+      fingers.set(e.pointerId, k); buzz(8);
+    }
+  }
+  render(); send();
+});
+function lift(e) {
+  const was = fingers.get(e.pointerId);
+  if (was === undefined) return;
+  fingers.delete(e.pointerId);
+  if (was === "stick") { stick = null; stickX = 0; stickY = 0; restStick(); }
+  else if (was !== "unlock" && was.id === "a") pressA(false);
+  render(); send();
+}
+document.addEventListener("pointerup", lift);
+document.addEventListener("pointercancel", lift);
+for (const type of ["touchstart", "touchmove", "gesturestart", "dblclick", "contextmenu"])
+  document.addEventListener(type, (e) => { if (e.target.tagName !== "BUTTON") e.preventDefault(); }, {passive: false});
+addEventListener("resize", restStick);
+restStick();
+</script>
+</body>
+</html>

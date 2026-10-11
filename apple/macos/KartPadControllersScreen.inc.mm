@@ -452,7 +452,7 @@ enum : unsigned { KPPressConfirm = 1, KPPressBack = 2, KPPressStart = 4 };
   [menu add:@"Set up buttons" detail:nil glyph:(int)KPUIGlyph::Buttons enabled:YES run:^{ KPSetUpButtons(device); }];
   [menu add:mii ? @"Change Mii" : @"Choose a Mii" detail:nil glyph:(int)KPUIGlyph::Mii enabled:YES run:^{ KPChooseMii(device); }];
   if (!device.isKeyboard)
-    [menu add:@"Find it" detail:@"It buzzes and flashes" glyph:(int)KPUIGlyph::Find enabled:YES run:^{
+    [menu add:@"Find it" detail:nil glyph:(int)KPUIGlyph::Find enabled:YES run:^{
       [roster identify:device];
       KPUIWobble([weakSelf viewFor:device]);
     }];
@@ -483,7 +483,7 @@ enum : unsigned { KPPressConfirm = 1, KPPressBack = 2, KPPressStart = 4 };
     }];
   }
   if (!device.isKeyboard)
-    [menu add:@"Find it" detail:@"It buzzes and flashes" glyph:(int)KPUIGlyph::Find enabled:YES
+    [menu add:@"Find it" detail:nil glyph:(int)KPUIGlyph::Find enabled:YES
           run:^{ [roster identify:device]; }];
   [KPOverlay() present:menu];
 }
@@ -1101,78 +1101,69 @@ static void KPChooseMii(KPPadDevice *device) {
 
 #pragma mark Connecting a controller
 
-// Pairing, one kind of controller at a time: how to put it in pairing mode, then KartPad finds it
-// and pairs it right here (KartPadWiimotePairing.mm), and celebrates when it shows up. Newer Xbox
-// controllers use Bluetooth LE, which KartPad can't pair, so Xbox (and Another controller) also
-// offer the Mac's Bluetooth settings, which KartPad watches the same way.
-enum class KPPairKind { Xbox, PlayStation, Switch, WiiRemote, Other };
+// Pairing: what's being connected, then KartPad finds it and pairs it right here
+// (KartPadWiimotePairing.mm), and celebrates when it shows up. Every controller but the Wii Remote
+// pairs the same way, so they share one page, with how to put each brand in pairing mode. Newer
+// Xbox controllers use Bluetooth LE, which KartPad can't pair, so the page also offers the Mac's
+// Bluetooth settings, which KartPad watches the same way.
+enum class KPPairKind { Controller, WiiRemote, Phone };
 
 @interface KPConnectScreen : KPScreen <KPRosterListener>
 @property(nonatomic) KPPairKind kind;
 @property(nonatomic) BOOL choosing;  // the first step: which kind
 @property(nonatomic, strong) NSMutableArray<KPUIButton *> *kinds;
-@property(nonatomic, strong) KPUIButton *primary, *done;
+@property(nonatomic, strong) KPUIButton *primary, *settings, *done;
 @property(nonatomic, copy) NSString *status;
 @property(nonatomic) BOOL busy;
 @property(nonatomic, strong) NSSet<NSString *> *before;
 @property(nonatomic, strong) KPPadDevice *arrived;
+@property(nonatomic) BOOL phoneTouch;  // Phone: showing the code for the touch-only page
 @end
 
 @implementation KPConnectScreen
 static NSString *KPPairTitle(KPPairKind kind) {
   switch (kind) {
-    case KPPairKind::Xbox: return @"Xbox controller";
-    case KPPairKind::PlayStation: return @"PlayStation controller";
-    case KPPairKind::Switch: return @"Pro Controller or Joy\u2011Con";
+    case KPPairKind::Controller: return @"Controller";
     case KPPairKind::WiiRemote: return @"Wii Remote";
-    case KPPairKind::Other: return @"Another controller";
+    case KPPairKind::Phone: return @"Phone";
   }
   return @"Controller";
 }
-static KPPadFamily KPPairFamily(KPPairKind kind) {
-  switch (kind) {
-    case KPPairKind::Xbox: return KPFamilyXbox;
-    case KPPairKind::PlayStation: return KPFamilyPlayStation;
-    case KPPairKind::Switch: return KPFamilySwitch;
-    case KPPairKind::WiiRemote: return KPFamilyWiiRemote;
-    case KPPairKind::Other: return KPFamilyGeneric;
-  }
-  return KPFamilyGeneric;
-}
 static NSString *KPPairSteps(KPPairKind kind) {
   switch (kind) {
-    case KPPairKind::Xbox:
-      return @"1. Turn the controller on.\n2. Hold the pair button on its top edge until the Xbox button flashes fast.\n3. Most newer ones connect in Bluetooth settings: click Connect next to it.";
-    case KPPairKind::PlayStation:
-      return @"1. Hold Share (or Create) and the PS button until the light flashes.\n2. KartPad pairs it by itself.";
-    case KPPairKind::Switch:
-      return @"1. Hold the sync button on the top edge (on a Joy\u2011Con, the rail) until the lights run.\n2. KartPad pairs it by itself.";
+    case KPPairKind::Controller: return @"Put it in pairing mode, and KartPad pairs it by itself.";
     case KPPairKind::WiiRemote:
       return @"1. Open the battery cover and press the red SYNC button.\n2. KartPad pairs it by itself.";
-    case KPPairKind::Other:
-      return @"1. Put it in pairing mode (usually: hold its pair button).\n2. KartPad looks for it. If it doesn\u2019t connect, click Connect next to it in Bluetooth settings.\nUSB controllers just plug in.";
+    case KPPairKind::Phone:
+      return @"1. Join the same Wi\u2011Fi as this Mac.\n2. Point the phone\u2019s camera at the code and open the link.\n3. Tap Join, and hold the phone sideways.\nUp to four phones can join. Nothing to install.";
   }
   return @"";
 }
-// Kinds KartPad pairs itself, so the button searches again; the rest search too, but their button
-// is Bluetooth settings.
-static BOOL KPPairSearches(KPPairKind kind) {
-  return kind == KPPairKind::PlayStation || kind == KPPairKind::Switch || kind == KPPairKind::WiiRemote;
-}
+// Pairing mode for each brand, on the Controller page.
+static const struct {
+  NSString *brand, *how;
+} KPPairModes[] = {
+    {@"PlayStation", @"Hold Create (or Share) and PS until the light flashes."},
+    {@"Switch", @"Hold the sync button (on a Joy\u2011Con, the rail) until the lights run."},
+    {@"Xbox", @"Hold the pair button until it flashes fast. Newer ones pair in Bluetooth Settings."},
+    {@"Others", @"Usually: hold the pair button. USB controllers just plug in."},
+};
 - (void)build {
   self.solid = YES;
   self.choosing = YES;
   __weak KPConnectScreen *weakSelf = self;
   self.kinds = [NSMutableArray array];
-  const KPPairKind kinds[] = {KPPairKind::Xbox, KPPairKind::PlayStation, KPPairKind::Switch, KPPairKind::WiiRemote, KPPairKind::Other};
+  const KPPairKind kinds[] = {KPPairKind::Controller, KPPairKind::WiiRemote, KPPairKind::Phone};
   for (KPPairKind kind : kinds) {
     KPUIButton *tile = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
       KPButtonFace(c, r, KPStyle::Card, NO, YES, state.pressed, state.focused);
       const CGFloat dy = state.pressed ? 2 : 0;
       KPArtState art;
       art.accent = KPP->accentBottom;
-      KPDrawControllerArt(c, CGRectMake(r.origin.x + 18, r.origin.y + 20 + dy, r.size.width - 36, 120), KPPairFamily(kind), art);
-      KPTextWeight(KPPairTitle(kind), CGRectMake(r.origin.x + 10, r.origin.y + 160 + dy, r.size.width - 20, 56), 20, KPP->text,
+      const CGRect artRect = CGRectMake(r.origin.x + 18, r.origin.y + 20 + dy, r.size.width - 36, 120);
+      if (kind == KPPairKind::Phone) KPDrawPhoneArt(c, CGRectInset(artRect, 6, 18), art.accent);
+      else KPDrawControllerArt(c, artRect, kind == KPPairKind::WiiRemote ? KPFamilyWiiRemote : KPFamilyGeneric, art);
+      KPTextWeight(KPPairTitle(kind), CGRectMake(r.origin.x + 10, r.origin.y + 168 + dy, r.size.width - 20, 30), 21, KPP->text,
                    NSFontWeightSemibold);
     } action:^{ [weakSelf chooseKind:kind]; }];
     tile.tag2 = (NSInteger)kind;
@@ -1182,10 +1173,14 @@ static BOOL KPPairSearches(KPPairKind kind) {
   }
   self.primary = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
     KPConnectScreen *screen = weakSelf;
-    const BOOL searches = KPPairSearches(screen.kind);
-    KPDrawPill(c, r, state, KPStyle::Primary, searches ? KPUIGlyph::Find : KPUIGlyph::Bluetooth,
-               searches ? (screen.busy ? @"Searching…" : @"Search Again") : @"Open Bluetooth Settings");
+    if (screen.kind == KPPairKind::Phone)
+      KPDrawPill(c, r, state, KPStyle::Primary, KPUIGlyph::Swap, screen.phoneTouch ? @"Code With Tilt" : @"Code Without Tilt");
+    else
+      KPDrawPill(c, r, state, KPStyle::Primary, KPUIGlyph::Find, screen.busy ? @"Searching…" : @"Search Again");
   } action:^{ [weakSelf primaryAction]; }];
+  self.settings = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
+    KPDrawPill(c, r, state, KPStyle::Plain, KPUIGlyph::Bluetooth, @"Bluetooth Settings");
+  } action:^{ [weakSelf openBluetoothSettings]; }];
   self.done = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
     KPDrawPill(c, r, state, KPStyle::Plain, KPUIGlyph::Check, @"Done");
   } action:^{ [KPOverlay() pop]; }];
@@ -1193,16 +1188,21 @@ static BOOL KPPairSearches(KPPairKind kind) {
 }
 - (void)layoutDesign {
   const CGRect s = self.safe;
-  const CGFloat w = 222, gap = 18, x0 = s.origin.x + (1280 - (5 * w + 4 * gap)) / 2;
+  const CGFloat w = 260, gap = 24, count = self.kinds.count, x0 = s.origin.x + (1280 - (count * w + (count - 1) * gap)) / 2;
   for (KPUIButton *tile in self.kinds) {
     tile.hidden = !self.choosing;
     [self place:tile at:CGRectMake(x0 + tile.tag2 * (w + gap), s.origin.y + 180, w, 236)];
   }
-  self.primary.hidden = self.choosing;
-  [self place:self.primary at:CGRectMake(s.origin.x + 700, s.origin.y + 560, 330, 64)];
-  [self place:self.done at:CGRectMake(CGRectGetMaxX(s) - 56 - 170, self.choosing ? s.origin.y + 590 : s.origin.y + 560, 170, 64)];
+  // Phones: switching between the codes with and without tilt, when there's a tilt page.
+  self.primary.hidden = self.choosing || (self.kind == KPPairKind::Phone && !KPPhoneServer.shared.hasTiltPage);
+  self.settings.hidden = self.choosing || self.kind != KPPairKind::Controller;
+  // Right to left: Done, Search Again, Bluetooth Settings.
+  const CGFloat doneX = CGRectGetMaxX(s) - 56 - 170, primaryX = doneX - 16 - 270;
+  [self place:self.primary at:CGRectMake(primaryX, s.origin.y + 560, 270, 64)];
+  [self place:self.settings at:CGRectMake(primaryX - 16 - 290, s.origin.y + 560, 290, 64)];
+  [self place:self.done at:CGRectMake(doneX, self.choosing ? s.origin.y + 590 : s.origin.y + 560, 170, 64)];
 }
-- (KPUIButton *)initialFocus { return self.choosing ? self.kinds.firstObject : self.primary; }
+- (KPUIButton *)initialFocus { return self.choosing ? self.kinds.firstObject : self.kind == KPPairKind::Phone ? self.done : self.primary; }
 - (void)chooseKind:(KPPairKind)kind {
   self.kind = kind;
   self.choosing = NO;
@@ -1210,12 +1210,15 @@ static BOOL KPPairSearches(KPPairKind kind) {
   NSMutableSet *ids = [NSMutableSet set];
   for (KPPadDevice *device in KPControllerRoster.shared.devices) [ids addObject:device.identifier];
   self.before = ids;
-  self.status = kind == KPPairKind::WiiRemote ? @"Getting Bluetooth ready…" : @"Waiting for the controller…";
+  self.status = kind == KPPairKind::WiiRemote ? @"Getting Bluetooth ready…"
+              : kind == KPPairKind::Phone       ? @"Waiting for a phone…"
+                                                : @"Looking for it…";
+  if (kind == KPPairKind::Phone) [KPPhoneServer.shared start];
   [self layoutDesign];
-  [KPOverlay() focus:self.primary sound:NO];
+  [KPOverlay() focus:self.initialFocus sound:NO];
   self.needsDisplay = YES;
   if (kind == KPPairKind::WiiRemote) [self pairWiiRemote];
-  else [self pairGamepad];
+  else if (kind == KPPairKind::Controller) [self pairGamepad];
 }
 - (void)pairGamepad {
   // Automated checks don't search: it can bring up macOS's Bluetooth permission prompt.
@@ -1224,8 +1227,6 @@ static BOOL KPPairSearches(KPPairKind kind) {
   __weak KPConnectScreen *weakSelf = self;
   KartPadBeginGamepadPairing(^(NSString *message, BOOL busy) {
     KPConnectScreen *screen = weakSelf;
-    // Where KartPad can't finish the job, the button below can.
-    if (!busy && !KPPairSearches(screen.kind)) message = @"Not connected yet. Open Bluetooth Settings and click Connect next to it.";
     screen.status = message;
     screen.busy = busy;
     screen.needsDisplay = YES;
@@ -1246,29 +1247,38 @@ static BOOL KPPairSearches(KPPairKind kind) {
   self.primary.needsDisplay = YES;
 }
 - (void)primaryAction {
+  if (self.kind == KPPairKind::Phone) {
+    self.phoneTouch = !self.phoneTouch;
+    self.needsDisplay = YES;
+    self.primary.needsDisplay = YES;
+    return;
+  }
   if (self.kind == KPPairKind::WiiRemote) {
     if (!self.busy) [self pairWiiRemote];
     return;
   }
-  if (KPPairSearches(self.kind)) {
-    if (!self.busy) [self pairGamepad];
-    return;
-  }
+  if (!self.busy) [self pairGamepad];
+}
+- (void)openBluetoothSettings {
   // Settings pairs it from here on; two pairings of one controller at once can trip each other.
   KartPadCancelGamepadPairing();
   self.busy = NO;
+  self.primary.needsDisplay = YES;
   NSURL *settings = [NSURL URLWithString:@"x-apple.systempreferences:com.apple.BluetoothSettings"];
   if (![NSWorkspace.sharedWorkspace openURL:settings])
     [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"x-apple.systempreferences:com.apple.preferences.Bluetooth"]];
   // Background events, so KartPad notices the controller while Settings is in front.
   SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
-  self.status = @"Waiting for the controller… KartPad comes back by itself.";
+  self.status = @"Waiting for the controller…";
   self.needsDisplay = YES;
 }
 - (void)rosterChanged {
-  if (self.choosing || self.arrived) return;
+  const BOOL phone = self.kind == KPPairKind::Phone;
+  // Phones keep coming: the code stays up and each new one is announced in turn.
+  if (self.choosing || (self.arrived && !phone)) return;
   for (KPPadDevice *device in KPControllerRoster.shared.devices) {
     if (device.isKeyboard || [self.before containsObject:device.identifier]) continue;
+    self.before = [self.before setByAddingObject:device.identifier];
     self.arrived = device;
     KartPadCancelGamepadPairing();
     // A new controller with no player takes the first free one.
@@ -1279,7 +1289,8 @@ static BOOL KPPairSearches(KPPairKind kind) {
           [roster move:device toSlot:slot];
           break;
         }
-    self.status = device.slot >= 0 ? [NSString stringWithFormat:@"Connected as %@!", KPPlayerName(device.slot)]
+    self.status = device.slot >= 0 ? [NSString stringWithFormat:@"%@as %@!", phone ? [device.name stringByAppendingString:@" joined "]
+                                                                                        : @"Connected ", KPPlayerName(device.slot)]
                                    : [NSString stringWithFormat:@"%@ connected!", device.name];
     self.busy = NO;
     [roster identify:device];
@@ -1323,24 +1334,63 @@ static BOOL KPPairSearches(KPPairKind kind) {
   KPTextWeight(@"Connect a Controller", CGRectMake(s.origin.x + 56, s.origin.y + 26, 800, 50), 36, KPP->text, NSFontWeightBold,
                NSTextAlignmentLeft);
   if (self.choosing) {
-    KPTextWeight(@"Which kind is it?", CGRectMake(s.origin.x + 58, s.origin.y + 78, 760, 26), 18, KPP->secondaryText,
+    KPTextWeight(@"What are you connecting?", CGRectMake(s.origin.x + 58, s.origin.y + 78, 760, 26), 18, KPP->secondaryText,
                  NSFontWeightMedium, NSTextAlignmentLeft);
-    KPTextWeight(@"Connected one before? Just turn it on.",
+    KPTextWeight(@"Already paired? Turn it on.",
                  CGRectMake(s.origin.x + 56, s.origin.y + 460, 1168, 30), 18, KPP->secondaryText, NSFontWeightRegular);
     return;
   }
-  KPTextWeight(KPPairTitle(self.kind), CGRectMake(s.origin.x + 58, s.origin.y + 78, 760, 26), 18, KPP->secondaryText,
-               NSFontWeightMedium, NSTextAlignmentLeft);
+  // "Controller" under "Connect a Controller" says nothing; which ones does.
+  KPTextWeight(self.kind == KPPairKind::Controller ? @"PlayStation, Switch, Xbox and more" : KPPairTitle(self.kind),
+               CGRectMake(s.origin.x + 58, s.origin.y + 78, 760, 26), 18, KPP->secondaryText, NSFontWeightMedium, NSTextAlignmentLeft);
   // The controller, big, with the steps beside it.
   KPArtState art;
   art.accent = KPP->accentBottom;
   KPPadDevice *arrived = self.arrived;
   if (arrived) art = KPArtStateFor(arrived, arrived.slot >= 0 ? KPPlayerColors[arrived.slot] : KPP->accentBottom);
   KPCard(c, CGRectMake(s.origin.x + 56, s.origin.y + 130, 580, 380), 24);
-  KPDrawControllerArt(c, CGRectMake(s.origin.x + 96, s.origin.y + 170, 500, 300), arrived ? arrived.family : KPPairFamily(self.kind), art,
-                      arrived.systemName);
+  if (self.kind == KPPairKind::Phone) {
+    [self drawPhoneJoin:c];
+    return;
+  }
+  const KPPadFamily family = arrived ? arrived.family : self.kind == KPPairKind::WiiRemote ? KPFamilyWiiRemote : KPFamilyGeneric;
+  KPDrawControllerArt(c, CGRectMake(s.origin.x + 96, s.origin.y + 170, 500, 300), family, art, arrived.systemName);
   KPTextWeight(KPPairSteps(self.kind), CGRectMake(s.origin.x + 700, s.origin.y + 140, 524, 260), 21, KPP->text, NSFontWeightMedium,
                NSTextAlignmentLeft);
+  if (self.kind == KPPairKind::Controller) {
+    CGFloat y = s.origin.y + 196;
+    for (const auto &mode : KPPairModes) {
+      KPTextWeight(mode.brand, CGRectMake(s.origin.x + 700, y, 130, 52), 18, KPP->text, NSFontWeightSemibold, NSTextAlignmentLeft);
+      KPTextWeight(mode.how, CGRectMake(s.origin.x + 836, y, 388, 52), 18, KPP->secondaryText, NSFontWeightRegular, NSTextAlignmentLeft);
+      y += 58;
+    }
+  }
+  const unsigned ink = arrived ? 0x22843f : KPP->accentBottom;
+  if (self.status.length) {
+    if (arrived) KPDrawGlyph(c, KPUIGlyph::Check, CGRectMake(s.origin.x + 700, s.origin.y + 440, 36, 36), ink);
+    KPTextWeight(self.status, CGRectMake(s.origin.x + (arrived ? 748 : 700), s.origin.y + 438, 476, 100), 20, ink, NSFontWeightSemibold,
+                 NSTextAlignmentLeft);
+  }
+}
+// The link as a QR code where the controller would be, the steps beside it, and who has joined.
+// There's no address to type: the link carries this launch's key.
+- (void)drawPhoneJoin:(CGContextRef)c {
+  const CGRect s = self.safe;
+  KPPhoneServer *server = KPPhoneServer.shared;
+  const BOOL touch = self.phoneTouch || !server.hasTiltPage;
+  NSString *url = touch ? server.touchURL : server.tiltURL;
+  const CGRect code = CGRectMake(s.origin.x + 56 + (580 - 340) / 2, s.origin.y + 150, 340, 340);
+  if (url) {
+    [server drawCode:url in:c rect:code];
+  } else {
+    KPFill(c, code, KPP->panel, 18);
+    KPTextWeight(server.problem ?: @"", CGRectInset(code, 30, 130), 20, KPP->secondaryText, NSFontWeightMedium);
+  }
+  KPTextWeight(KPPairSteps(self.kind), CGRectMake(s.origin.x + 700, s.origin.y + 140, 524, 230), 21, KPP->text, NSFontWeightMedium,
+               NSTextAlignmentLeft);
+  KPTextWeight(touch ? @"Touch only. Works offline." : @"Needs internet on the phone.",
+               CGRectMake(s.origin.x + 700, s.origin.y + 380, 524, 50), 17, KPP->secondaryText, NSFontWeightRegular, NSTextAlignmentLeft);
+  KPPadDevice *arrived = self.arrived;
   const unsigned ink = arrived ? 0x22843f : KPP->accentBottom;
   if (self.status.length) {
     if (arrived) KPDrawGlyph(c, KPUIGlyph::Check, CGRectMake(s.origin.x + 700, s.origin.y + 440, 36, 36), ink);

@@ -190,8 +190,8 @@ static void KPRenderUpdateStatus(NSDictionary *status) {
     if ([step isEqualToString:@"downloading"]) {
       title = @"Downloading update";
       detail = [NSString stringWithFormat:@"Getting Retro Rewind %@ in the background.", version];
-    } else if ([step isEqualToString:@"extracting"]) detail = @"Organizing the new game files. Your current version stays available.";
-    else if ([step isEqualToString:@"verifying"]) { title = @"Finishing update"; detail = @"Checking the new app and game files before installation."; }
+    } else if ([step isEqualToString:@"extracting"]) detail = [NSString stringWithFormat:@"Unpacking Retro Rewind %@.", version];
+    else if ([step isEqualToString:@"verifying"]) { title = @"Finishing update"; detail = @"Checking the files."; }
     KPUpdateNotice(title, detail, YES);
     double total = [status[@"totalBytes"] doubleValue], downloaded = [status[@"downloadedBytes"] doubleValue];
     if ([step isEqualToString:@"downloading"] && total > 0) {
@@ -205,7 +205,7 @@ static void KPRenderUpdateStatus(NSDictionary *status) {
           (long)[status[@"patchIndex"] integerValue], (long)count, kpUpdateFootnote.stringValue];
     }
   } else if ([phase isEqualToString:@"ready"] && changed) {
-    KPFinishUpdateNotice(@"Ready when you are", [NSString stringWithFormat:@"Retro Rewind %@ is ready. Restart KartPad whenever you’ve finished playing.", version]);
+    KPFinishUpdateNotice(@"Update ready", [NSString stringWithFormat:@"Restart KartPad to install Retro Rewind %@.", version]);
   } else if ([phase isEqualToString:@"error"] && changed) {
     NSString *kind = status[@"errorKind"];
     NSString *message = [status[@"message"] isKindOfClass:NSString.class] ? status[@"message"] : @"";
@@ -215,19 +215,19 @@ static void KPRenderUpdateStatus(NSDictionary *status) {
         [message isEqualToString:[defaults stringForKey:@"KartPadLocalUpdateLastError"]])) return;
     [defaults setObject:message forKey:@"KartPadLocalUpdateLastError"];
     NSString *title = @"Update couldn’t be prepared";
-    NSString *detail = @"The new app couldn’t be prepared for this Mac. Your current version is ready to play.";
+    NSString *detail = @"The new app couldn’t be prepared for this Mac.";
     NSString *footnote = @"Paused until you try again";
     if ([kind isEqualToString:@"network"]) {
       title = @"Couldn’t reach the update server";
-      detail = @"Check your internet connection and try again. Your current game is still available.";
+      detail = @"Check your internet connection and try again.";
       footnote = @"We’ll check again later";
     } else if ([kind isEqualToString:@"storage"]) {
       title = @"More space needed";
-      detail = @"Free at least 8 GB of disk space, then try again. Your current version is unchanged.";
+      detail = @"Free at least 8 GB of disk space, then try again.";
       footnote = @"We’ll retry next launch";
     } else if ([kind isEqualToString:@"verification"]) {
       title = @"Update wasn’t installed";
-      detail = @"The new files didn’t pass validation. Your current version is unchanged.";
+      detail = @"The new files didn’t pass validation.";
     }
     KPUpdateNotice(title, detail, NO);
     KPUpdateNoticeIcon(@"exclamationmark.circle", NSColor.systemOrangeColor, @"Update failed");
@@ -290,7 +290,7 @@ static BOOL KPActivateLocalUpdate() {
   if (task == nil || ![task launchAndReturnError:&error]) return NO;
   if (installing) {
     kpUpdateDismissed = NO;
-    KPUpdateNotice(@"Installing update", @"KartPad will reopen with the updated app and game files.", YES);
+    KPUpdateNotice(@"Installing update", @"", YES);
     kpUpdateFootnote.stringValue = @"Just a moment…";
     KPShowUpdateNotice();
   }
@@ -319,7 +319,7 @@ static void KPCheckLocalUpdates(BOOL interactive, NSArray<NSString *> *options) 
   kpUpdateInteractive = interactive;
   if (interactive) {
     kpUpdateDismissed = NO;
-    KPUpdateNotice(@"Checking for updates", @"Automatic updates are on. We’ll let you know if there’s something new.", YES);
+    KPUpdateNotice(@"Checking for updates", @"", YES);
     kpUpdatePhase = @"checking";
     KPShowUpdateNotice();
   }
@@ -400,7 +400,7 @@ static void KPFinishLocalUpdateAndQuit(NSString *then, id sender) {
   [kpUpdateDismissTimer invalidate]; kpUpdateDismissTimer = nil;
   NSAlert *alert = [NSAlert new];
   alert.messageText = @"Restart to install the update?";
-  alert.informativeText = @"Finish your race before restarting. KartPad will close, install the update, and reopen.";
+  alert.informativeText = @"Unsaved progress will be lost.";
   [alert addButtonWithTitle:@"Restart"];
   [alert addButtonWithTitle:@"Keep playing"];
   if ([alert runModal] != NSAlertFirstButtonReturn) return;

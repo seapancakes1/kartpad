@@ -210,7 +210,7 @@ static NSArray<NSNumber *> *KPVibrationStrengths() { return @[@0,@0.25,@0.5,@1];
     }
     self.settingsStatus.stringValue=@"Saved. Interpolation limits render resolution to 4×.";
   } else self.settingsStatus.stringValue=[key isEqual:@"video.disabled_post_processing_paths"] ?
-    @"Saved. Bloom changes apply when the next scene loads." : @"Saved. Changes apply immediately.";
+    @"Saved. Bloom changes apply when the next scene loads." : @"Saved.";
   KartPadRequestSettingsReload();
   [self refreshSettings];
 }
@@ -240,7 +240,7 @@ static NSArray<NSNumber *> *KPVibrationStrengths() { return @[@0,@0.25,@0.5,@1];
     self.settingsTabs.delegate=self;
     self.settingsTabs.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;
     [self.settingsPanel.contentView addSubview:self.settingsTabs];
-    self.settingsStatus=[self label:@"Graphics and audio changes save automatically. Controllers has its own Save Profile button."];
+    self.settingsStatus=[self label:@""];
     self.settingsStatus.frame=NSMakeRect(24,10,640,24);
     self.settingsStatus.autoresizingMask=NSViewWidthSizable;
     self.settingsStatus.font=[NSFont systemFontOfSize:11];
@@ -259,13 +259,13 @@ static NSArray<NSNumber *> *KPVibrationStrengths() { return @[@0,@0.25,@0.5,@1];
     [self setting:@"video.resolution_multiplier" label:@"Render resolution" choices:@[@"Auto (window size)",@"Native (1×)",@"1.5×",@"2×",@"3×",@"4×",@"6×",@"8×"] values:@[@0,@1,@1.5,@2,@3,@4,@6,@8] page:graphics y:675];
     [self setting:@"video.display_mode" label:@"Display mode" choices:@[@"Windowed",@"Borderless fullscreen",@"Exclusive fullscreen"] values:@[@"windowed",@"borderless",@"exclusive"] page:graphics y:620];
     [self setting:@"video.frame_interpolation_fps" label:@"Frame interpolation" choices:@[@"Off (60 FPS)",@"120 FPS — experimental",@"180 FPS — experimental"] values:@[@0,@120,@180] page:graphics y:565];
-    [self settingsLabel:@"Interpolation may show visual artifacts. Resolution is limited to 4× when enabled." page:graphics y:505];
+    [self settingsLabel:@"Limits resolution to 4×." page:graphics y:505];
     [self setting:@"video.show_fps" checkbox:@"Show FPS counter" page:graphics y:455];
     [self setting:@"video.disable_copy_filter" checkbox:@"Disable the Wii copy filter (sharper picture)" page:graphics y:405];
     [self setting:@"video.disabled_post_processing_paths" checkbox:@"Disable bloom (applies at the next scene)" page:graphics y:355];
     [self setting:@"video.skip_unready_pipelines" checkbox:@"Skip draws while shaders compile" page:graphics y:305];
     [self setting:@"video.fullscreen_across_notch" checkbox:@"Use full display in borderless fullscreen (including notch area)" page:graphics y:245];
-    [self settingsLabel:@"Requires restart. Uses desktop fullscreen instead of a separate Space. The notch can obscure the image; game aspect ratio is preserved." page:graphics y:185];
+    [self settingsLabel:@"Applies after a restart." page:graphics y:185];
     [self setting:@"video.vsync" checkbox:@"VSync — experimental (requires restart)" page:graphics y:115];
     [self settingsLabel:@"Settings shortcut: Command-comma or F10 (Fn–F10 on media-key keyboards)." page:graphics y:65];
 
@@ -276,7 +276,7 @@ static NSArray<NSNumber *> *KPVibrationStrengths() { return @[@0,@0.25,@0.5,@1];
     for(int i=0;i<5;++i)[self setting:[@"audio." stringByAppendingString:keys[i]] volume:labels[i] page:audio y:620-i*60];
     [self setting:@"audio.muted" checkbox:@"Mute game audio" page:audio y:295];
     [self setting:@"audio.mix_worker" checkbox:@"Mix audio on a worker thread" page:audio y:245];
-    [self settingsLabel:@"The worker normally improves performance. Turn it off when troubleshooting audio problems." page:audio y:180];
+    [self settingsLabel:@"Turn off only if sound crackles." page:audio y:180];
 
     // Controllers: the mapping panel, then vibration and the controller shortcuts below it.
     NSView *controllers=[self settingsPage:@"Controllers"];
@@ -296,13 +296,12 @@ static NSArray<NSNumber *> *KPVibrationStrengths() { return @[@0,@0.25,@0.5,@1];
     [controllers addSubview:self.vibrationChoice];
     NSButton *test=[NSButton buttonWithTitle:@"Test Vibration" target:self action:@selector(testVibration:)];
     test.frame=NSMakeRect(384,334,160,32);[controllers addSubview:test];
-    [self settingsLabel:@"Controllers that can vibrate do when the game rumbles, for example when you crash or get hit. If nothing happens, check that rumble is on in the game’s own options." page:controllers y:280];
-    [self settingsHeading:@"Controller shortcuts" page:controllers y:224];
-    [self settingsLabel:@"Hold buttons on any controller to open these without a keyboard or mouse." page:controllers y:174];
+    [self settingsLabel:@"If nothing happens, turn on rumble in the game’s options." page:controllers y:280];
+    [self settingsHeading:@"Controller shortcuts" page:controllers y:256];
     // One line for each shortcut: on or off, its buttons, how long to hold them, and changing them.
     NSMutableArray *switches=[NSMutableArray array],*names=[NSMutableArray array],*choose=[NSMutableArray array],*holds=[NSMutableArray array];
     for(int kind=0;kind<KPPadShortcutCount;++kind) {
-      const CGFloat y=150-kind*44;
+      const CGFloat y=220-kind*44;
       NSButton *on=[NSButton checkboxWithTitle:[@"Open " stringByAppendingString:KPPadShortcuts[kind].opens] target:self action:@selector(padShortcutChanged:)];
       on.frame=NSMakeRect(24,y,150,28);on.tag=kind;[controllers addSubview:on];[switches addObject:on];
       NSTextField *buttons=[self label:@""];buttons.frame=NSMakeRect(180,y+2,200,20);
@@ -324,13 +323,11 @@ static NSArray<NSNumber *> *KPVibrationStrengths() { return @[@0,@0.25,@0.5,@1];
 #if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)
     [self settingsButton:@"Choose Retro Rewind Data…" action:@selector(chooseRetroRewindData:) page:data y:570];
 #endif
-    [self settingsLabel:@"Game-data changes apply after restarting. Existing saves are preserved." page:data y:505];
+    [self settingsLabel:@"Applies after a restart." page:data y:505];
     [self settingsButton:@"Miis…" action:@selector(showMiis:) page:data y:440];
-    [self settingsLabel:@"Create, edit and import Miis, and rename, relink or delete licenses. To open Miis from a controller, see Controllers → Controller shortcuts." page:data y:395];
-    self.backgroundPauseSwitch=[NSButton checkboxWithTitle:@"Pause the game while another app is in front" target:self action:@selector(backgroundPauseChanged:)];
+    self.backgroundPauseSwitch=[NSButton checkboxWithTitle:@"Pause when you switch apps" target:self action:@selector(backgroundPauseChanged:)];
     self.backgroundPauseSwitch.frame=NSMakeRect(24,350,715,28);[data addSubview:self.backgroundPauseSwitch];
-    [self settingsLabel:@"It keeps going while it loads and while you’re online. Turn this off to keep playing with a controller while another app is in front." page:data y:300];
-    [self setting:@"discord.enabled" checkbox:@"Show what you’re playing in your Discord status" page:data y:255];
+    [self setting:@"discord.enabled" checkbox:@"Discord Rich Presence" page:data y:255];
     [self settingsButton:@"Open Application Support" action:@selector(showApplicationSupport:) page:data y:195];
     [self settingsButton:@"Open Cache Folder" action:@selector(showCache:) page:data y:150];
     [self settingsButton:@"Control Reference…" action:@selector(showControls:) page:data y:80];
@@ -339,11 +336,10 @@ static NSArray<NSNumber *> *KPVibrationStrengths() { return @[@0,@0.25,@0.5,@1];
     [self settingsLabel:@"Advanced & Diagnostics" page:advanced y:680].font=[NSFont boldSystemFontOfSize:19];
     [self settingsButton:@"Save Diagnostics Report…" action:@selector(saveDiagnostics:) page:advanced y:615];
     [self settingsButton:@"Controller Compatibility Tools…" action:@selector(showControllerCompatibility:) page:advanced y:540];
-    [self settingsLabel:@"Opens the in-game tools for unmapped joysticks, GameCube adapters and legacy presets. Standard controllers use the Controllers tab." page:advanced y:480];
     [self settingsButton:@"Pair Wii Remote…" action:@selector(pairWiimote:) page:advanced y:410];
-    [self settingsLabel:@"Experimental original Wii Remote / Nunchuk support. Pairing enables the existing experimental driver." page:advanced y:345];
+    [self settingsLabel:@"Experimental." page:advanced y:345];
     [self settingsButton:@"Private Wii Server…" action:@selector(showPrivateServer:) page:advanced y:275];
-    [self settingsLabel:@"Private server changes apply on the next launch." page:advanced y:215];
+    [self settingsLabel:@"Applies after a restart." page:advanced y:215];
     [self.settingsPanel center];
     __weak KartPadMacShellController *weak=self;
     KartPadMiiPadSetSettings(self.settingsPanel,self.settingsTabs,^{
