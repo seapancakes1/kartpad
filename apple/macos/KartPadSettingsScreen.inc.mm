@@ -55,6 +55,9 @@ static std::string KPFloatText(float value) {
 @property(nonatomic, strong) NSArray<NSArray<KPSettingRow *> *> *rows;
 @property(nonatomic) RuntimeUserConfig config;
 @property(nonatomic, strong) KPUIButton *done;
+// A level row being dragged shows slidingLevel until it's saved (KPSaveSlideSoon).
+@property(nonatomic, strong) KPSettingRow *sliding;
+@property(nonatomic) float slidingLevel;
 @end
 
 // Where a level row draws its track (unpressed), for the drawing and the pointer alike.
@@ -69,6 +72,8 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
 - (NSArray<NSString *> *)categoryNames { return @[@"Picture", @"Sound", @"Controls", @"Game", @"Advanced"]; }
 
 - (void)reloadConfig { self.config = RuntimeConfigFile::LoadConfigFile(); }
+- (float)levelOf:(KPSettingRow *)row { return row == self.sliding ? self.slidingLevel : row.level(); }
+- (void)willDisappear { KPSaveSlide(); }
 
 - (void)build {
   self.solid = YES;
@@ -209,7 +214,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
   }
   if (onRow && button == KartPadMiiPadLeft) {
     KPSettingRow *row = [self rowAt:focus.tag2];
-    const BOOL atStart = (row.kind == KPRowChoice && row.index() <= 0) || (row.kind == KPRowSlider && row.level() <= 0.001f);
+    const BOOL atStart = (row.kind == KPRowChoice && row.index() <= 0) || (row.kind == KPRowSlider && [self levelOf:row] <= 0.001f);
     if (row.kind == KPRowAction || row.kind == KPRowSwitch || atStart) [KPOverlay() focus:self.tabs[self.category] sound:YES];
     else [self adjust:focus.tag2 by:-1];
     return YES;
@@ -233,6 +238,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
 - (BOOL)adjust:(NSInteger)visible by:(int)direction {
   KPSettingRow *row = [self rowAt:visible];
   if (row == nil) return NO;
+  KPSaveSlide();
   switch (row.kind) {
     case KPRowSwitch: return NO;  // only A flips a switch
     case KPRowChoice: {
@@ -261,22 +267,31 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
   return YES;
 }
 
-// A level row's track follows the pointer.
+// A level row's track follows the pointer; the level is saved once the drag rests or ends.
 - (BOOL)slide:(NSInteger)visible to:(CGPoint)point face:(CGRect)r began:(BOOL)began {
   KPSettingRow *row = [self rowAt:visible];
   float next;
   if (row.kind != KPRowSlider || !KPSliderLevel(KPSettingsSliderTrack(r), point, began, &next)) return NO;
-  const float now = row.level();
+  const float now = [self levelOf:row];
   if (std::fabs(next - now) < 0.005f) return YES;
   if (std::floor(next * 20) != std::floor(now * 20)) KPUIPlay(KPUISound::Tick);
-  row.setLevel(next);
-  [self refreshRows];
+  self.sliding = row;
+  self.slidingLevel = next;
+  __weak KPSettingsScreen *weakSelf = self;
+  KPSaveSlideSoon(^{
+    row.setLevel(next);
+    KPSettingsScreen *screen = weakSelf;
+    if (screen.sliding == row && screen.slidingLevel == next) screen.sliding = nil;
+    [screen refreshRows];
+  });
+  self.rowButtons[visible].needsDisplay = YES;
   return YES;
 }
 
 - (void)press:(NSInteger)visible {
   KPSettingRow *row = [self rowAt:visible];
   if (row == nil) return;
+  KPSaveSlide();
   switch (row.kind) {
     case KPRowSwitch: row.setOn(!row.on()); break;
     case KPRowChoice: row.setIndex((row.index() + 1) % (NSInteger)row.choices.count); break;
@@ -330,18 +345,8 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
       break;
     }
     case KPRowSlider: {
-      const float level = row.level();
-      const CGRect track = CGRectOffset(KPSettingsSliderTrack(r), 0, dy);
-      KPFill(c, CGRectOffset(track, 0, -1), KPP->ledge, 6);
-      KPFill(c, track, KPP->well, 6);
-      KPStroke(c, track, KPP->buttonStroke, 1, 6);
-      const CGFloat fill = track.size.width * level;
-      if (fill > 2) KPGradientFill(c, CGRectMake(track.origin.x + 1, track.origin.y + 1, fill - 2, track.size.height - 2), 5,
-                                   KPP->accentTop, KPP->accentBottom);
-      const CGRect knob = CGRectMake(track.origin.x + fill - 11, mid - 11, 22, 22);
-      KPFill(c, CGRectOffset(knob, 0, 1.5), 0x000000, 11, 0.22);
-      KPGradientFill(c, knob, 11, 0xffffff, 0xe3e8eb);
-      KPStroke(c, knob, KPP->buttonStroke, 1, 11);
+      const float level = [self levelOf:row];
+      KPDrawSlider(c, CGRectOffset(KPSettingsSliderTrack(r), 0, dy), level);
       KPTextWeight([NSString stringWithFormat:@"%d%%", (int)std::lround(level * 100)], CGRectMake(right - 62, mid - 13, 62, 26), 18,
                    KPP->text, NSFontWeightSemibold, NSTextAlignmentRight);
       break;
@@ -608,10 +613,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
   }
   {
     KPSettingRow *row = KPRow(@"Mario Kart Wii files", @"Needs a mouse.", KPRowAction);
-    row.value = ^NSString * {
-      NSError *error = nil;
-      return ValidateExtractedRoot(ConfiguredGameDataRoot(), &error) == nil && error == nil ? @"Ready" : @"Needs attention";
-    };
+    row.value = ^NSString * { return KPGameDataReady() ? @"Ready" : @"Needs attention"; };
     row.run = ^{
       [KPOverlay() closeAll];
       dispatch_async(dispatch_get_main_queue(), ^{ [Controller() chooseGameData:nil]; });

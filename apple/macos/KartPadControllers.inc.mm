@@ -16,6 +16,8 @@ static SDL_Scancode KPMacPhysicalScancode(unsigned short keyCode, bool isoKeyboa
 #undef BOOL
 #include "wup028_adapter.h"
 #include <array>
+#include <string>
+#include <unordered_map>
 #include <dolphin/controller_binding.h>
 
 static constexpr std::array<PADButton, 12> KPButtons = {
@@ -68,6 +70,13 @@ static NSString *KPButtonLabel(SDL_Gamepad *pad, int button) {
   }
 }
 static NSString *KPProfileKey(SDL_Gamepad *pad) {
+  // Kept for each connection (and worked out again if its serial turns up late): the Controllers
+  // window's tick asks for every pad every frame.
+  static std::unordered_map<SDL_JoystickID, std::pair<std::string, NSString *>> known;
+  const SDL_JoystickID connection = SDL_GetGamepadID(pad);
+  const char *padSerial = SDL_GetGamepadSerial(pad);
+  const auto found = known.find(connection);
+  if (found != known.end() && found->second.first == (padSerial ?: "")) return found->second.second;
   char guid[33]{};
   SDL_GUIDToString(SDL_GetJoystickGUID(SDL_GetGamepadJoystick(pad)), guid, sizeof(guid));
   // Serial improves identity for identical models; hash it rather than storing it.
@@ -78,6 +87,8 @@ static NSString *KPProfileKey(SDL_Gamepad *pad) {
   CC_SHA256(data.bytes, (CC_LONG)data.length, digest);
   NSMutableString *key = [NSMutableString string];
   for (auto byte : digest) [key appendFormat:@"%02x", byte];
+  if (known.size() > 64) known.clear();
+  known[connection] = {padSerial ?: "", key.copy};
   return key;
 }
 

@@ -201,6 +201,10 @@ static void KPHintDeviceChanged();  // KartPadHints.inc.mm
   NSTimeInterval _startedAt, _keyboardMovedAt;
   NSArray<NSDictionary *> *_miiRecords;
   NSTimeInterval _miiRecordsAt;
+  // The records by create ID (hex), and each controller's Mii as last looked up (NSNull for none),
+  // until the records are read again or who plays as whom changes: cards draw it every frame.
+  NSDictionary<NSString *, NSDictionary *> *_miiByID;
+  NSMutableDictionary<NSString *, id> *_miiForDevice;
   // Who was on which player at the last refresh. The devices themselves are updated in place, so
   // comparing them with the previous list would never see a controller change player.
   NSString *_seating;
@@ -226,6 +230,7 @@ static void KPHintDeviceChanged();  // KartPadHints.inc.mm
     _devices = @[];
     _listeners = [NSHashTable weakObjectsHashTable];
     _benched = [NSMutableSet set];
+    _miiForDevice = [NSMutableDictionary dictionary];
   }
   return self;
 }
@@ -426,6 +431,7 @@ static void KPHintDeviceChanged();  // KartPadHints.inc.mm
   const BOOL changed = added.count || gone.count || ![seating isEqualToString:_seating ?: @""];
   _seating = seating;
   self.devices = all;
+  if (changed) [_miiForDevice removeAllObjects];
   // A controller coming or going makes the runtime lay Config.toml's shared bindings over every port
   // again; each controller's own profile goes back on top on the next tick.
   if (added.count || gone.count) [KPControllers().applied removeAllObjects];
@@ -550,6 +556,13 @@ static void KPHintDeviceChanged();  // KartPadHints.inc.mm
   if (_miiRecords == nil || now - _miiRecordsAt > 5) {
     _miiRecords = KartPadMiiRecords(nil);
     _miiRecordsAt = now;
+    NSMutableDictionary<NSString *, NSDictionary *> *byID = [NSMutableDictionary dictionary];
+    for (NSDictionary *record in _miiRecords) {
+      NSString *key = KPHex(record[@"createIdBytes"]);
+      if (byID[key] == nil) byID[key] = record;
+    }
+    _miiByID = byID;
+    [_miiForDevice removeAllObjects];
   }
   return _miiRecords;
 }
@@ -557,14 +570,15 @@ static void KPHintDeviceChanged();  // KartPadHints.inc.mm
 - (NSString *)miiKeyFor:(KPPadDevice *)device { return device.isKeyboard ? @"keyboard" : device.profileKey; }
 - (NSDictionary *)miiRecordFor:(KPPadDevice *)device {
   if (device == nil) return nil;
+  [self miiRecords];  // read again every few seconds
+  if (id known = _miiForDevice[device.identifier]) return known == NSNull.null ? nil : known;
   NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
   NSString *wanted = nil;
   if (!device.twin) wanted = [defaults dictionaryForKey:KPControllerMiisKey][[self miiKeyFor:device]];
   if (!wanted && device.slot >= 0) wanted = [defaults dictionaryForKey:KPPlayerMiisKey][[@(device.slot) stringValue]];
-  if (![wanted isKindOfClass:NSString.class]) return nil;
-  for (NSDictionary *record in self.miiRecords)
-    if ([KPHex(record[@"createIdBytes"]) isEqualToString:wanted]) return record;
-  return nil;
+  NSDictionary *record = [wanted isKindOfClass:NSString.class] ? _miiByID[wanted] : nil;
+  if (device.identifier) _miiForDevice[device.identifier] = record ?: NSNull.null;
+  return record;
 }
 - (NSData *)miiFor:(KPPadDevice *)device { return [self miiRecordFor:device][@"mii"]; }
 - (void)setMii:(NSDictionary *)record forDevice:(KPPadDevice *)device {
@@ -577,6 +591,7 @@ static void KPHintDeviceChanged();  // KartPadHints.inc.mm
   if (value) map[entry] = value;
   else [map removeObjectForKey:entry];
   [defaults setObject:map forKey:key];
+  [_miiForDevice removeAllObjects];
   for (id<KPRosterListener> listener in self.listeners.allObjects) [listener rosterChanged];
 }
 

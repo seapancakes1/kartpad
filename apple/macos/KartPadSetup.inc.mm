@@ -410,14 +410,8 @@ static void KPSetupSearch(void (^progress)(NSString *place), void (^found)(KPSet
   const CGFloat top = iconRect.origin.y + iconSize + 22;
   KPTextWeight(heading, CGRectMake(s.origin.x + 100, top, 1080, 56), 42, KPP->text, NSFontWeightBold);
   KPTextWeight(line, CGRectMake(s.origin.x + 200, top + 62, 880, 84), 21, KPP->secondaryText, NSFontWeightMedium);
-  if (self.step == KPSetupSearching) {
-    const CGFloat phase = fmod((CACurrentMediaTime() - self.started) / 1.2, 1);
-    for (int dot = 0; dot < 5; ++dot) {
-      const CGFloat lift = std::max(0.0, sin(phase * 2 * M_PI - dot * 0.7)) * 14;
-      KPSetInk(c, KPPlayerColors[dot % 4]);
-      CGContextFillEllipseInRect(c, CGRectMake(CGRectGetMidX(s) - 80 + dot * 34, s.origin.y + 420 - lift, 22, 22));
-    }
-  }
+  if (self.step == KPSetupSearching)
+    KPDrawLoadingDots(c, CGPointMake(CGRectGetMidX(s) - 80, s.origin.y + 420), fmod((CACurrentMediaTime() - self.started) / 1.2, 1));
   if (self.message.length)
     KPTextWeight(self.message, CGRectMake(s.origin.x + 200, s.origin.y + 650, 880, 30), 17, KPP->danger, NSFontWeightSemibold);
   KPDrawHints(c, CGRectMake(s.origin.x + 52, s.origin.y + 680, 1176, 24), {{KartPadMiiPadConfirm, @"Choose"}, {KartPadMiiPadBack, @"Back"}},

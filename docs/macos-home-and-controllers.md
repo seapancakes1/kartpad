@@ -91,8 +91,8 @@ category. Left from a switch (or a choice already at its first step) goes back
 to the categories, and so does B before it leaves Settings.
 
 **The game is silent** while one of these screens holds it, so a setting that
-briefly lets the game run to apply (picture quality, volume) doesn't play a blip
-of it. KartPad's own menu sounds still play.
+briefly lets the game run to apply (picture quality, full screen) doesn't play a
+blip of it. KartPad's own menu sounds still play.
 Every setting from before is here, under plain names. Advanced keeps the
 technical tools (private server, controller compatibility, diagnostics, the
 classic Settings window).
@@ -152,15 +152,22 @@ button press.
   a screen is open. `settings_overlay::WaitWhileOverlayOpen` (submodule) then
   holds the game at the VI retrace while still taking Aurora's events and
   calling `KartPadControllersTick`, so controllers can connect and the window
-  can change. A settings change lets one frame through to apply. It doesn't
-  hold while loading or online.
+  can change. Settings changes apply while it holds; one to the picture (full
+  screen, picture quality, smoother motion, its filters and effects) lets one
+  frame through to show it. A slider dragged with the pointer saves its level
+  once the drag rests or ends. It doesn't hold while loading or online.
 - **Input.** While a screen is open the game gets nothing: the GameCube pad
   layer was already blocked; the keyboard's Wii Remote path and real Wii
   Remotes now honour `InputBindings::InputBlocked()` too (`kpad.cpp`,
   `wii_remote_input.cpp`). A Wii Remote's HOME never reaches the game (its
   HOME Menu would end the process). Esc is no longer the keyboard's Wii A.
   Confirm acts on release (pads) or key-up (keyboard), so nothing is held when
-  the game carries on.
+  the game carries on. As the last screen closes the game has its input back
+  at once; only what is still held then (the press that closed it, a button
+  another player is holding, a stick past half way) stays out of the game until
+  it's let go, pad by pad and button by button: Aurora's pad layer does it for
+  GameCube pads (`PADBlockInput`), `GameKeyboardState` for keys and
+  `ReadKpadSample` for Wii Remotes, armed by `ApplyInputBlockState`.
 - **Pads** are read by the existing reader in `KartPadMacMiis.inc.mm`, which
   now covers Wii Remotes, uses each pad's own A/B as confirm and back, and
   hands presses to the screen on top. While Controllers waits for a press on a

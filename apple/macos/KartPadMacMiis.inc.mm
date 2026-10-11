@@ -49,20 +49,30 @@ static NSInteger KPAuxiliaryWindowLevel() {
 // Once per launch, and not if another KartPad window (Settings, say) already has it.
 static void KPFocusGameWindowAtLaunch() {
   static bool done;
+  if (done) return;
   NSWindow *game = KPGameWindow();
-  if (done || game == nil) return;
+  if (game == nil) return;
   done = true;
   // SDL's app delegate ignores the first "became active" it hears (so a window created minimized
   // stays so), then restores a minimized full-screen window on each one after. KartPad was active
   // before SDL arrived (KartPadMacShellPrepareGameData), so that first one has been had already;
-  // otherwise coming back to an exclusive full-screen game once would leave it minimized.
+  // otherwise coming back to an exclusive full-screen game once would leave it minimized. SDL keeps
+  // the flag in a public instance variable of its delegate, and no SDL call or hint sets it (SDL sets
+  // it itself only when the app already had a delegate, which would lose SDL's quit handling). So
+  // it's set only where it is still a BOOL by that name: an SDL that renames or drops it leaves the
+  // first activation to SDL rather than throwing.
   NSObject *delegate = (NSObject *)NSApp.delegate;
-  if ([NSStringFromClass(delegate.class) isEqualToString:@"SDL3AppDelegate"]) {
+  Ivar flag = [NSStringFromClass(delegate.class) isEqualToString:@"SDL3AppDelegate"]
+      ? class_getInstanceVariable(delegate.class, "seenFirstActivate") : nullptr;
+  const char *type = flag ? ivar_getTypeEncoding(flag) : nullptr;
+  if (type != nullptr && strcmp(type, @encode(BOOL)) == 0) {
     @try {
       [delegate setValue:@YES forKey:@"seenFirstActivate"];
     } @catch (NSException *exception) {
-      NSLog(@"[KartPad] SDL's activation flag wasn't found: %@", exception.reason);
+      NSLog(@"[KartPad] SDL's activation flag couldn't be set: %@", exception.reason);
     }
+  } else if (delegate != nil) {
+    NSLog(@"[KartPad] SDL's activation flag wasn't found on %@", delegate.class);
   }
   NSWindow *key = NSApp.keyWindow;
   if (key != nil && key != game) return;
@@ -157,9 +167,11 @@ static void KPCenterOnGameScreen(NSWindow *window) {
 @end
 
 // Controllers on the Miis window, the Mii editor and Settings (KartPadMiiGamepad.inc.mm decides what
-// each press does). While one is open the game ignores the pads, and it keeps ignoring them until
-// they are let go, so the B that closes the window doesn't also go back in the game. A timer reads
-// them, since the game loop (and its pad updates) stops while an alert or menu runs its own loop.
+// each press does). While one is open the game ignores the pads. Once none is, the game has them
+// again at once; the runtime keeps from it only what is still held (the B that closed the window),
+// pad by pad and button by button until each is let go (settings_overlay.cpp ApplyInputBlockState).
+// A timer reads them, since the game loop (and its pad updates) stops while an alert or menu runs
+// its own loop.
 static NSTimer *KPMiiPadTimer;
 // When the game loop last ran; after that stops, the reader updates the pads itself.
 static NSTimeInterval KPGameLoopTime;
@@ -179,9 +191,23 @@ static constexpr uint32_t KPMiiPadDirections =
     1u << KartPadMiiPadUp | 1u << KartPadMiiPadDown | 1u << KartPadMiiPadLeft | 1u << KartPadMiiPadRight;
 static bool KPPadCapturing();
 
+// The connected pads, read once per turn of the game loop (KartPadControllersTick) for the ticks that
+// look at every pad each frame (HOME's button, joining by pressing); read again by the next turn.
+static std::vector<SDL_JoystickID> KPTickPads;
+static bool KPTickPadsRead;
+static const std::vector<SDL_JoystickID> &KPConnectedPads() {
+  if (!KPTickPadsRead) {
+    KPTickPadsRead = true;
+    int count = 0;
+    SDL_JoystickID *ids = SDL_GetGamepads(&count);
+    KPTickPads.assign(ids, ids + (ids ? count : 0));
+    SDL_free(ids);
+  }
+  return KPTickPads;
+}
+
 // The Settings panel is the Controllers panel too.
 static bool KPPadWindowsVisible() { return KartPadMiiWindowsVisible() || KPControllers().panel.visible || KPOverlayActive(); }
-static bool KPMiiPadOwnsInput() { return KPMiiPadOwned || KPPadWindowsVisible(); }
 
 // The buttons a pad plays the game's A, B, X and Y with, which menus confirm, go back, and do X and Y
 // with (so a remapped pad confirms with its new A). A pad that isn't playing has the runtime's default
@@ -297,6 +323,7 @@ static void KPMiiPadPoll() {
   if (now - KPGameLoopTime > 0.1) {
     SDL_UpdateGamepads();
     // The game loop isn't calling in (an alert's loop, a stall): HOME still answers.
+    KPTickPadsRead = false;
     KPHomeTick();
   }
   const bool visible = KPPadWindowsVisible();
@@ -322,14 +349,15 @@ static void KPMiiPadPoll() {
   if (pressedBy) KPPadLastPresser = pressedBy;
   // Settings → Controllers shows the controller in use, so it can choose its own player.
   if (listening && pressedBy && KPControllers().panel.keyWindow) [KPControllers() followPad:pressedBy];
-  if (visible) {
-    KPMiiPadOwned = true;
-  } else if (!anyHeld) {
+  // The last window closed: the pads go back to the game straight away (what's still held stays out
+  // of it in the runtime), and the reader stops.
+  if (!visible) {
     KPMiiPadOwned = false;
     [KPMiiPadTimer invalidate];
     KPMiiPadTimer = nil;
     return;
   }
+  KPMiiPadOwned = true;
   for (int button = 0; button < KartPadMiiPadButtonCount; ++button) {
     if (fire & (1u << button)) KPMiiPadSend((KartPadMiiPadButton)button, YES);
     if (button == KartPadMiiPadConfirm && (released & (1u << button))) KPMiiPadSend(KartPadMiiPadConfirm, NO);
@@ -391,11 +419,14 @@ static uint64_t KPPadShortcutButtons(int kind) {
         buttons |= 1ull << [button intValue];
   return buttons ? buttons : KPPadShortcuts[kind].fallback;
 }
+// The tick's copy of each shortcut's buttons, read again when the defaults change.
+static bool KPPadShortcutButtonsRead;
 static void KPPadShortcutSetButtons(int kind, uint64_t buttons) {
   NSMutableArray *list = [NSMutableArray array];
   for (int button = 0; button < SDL_GAMEPAD_BUTTON_COUNT; ++button)
     if (buttons & (1ull << button)) [list addObject:@(button)];
   [NSUserDefaults.standardUserDefaults setObject:list forKey:KPPadShortcuts[kind].buttonsKey];
+  KPPadShortcutButtonsRead = false;
 }
 static NSTimeInterval KPPadShortcutHold(int kind) {
   const double seconds = [NSUserDefaults.standardUserDefaults doubleForKey:KPPadShortcuts[kind].holdKey];
@@ -436,15 +467,30 @@ static void KPPadBeginCapture(void (^done)(uint64_t buttons)) {
 static void KPPadCancelCapture() { KPPadCapture = nil; }
 
 static void KPPadShortcutsTick() {
-  uint64_t buttons[KPPadShortcutCount], held = 0;
+  // Every frame: the buttons come from the defaults only when those change, and only the buttons the
+  // shortcuts use are read (all of them while Settings is choosing new ones).
+  static uint64_t buttons[KPPadShortcutCount];
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    [NSNotificationCenter.defaultCenter addObserverForName:NSUserDefaultsDidChangeNotification object:nil queue:nil
+                                                usingBlock:^(NSNotification *note) {
+      (void)note;
+      KPPadShortcutButtonsRead = false;
+    }];
+  });
+  if (!KPPadShortcutButtonsRead) {
+    KPPadShortcutButtonsRead = true;
+    for (int kind = 0; kind < KPPadShortcutCount; ++kind) buttons[kind] = KPPadShortcutButtons(kind);
+  }
+  const uint64_t wanted = KPPadCapture ? ~0ull : buttons[KPPadShortcutMiis] | buttons[KPPadShortcutSettings];
+  uint64_t held = 0;
   bool chord[KPPadShortcutCount] = {};
-  for (int kind = 0; kind < KPPadShortcutCount; ++kind) buttons[kind] = KPPadShortcutButtons(kind);
   for (unsigned i = 0; i < PADCount(); ++i) {
     SDL_Gamepad *pad = PADGetSDLGamepadForIndex(i);
     if (pad == nullptr) continue;
     uint64_t down = 0;
     for (int button = 0; button < SDL_GAMEPAD_BUTTON_COUNT; ++button)
-      if (SDL_GetGamepadButton(pad, (SDL_GamepadButton)button)) down |= 1ull << button;
+      if ((wanted & (1ull << button)) && SDL_GetGamepadButton(pad, (SDL_GamepadButton)button)) down |= 1ull << button;
     held |= down;
     for (int kind = 0; kind < KPPadShortcutCount; ++kind) chord[kind] |= (down & buttons[kind]) == buttons[kind];
   }
@@ -496,6 +542,7 @@ static void KPPadShortcutsTick() {
 extern "C" void KartPadControllersTick() {
   @autoreleasepool {
     KPGameLoopTime = NSProcessInfo.processInfo.systemUptime;
+    KPTickPadsRead = false;
     KPFocusGameWindowAtLaunch();
     [KPControllers() tick];
     KPMiiPadTick();
@@ -507,5 +554,6 @@ extern "C" void KartPadControllersTick() {
   }
 }
 // The runtime keeps pad and keyboard input from the game (and the pointer visible) while this is
-// true: the Controllers window is open, or the pads belong to the Mii windows.
-extern "C" bool KartPadControllersVisible() { return KPControllers().panel.visible || KPMiiPadOwnsInput(); }
+// true: one of the windows or screens the pads drive is open. Only that long: as it closes the game
+// has its input back, less what is still held (settings_overlay.cpp ApplyInputBlockState).
+extern "C" bool KartPadControllersVisible() { return KPPadWindowsVisible(); }

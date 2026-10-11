@@ -292,12 +292,76 @@ static NSString *ValidateExtractedRoot(NSString *root, NSError **error) {
       @"for it to finish. Then choose it again.");
 }
 
-static NSString *ConfiguredGameDataRoot() {
-  const RuntimeUserConfig config = RuntimeConfigFile::LoadConfigFile();
+static NSString *GameDataRootIn(const RuntimeUserConfig &config) {
   if (!config.dvdRoot || config.dvdRoot->empty()) return nil;
   std::filesystem::path root(*config.dvdRoot);
   if (root.is_relative()) root = RuntimeConfigFile::ResolveConfigPath().parent_path() / root;
   return [NSString stringWithUTF8String:root.lexically_normal().string().c_str()];
+}
+
+static NSString *ConfiguredGameDataRoot() { return GameDataRootIn(RuntimeConfigFile::LoadConfigFile()); }
+
+// A file as stat sees it, to tell whether it has changed since: which file it is, its size and when
+// it was written. All zero for one that isn't there.
+struct KPFileStamp {
+  dev_t device = 0;
+  ino_t inode = 0;
+  off_t size = 0;
+  long seconds = 0, nanoseconds = 0;
+  bool operator==(const KPFileStamp &other) const {
+    return device == other.device && inode == other.inode && size == other.size && seconds == other.seconds &&
+           nanoseconds == other.nanoseconds;
+  }
+};
+static KPFileStamp KPStampFile(NSString *path) {
+  struct stat info {};
+  if (path.length == 0 || stat(path.fileSystemRepresentation, &info) != 0) return {};
+  return {info.st_dev, info.st_ino, info.st_size, (long)info.st_mtimespec.tv_sec, (long)info.st_mtimespec.tv_nsec};
+}
+
+// Config.toml for the folders it names, read again only when the file has changed (each save
+// replaces it): screens ask as they draw.
+static RuntimeUserConfig KPConfigForFolders() {
+  static KPFileStamp stamp;
+  static RuntimeUserConfig config;
+  static bool read;
+  const KPFileStamp now = KPStampFile(@(RuntimeConfigFile::PathToUtf8(RuntimeConfigFile::ResolveConfigPath()).c_str()));
+  if (!read || !(now == stamp)) {
+    config = RuntimeConfigFile::LoadConfigFile();
+    stamp = now;
+    read = true;
+  }
+  return config;
+}
+
+// A full check of a game's files (a few SHA-256s, and for Mario Kart Wii a look at every file its
+// disc lists) for a screen that shows the answer as it draws: run again only when the folder, or one
+// of the files the check reads, has changed since. That covers KartPad's own choosing, setting up
+// and downloading. (A file inside going missing shows at the next launch, whose check is full.)
+struct KPFilesCheck {
+  NSString *root;
+  std::vector<KPFileStamp> stamps;
+  bool known = false, ready = false;
+};
+static bool KPFilesReady(KPFilesCheck &check, NSString *root, NSArray<NSString *> *files, bool (^validate)(void)) {
+  std::vector<KPFileStamp> stamps;
+  for (NSString *file in files) stamps.push_back(KPStampFile([root stringByAppendingPathComponent:file]));
+  if (check.known && (check.root == root || [check.root isEqualToString:root]) && stamps == check.stamps) return check.ready;
+  check.root = root;
+  check.stamps = stamps;
+  check.known = true;
+  check.ready = validate();
+  return check.ready;
+}
+
+// Whether the configured Mario Kart Wii files pass ValidateExtractedRoot (Settings shows it).
+static BOOL KPGameDataReady() {
+  static KPFilesCheck check;
+  NSString *root = GameDataRootIn(KPConfigForFolders());
+  return KPFilesReady(check, root, @[@"sys/boot.bin", @"sys/fst.bin", @"sys/main.dol", @"files/rel/StaticR.rel"], ^bool {
+    NSError *error = nil;
+    return ValidateExtractedRoot(root, &error) == nil && error == nil;
+  });
 }
 
 static BOOL WriteGameDataRoot(NSString *root) {
@@ -310,13 +374,14 @@ static BOOL WriteGameDataRoot(NSString *root) {
 }
 
 #if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)
-static NSString *ConfiguredRetroRewindRoot() {
-  const RuntimeUserConfig config = RuntimeConfigFile::LoadConfigFile();
+static NSString *RetroRewindRootIn(const RuntimeUserConfig &config) {
   if (!config.retroRewindRoot || config.retroRewindRoot->empty()) return nil;
   std::filesystem::path root(*config.retroRewindRoot);
   if (root.is_relative()) root = RuntimeConfigFile::ResolveConfigPath().parent_path() / root;
   return [NSString stringWithUTF8String:root.lexically_normal().string().c_str()];
 }
+
+static NSString *ConfiguredRetroRewindRoot() { return RetroRewindRootIn(RuntimeConfigFile::LoadConfigFile()); }
 
 static NSString *ValidateRetroRewindRoot(NSString *root, NSError **error) {
   if (root.length == 0) {
@@ -347,6 +412,16 @@ static NSString *ValidateRetroRewindRoot(NSString *root, NSError **error) {
     }
   }
   return nil;
+}
+
+// Whether the configured Retro Rewind files pass ValidateRetroRewindRoot (HOME, Settings and setup ask).
+static BOOL KPRetroRewindFilesReady() {
+  static KPFilesCheck check;
+  NSString *root = RetroRewindRootIn(KPConfigForFolders());
+  return KPFilesReady(check, root, @[@KARTPAD_RR_CODE_PUL_PATH, @KARTPAD_RR_XML_PATH], ^bool {
+    NSError *error = nil;
+    return ValidateRetroRewindRoot(root, &error) == nil && error == nil;
+  });
 }
 
 // The game this launch is playing (KartPadMacShellPrepareGameData sets it).

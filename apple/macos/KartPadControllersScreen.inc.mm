@@ -21,6 +21,19 @@ static KPPadDevice *KPPresser() {
   return [KPControllerRoster.shared deviceWithIdentifier:[NSString stringWithFormat:@"sdl:%u", KPPadLastPresser]];
 }
 
+// What a card or chip shows of its controller (which one, what it's pressing, its battery), so a
+// tick redraws only the ones that changed rather than the whole window.
+static uint64_t KPDeviceLook(KPPadDevice *device) {
+  if (device == nil) return 0;
+  uint64_t look = 0xcbf29ce484222325ull;
+  auto mix = [&look](uint64_t value) { look = (look ^ value) * 0x100000001b3ull; };
+  mix((uint64_t)(uintptr_t)(__bridge void *)device);
+  mix(device.buttons);
+  for (int axis = 0; axis < SDL_GAMEPAD_AXIS_COUNT; ++axis) mix((uint64_t)std::lround(device->axes[axis] * 64));
+  mix((uint64_t)(device.battery + 1) << 2 | (device.charging ? 2 : 0) | (device.wired ? 1 : 0));
+  return look;
+}
+
 // Choosing controllers by pressing on them: one player at a time, or everyone in order.
 typedef NS_ENUM(NSInteger, KPControllersMode) { KPControllersBrowsing, KPControllersAssigning, KPControllersOrdering };
 // The presses those listen for, from each controller.
@@ -46,7 +59,11 @@ enum : unsigned { KPPressConfirm = 1, KPPressBack = 2, KPPressStart = 4 };
 - (void)device:(KPPadDevice *)device pressed:(unsigned)press;
 @end
 
-@implementation KPControllersScreen
+@implementation KPControllersScreen {
+  // What each card and chip showed when it last drew (KPDeviceLook and the like).
+  std::array<uint64_t, KPPlayerCount> _cardLooks;
+  std::vector<uint64_t> _chipLooks;
+}
 
 - (void)build {
   self.solid = YES;
@@ -191,9 +208,21 @@ enum : unsigned { KPPressConfirm = 1, KPPressBack = 2, KPPressStart = 4 };
 - (void)rosterChanged {
   [self layoutDesign];
   for (KPUIButton *card in self.cards) card.needsDisplay = YES;
+  self.needsDisplay = YES;  // "Not playing" over the tray
 }
 
-// Live: the drawings follow the controllers, and a card bounces when its controller is used.
+// What a card shows: its controller, or, choosing by pressing, the player waiting (the next one
+// breathing with the pulse).
+- (uint64_t)cardLook:(int)slot {
+  const BOOL waiting = (self.mode == KPControllersAssigning && slot == self.target) ||
+                       (self.mode == KPControllersOrdering && slot >= (int)self.ordered.count);
+  if (!waiting) return KPDeviceLook([KPControllerRoster.shared deviceInSlot:slot]) ^ (uint64_t)self.mode;
+  const BOOL next = self.mode == KPControllersAssigning || (slot == (int)self.ordered.count && self.finishAt == 0);
+  return 0x5741495400000000ull | (uint64_t)next << 16 | (next ? (uint64_t)std::lround(self.pulse * 40) : 0);
+}
+
+// Live: the drawings follow the controllers, and a card bounces when its controller is used. Only
+// what changed redraws: the background and titles stay as they are.
 - (void)tick {
   KPControllerRoster *roster = KPControllerRoster.shared;
   [roster refresh];
@@ -206,9 +235,19 @@ enum : unsigned { KPPressConfirm = 1, KPPressBack = 2, KPPressStart = 4 };
     }
   }
   if (self.mode != KPControllersBrowsing) [self listen];
-  for (KPUIButton *card in self.cards) card.needsDisplay = YES;
-  for (KPUIButton *chip in self.chips) chip.needsDisplay = YES;
-  self.needsDisplay = YES;
+  for (KPUIButton *card in self.cards) {
+    const uint64_t look = [self cardLook:(int)card.tag2];
+    if (look == _cardLooks[card.tag2]) continue;
+    _cardLooks[card.tag2] = look;
+    card.needsDisplay = YES;
+  }
+  _chipLooks.resize(self.chips.count);
+  for (NSUInteger i = 0; i < self.chips.count; ++i) {
+    const uint64_t look = KPDeviceLook(self.chips[i].tagObject);
+    if (look == _chipLooks[i]) continue;
+    _chipLooks[i] = look;
+    self.chips[i].needsDisplay = YES;
+  }
 }
 
 - (KPUIButton *)viewFor:(KPPadDevice *)device {
@@ -390,6 +429,7 @@ enum : unsigned { KPPressConfirm = 1, KPPressBack = 2, KPPressStart = 4 };
   for (KPPadDevice *each in roster.devices) pads += !each.isKeyboard;
   if (self.ordered.count >= std::min<NSInteger>(pads, KPPlayerCount))
     self.finishAt = NSProcessInfo.processInfo.systemUptime + 1.1;
+  self.needsDisplay = YES;  // "Next: Player 3"
 }
 
 #pragma mark Input
@@ -1298,7 +1338,13 @@ static constexpr CGFloat KPPhoneListTop = 300, KPPhoneRowHeight = 58;
   NSURL *settings = [NSURL URLWithString:@"x-apple.systempreferences:com.apple.BluetoothSettings"];
   if (![NSWorkspace.sharedWorkspace openURL:settings])
     [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"x-apple.systempreferences:com.apple.preferences.Bluetooth"]];
-  // Background events, so KartPad notices the controller while Settings is in front.
+  // Background events, so KartPad notices the controller while Settings is in front. What they were
+  // comes back when this page closes.
+  if (!self.backgroundHintOwned) {
+    const char *hint = SDL_GetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS);
+    self.previousBackgroundHint = hint ? @(hint) : nil;
+    self.backgroundHintOwned = YES;
+  }
   SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
   self.status = @"Waiting for the controller…";
   self.needsDisplay = YES;
@@ -1338,16 +1384,32 @@ static constexpr CGFloat KPPhoneListTop = 300, KPPhoneRowHeight = 58;
     return;
   }
 }
+// The page redraws for what changes by itself only when it has: the new controller's live drawing,
+// and on the Phone page the link and the phones. (The status redraws it as it changes.)
 - (void)tick {
   [KPControllerRoster.shared refresh];
   [self placeRemoves];
+  uint64_t look = KPDeviceLook(self.arrived);
+  if (self.kind == KPPairKind::Phone && !self.choosing) {
+    KPPhoneServer *server = KPPhoneServer.shared;
+    look ^= (uint64_t)(server.hasTiltPage ? server.tiltURL : server.touchURL).hash * 31 + server.problem.hash;
+    for (const KPPhoneEntry &phone : server.entries)
+      look = look * 0x100000001b3ull ^ ((uint64_t)phone.phone << 40 | (uint64_t)(phone.player & 0xff) << 32 |
+                                        (uint64_t)phone.linked << 31 | (uint32_t)phone.delayMs);
+  }
+  if (look == self.shownLook) return;
+  self.shownLook = look;
   self.needsDisplay = YES;
 }
 - (void)willDisappear {
   KartPadCancelWiimotePairing();
   KartPadCancelGamepadPairing();
   [KPControllerRoster.shared.listeners removeObject:self];
-  SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "0");
+  if (self.backgroundHintOwned) {
+    if (self.previousBackgroundHint) SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, self.previousBackgroundHint.UTF8String);
+    else SDL_ResetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS);
+    self.backgroundHintOwned = NO;
+  }
 }
 - (void)back {
   if (!self.choosing && !self.arrived) {

@@ -25,10 +25,10 @@ static NSString *KPRunningProfile() {
 static NSString *KPOtherProfile() {
   return [KPRunningProfile() isEqualToString:kKartPadRetroProfile] ? kKartPadBaseProfile : kKartPadRetroProfile;
 }
+// Checked again only when the files or the folder setting change (KartPadMacShell.mm): HOME asks as it draws.
 static BOOL KPRetroRewindReady() {
 #if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)
-  NSError *error = nil;
-  return ValidateRetroRewindRoot(ConfiguredRetroRewindRoot(), &error) == nil && error == nil;
+  return KPRetroRewindFilesReady();
 #else
   return NO;
 #endif
@@ -246,22 +246,13 @@ static KPScreen *KPMakeMiisScreen();
     const float volume = home.shownVolume;
     KPDrawGlyph(c, muted ? KPUIGlyph::SpeakerOff : KPUIGlyph::Speaker, CGRectMake(r.origin.x + 20, CGRectGetMidY(r) - 17, 34, 34),
                 muted ? KPP->secondaryText : KPP->accentBottom, volume);
-    const CGRect track = KPHomeVolumeTrack(r);
-    KPFill(c, CGRectOffset(track, 0, -1), KPP->ledge, 6);
-    KPFill(c, track, KPP->well, 6);
-    KPStroke(c, track, KPP->buttonStroke, 1, 6);
-    const CGFloat fill = track.size.width * (muted ? 0 : volume);
-    if (fill > 2) KPGradientFill(c, CGRectMake(track.origin.x + 1, track.origin.y + 1, fill - 2, track.size.height - 2), 5,
-                                 KPP->accentTop, KPP->accentBottom);
-    const CGRect knob = CGRectMake(track.origin.x + fill - 11, CGRectGetMidY(track) - 11, 22, 22);
-    KPFill(c, CGRectOffset(knob, 0, 1.5), 0x000000, 11, 0.22);
-    KPGradientFill(c, knob, 11, 0xffffff, 0xe3e8eb);
-    KPStroke(c, knob, KPP->buttonStroke, 1, 11);
+    KPDrawSlider(c, KPHomeVolumeTrack(r), muted ? 0 : volume);
     KPTextWeight(muted ? @"Off" : [NSString stringWithFormat:@"%d%%", (int)std::lround(volume * 100)],
                  CGRectMake(CGRectGetMaxX(r) - 80, CGRectGetMidY(r) - 14, 64, 28), 20, KPP->text, NSFontWeightSemibold,
                  NSTextAlignmentRight);
   } action:^{
     KPHomeScreen *home = weakSelf;
+    KPSaveSlide();
     home.shownMute = !home.shownMute;
     KPWriteVolume(home.shownVolume, home.shownMute);
     home.volume.needsDisplay = YES;
@@ -275,6 +266,7 @@ static KPScreen *KPMakeMiisScreen();
       KPUIPlay(KPUISound::Same);
       return YES;
     }
+    KPSaveSlide();
     home.shownVolume = next;
     home.shownMute = NO;
     KPWriteVolume(next, false);
@@ -290,7 +282,7 @@ static KPScreen *KPMakeMiisScreen();
     if (std::floor(next * 20) != std::floor(home.shownVolume * 20) || home.shownMute) KPUIPlay(KPUISound::Tick);
     home.shownVolume = next;
     home.shownMute = NO;
-    KPWriteVolume(next, false);
+    KPSaveSlideSoon(^{ KPWriteVolume(next, false); });
     home.volume.needsDisplay = YES;
     return YES;
   };
@@ -436,7 +428,10 @@ static KPScreen *KPMakeMiisScreen();
   }
 }
 
-- (void)willDisappear { [KPControllerRoster.shared.listeners removeObject:self]; }
+- (void)willDisappear {
+  KPSaveSlide();
+  [KPControllerRoster.shared.listeners removeObject:self];
+}
 
 - (void)rosterChanged {
   for (KPUIButton *slot in self.slots) slot.needsDisplay = YES;
@@ -688,26 +683,23 @@ static void KPKeepHomeButtons(bool pressed) {
 }
 
 // The HOME / Guide / PS button on any controller, and a Wii Remote's own HOME (a raw button on SDL's
-// Wii driver). One press per controller, so holding it doesn't flicker.
+// Wii driver). One press per controller, so holding it doesn't flicker. Every frame, so nothing here
+// allocates.
 static void KPHomeTick() {
-  static NSMutableSet<NSNumber *> *held;
-  if (held == nil) held = [NSMutableSet set];
-  NSMutableSet<NSNumber *> *now = [NSMutableSet set];
+  static std::vector<SDL_JoystickID> held, now;
+  now.clear();
   bool pressed = false;
-  int count = 0;
-  SDL_JoystickID *ids = SDL_GetGamepads(&count);
-  for (int i = 0; i < count; ++i) {
-    SDL_Gamepad *pad = SDL_GetGamepadFromID(ids[i]);
+  for (const SDL_JoystickID id : KPConnectedPads()) {
+    SDL_Gamepad *pad = SDL_GetGamepadFromID(id);
     if (pad == nullptr) continue;
     bool home = SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_GUIDE);
     if (!home && KPIsWiiRemoteName(SDL_GetGamepadName(pad)))
       home = SDL_GetJoystickButton(SDL_GetGamepadJoystick(pad), SDL_GAMEPAD_BUTTON_MISC1 + 6);
     if (!home) continue;
-    [now addObject:@(ids[i])];
-    if (![held containsObject:@(ids[i])]) pressed = true;
+    now.push_back(id);
+    if (std::find(held.begin(), held.end(), id) == held.end()) pressed = true;
   }
-  SDL_free(ids);
-  [held setSet:now];
+  held.swap(now);
   KPKeepHomeButtons(pressed);
   if (!pressed || !NSApp.active || KPOverlay().hostWindow) return;
   // The old-style windows (the Mii editor, the classic Settings) keep HOME to themselves.
@@ -753,41 +745,41 @@ static void KPCurtainDone();  // KartPadCurtain.inc.mm
 // front, and not for a controller someone took out with Stop playing.
 static void KPAutoJoinTick() {
   // Per controller: 0 nothing held, 1 pressed (joins when let go), 2 already held when first seen.
-  static NSMutableDictionary<NSNumber *, NSNumber *> *state = [NSMutableDictionary dictionary];
+  // Every frame, so kept without allocating.
+  static std::vector<std::pair<SDL_JoystickID, int>> state, seen;
   static NSMutableDictionary<NSNumber *, NSNumber *> *refusedAt = [NSMutableDictionary dictionary];
   if (KPOverlay().active || KartPadGameStarting()) {
-    [state removeAllObjects];
+    state.clear();
     return;
   }
-  NSMutableDictionary<NSNumber *, NSNumber *> *now = [NSMutableDictionary dictionary];
-  NSMutableArray<NSNumber *> *joining = [NSMutableArray array];
-  int count = 0;
-  SDL_JoystickID *ids = SDL_GetGamepads(&count);
-  for (int i = 0; i < count; ++i) {
-    SDL_Gamepad *pad = SDL_GetGamepadFromID(ids[i]);
+  seen.clear();
+  std::vector<SDL_JoystickID> joining;
+  const bool active = NSApp.active;
+  for (const SDL_JoystickID id : KPConnectedPads()) {
+    SDL_Gamepad *pad = SDL_GetGamepadFromID(id);
     // Automated checks (in the background) let their virtual controllers join, and only those.
-    const bool listening = NSApp.active ? !KPUIBackgroundAutomation() || SDL_IsJoystickVirtual(ids[i])
-                                        : KPUIBackgroundAutomation() && SDL_IsJoystickVirtual(ids[i]);
+    const bool listening = active ? !KPUIBackgroundAutomation() || SDL_IsJoystickVirtual(id)
+                                  : KPUIBackgroundAutomation() && SDL_IsJoystickVirtual(id);
     if (pad == nullptr || !listening || KPPortForGamepad(pad) >= 0) continue;
     bool down = false;
     for (int button = 0; button < SDL_GAMEPAD_BUTTON_COUNT && !down; ++button)
       down = button != SDL_GAMEPAD_BUTTON_GUIDE && SDL_GetGamepadButton(pad, (SDL_GamepadButton)button);
-    NSNumber *key = @(ids[i]), *was = state[key];
-    int next = was == nil ? (down ? 2 : 0) : was.intValue;
+    const auto was = std::find_if(state.begin(), state.end(), [id](const auto &entry) { return entry.first == id; });
+    int next = was == state.end() ? (down ? 2 : 0) : was->second;
     if (next == 0 && down) next = 1;
     else if (next == 1 && !down) {
-      [joining addObject:key];
+      joining.push_back(id);
       next = 0;
     } else if (next == 2 && !down) next = 0;
-    now[key] = @(next);
+    seen.emplace_back(id, next);
   }
-  SDL_free(ids);
-  [state setDictionary:now];
-  if (joining.count == 0) return;
+  state.swap(seen);
+  if (joining.empty()) return;
   KPControllerRoster *roster = KPControllerRoster.shared;
   [roster refresh];
   const BOOL keyboardFloats = ![[NSUserDefaults.standardUserDefaults objectForKey:KPKeyboardPlayerKey] isKindOfClass:NSNumber.class];
-  for (NSNumber *key in joining) {
+  for (const SDL_JoystickID joined : joining) {
+    NSNumber *key = @(joined);
     KPPadDevice *device = [roster deviceWithIdentifier:[NSString stringWithFormat:@"sdl:%@", key]];
     if (device == nil || device.slot >= 0 || [roster.benched containsObject:device.identifier]) continue;
     int slot = -1;

@@ -27,13 +27,7 @@ static void KPDrawCurtainCard(CGContextRef c, CGSize size, NSString *heading, NS
   KPFill(c, card, KPP->panel, 30);
   CGContextRestoreGState(c);
   KPStroke(c, card, KPP->panelStroke, 1.5, 30);
-  // A row of dots that bounce in turn, Wii-loading style.
-  for (int dot = 0; dot < 5; ++dot) {
-    const CGFloat lift = std::max(0.0, sin(phase * 2 * M_PI - dot * 0.7)) * 14;
-    const CGRect r = CGRectMake(560 + dot * 34, 290 - lift, 22, 22);
-    KPSetInk(c, KPPlayerColors[dot % 4]);
-    CGContextFillEllipseInRect(c, r);
-  }
+  KPDrawLoadingDots(c, CGPointMake(560, 290), phase);
   // The heading sits lower when there's no line under it.
   KPTextWeight(heading, CGRectMake(card.origin.x + 30, card.origin.y + (detail.length ? 132 : 150), card.size.width - 60, 46), 32,
                KPP->text, NSFontWeightBold);

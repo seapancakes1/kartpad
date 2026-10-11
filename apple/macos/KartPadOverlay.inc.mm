@@ -201,6 +201,50 @@ static bool KPSliderLevel(CGRect track, CGPoint point, BOOL began, float *level)
   return true;
 }
 
+// A slider (HOME's volume, Settings' levels): the track on its ledge, filled in Wii blue up to the
+// level, and the knob at the end of the fill.
+static void KPDrawSlider(CGContextRef c, CGRect track, CGFloat level) {
+  KPFill(c, CGRectOffset(track, 0, -1), KPP->ledge, 6);
+  KPFill(c, track, KPP->well, 6);
+  KPStroke(c, track, KPP->buttonStroke, 1, 6);
+  const CGFloat fill = track.size.width * level;
+  if (fill > 2) KPGradientFill(c, CGRectMake(track.origin.x + 1, track.origin.y + 1, fill - 2, track.size.height - 2), 5,
+                               KPP->accentTop, KPP->accentBottom);
+  const CGRect knob = CGRectMake(track.origin.x + fill - 11, CGRectGetMidY(track) - 11, 22, 22);
+  KPFill(c, CGRectOffset(knob, 0, 1.5), 0x000000, 11, 0.22);
+  KPGradientFill(c, knob, 11, 0xffffff, 0xe3e8eb);
+  KPStroke(c, knob, KPP->buttonStroke, 1, 11);
+}
+
+// A row of dots in the player colours that bounce in turn, Wii-loading style (the restart curtain,
+// setup looking for the game). origin is the first dot's resting corner; phase runs from 0 to 1.
+static void KPDrawLoadingDots(CGContextRef c, CGPoint origin, CGFloat phase) {
+  for (int dot = 0; dot < 5; ++dot) {
+    const CGFloat lift = std::max(0.0, sin(phase * 2 * M_PI - dot * 0.7)) * 14;
+    KPSetInk(c, KPPlayerColors[dot % 4]);
+    CGContextFillEllipseInRect(c, CGRectMake(origin.x + dot * 34, origin.y - lift, 22, 22));
+  }
+}
+
+// A slider dragged with the pointer saves its level once the drag rests a moment, or is let go,
+// rather than at every step: each save rewrites Config.toml. The screen shows the level as it goes
+// meanwhile, and its sounds play as they did. Anything else that saves the same setting saves the
+// waiting level first (KPSaveSlide), so it can't land after.
+static void (^KPSlideSave)(void);
+static NSUInteger KPSlideSaves;
+static void KPSaveSlide() {
+  void (^save)(void) = KPSlideSave;
+  KPSlideSave = nil;
+  if (save) save();
+}
+static void KPSaveSlideSoon(void (^save)(void)) {
+  KPSlideSave = [save copy];
+  const NSUInteger saves = ++KPSlideSaves;
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    if (saves == KPSlideSaves) KPSaveSlide();
+  });
+}
+
 @implementation KPUIButton {
   NSTrackingArea *_tracking;
   BOOL _inside, _sliding;
@@ -344,6 +388,7 @@ static bool KPSliderLevel(CGRect track, CGPoint point, BOOL began, float *level)
   (void)event;
   if (_sliding) {
     _sliding = NO;
+    KPSaveSlide();
     return;
   }
   const BOOL fire = self.pressed && _inside;
@@ -391,6 +436,44 @@ static void KPUIWobble(NSView *view) {
 }
 
 #pragma mark KPScreen
+
+// A solid screen's panel and pinstripes. Every row of it is the same all the way across, so it's kept
+// as one column of pixels, drawn again only for a new height, scale or look, and stretched across the
+// window: a screen repaints its background whole whenever anything drawn on it changes.
+static void KPDrawScreenBackdrop(NSView *view, CGContextRef c, CGSize size) {
+  static CGImageRef column;
+  static CGFloat columnHeight, columnPixels;
+  static const KPPalette *columnPalette;
+  const CGFloat pixels = std::round([view convertSizeToBacking:view.bounds.size].height);
+  if (pixels < 1 || size.height <= 0) return;
+  if (column == nullptr || columnHeight != size.height || columnPixels != pixels || columnPalette != KPP) {
+    CGImageRelease(column);
+    column = nullptr;
+    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+    CGContextRef bitmap = CGBitmapContextCreate(nullptr, 1, (size_t)pixels, 8, 0, space,
+                                                kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little);
+    CGColorSpaceRelease(space);
+    if (bitmap == nullptr) return;
+    // Top down in design points, as the screen draws.
+    CGContextTranslateCTM(bitmap, 0, pixels);
+    CGContextScaleCTM(bitmap, pixels / size.height, -pixels / size.height);
+    const CGRect all = CGRectMake(0, 0, size.width, size.height);
+    KPFill(bitmap, all, KPP->background);
+    KPPinstripes(bitmap, all, KPP->stripe);
+    column = CGBitmapContextCreateImage(bitmap);
+    CGContextRelease(bitmap);
+    columnHeight = size.height;
+    columnPixels = pixels;
+    columnPalette = KPP;
+  }
+  if (column == nullptr) return;
+  CGContextSaveGState(c);
+  CGContextSetInterpolationQuality(c, kCGInterpolationNone);
+  CGContextTranslateCTM(c, 0, size.height);
+  CGContextScaleCTM(c, 1, -1);
+  CGContextDrawImage(c, CGRectMake(0, 0, size.width, size.height), column);
+  CGContextRestoreGState(c);
+}
 
 @implementation KPScreen {
   BOOL _built;
@@ -476,8 +559,7 @@ static void KPUIWobble(NSView *view) {
 - (void)tick {}
 - (void)drawDesign:(CGContextRef)c size:(CGSize)size {
   if (!self.solid) return;
-  KPFill(c, CGRectMake(0, 0, size.width, size.height), KPP->background);
-  KPPinstripes(c, CGRectMake(0, 0, size.width, size.height), KPP->stripe);
+  KPDrawScreenBackdrop(self, c, size);
 }
 @end
 
