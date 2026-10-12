@@ -226,10 +226,16 @@ html.turned.back { --stripeDir: to right; }
 .btn.primary:active { box-shadow: 0 1px 0 var(--accLedge); }
 .btn:disabled { opacity: .42; }
 #settings .card { max-width: 98%; padding: max(14px, calc(var(--u) * 4)) max(16px, calc(var(--u) * 5)); gap: max(8px, calc(var(--u) * 2.4)); }
-#settings .grid { display: grid; grid-template-columns: auto auto; gap: max(8px, calc(var(--u) * 2.2)) max(18px, calc(var(--u) * 6)); }
-.setting { display: flex; align-items: center; justify-content: space-between; gap: max(10px, calc(var(--u) * 2.4)); }
-.setting > span { color: var(--dim); font-size: max(14px, calc(var(--u) * 3.6)); text-align: left; }
-.seg { display: flex; gap: 4px; }
+/* Settings: everyone's on the left, tilt's on the right (only with tilt), each a label and a row of
+   even buttons. */
+#settings .grid { display: flex; align-items: flex-start; }
+#settings .col { display: grid; grid-template-columns: auto auto; align-items: center;
+  gap: max(8px, calc(var(--u) * 2.2)) max(12px, calc(var(--u) * 4)); }
+#tiltSettings { margin-inline-start: max(14px, calc(var(--u) * 4.5)); padding-inline-start: max(14px, calc(var(--u) * 4.5));
+  border-inline-start: 1.25px solid var(--panelStroke); }
+.setting { display: contents; }
+.setting > span { color: var(--dim); font-size: max(14px, calc(var(--u) * 3.6)); text-align: left; white-space: nowrap; }
+.seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px; }
 .seg button { font: inherit; font-size: max(14px, calc(var(--u) * 3.6)); font-weight: 700; color: var(--text); padding: .4em .8em;
   border-radius: max(8px, calc(var(--u) * 2.2)); border: 1.25px solid var(--btnStroke); background: linear-gradient(var(--btnTop), var(--btnBottom));
   box-shadow: 0 2px 0 var(--ledge); }
@@ -294,24 +300,31 @@ html.turned.back { --stripeDir: to right; }
   </div></div>
   <div class="sheet hidden" id="message"><div class="card">
     <h1 id="messageTitle"></h1><p id="messageText"></p>
-    <div class="row"><button class="btn primary" id="messageButton">Try Again</button></div>
-    <button class="btn hidden" id="touchButton">Use Touch Controls</button>
+    <div class="row"><button class="btn primary" id="messageButton">Try Again</button><button class="btn hidden" id="touchButton">Use Touch Controls</button></div>
   </div></div>
   <div class="sheet hidden" id="tiltAsk"><div class="card">
     <h1>Steer by tilting?</h1>
     <p>Turn the phone like a steering wheel.</p>
     <div class="row"><button class="btn primary" id="useTilt">Use Tilt</button><button class="btn" id="useStick">Use the Stick</button></div>
   </div></div>
+  <div class="sheet hidden" id="shakeAsk"><div class="card">
+    <h1>Shake for Trick?</h1>
+    <div class="row"><button class="btn primary" id="shakeOn">Turn On</button><button class="btn" id="shakeOff">Leave Off</button></div>
+  </div></div>
   <div class="sheet hidden" id="settings"><div class="card">
     <div class="grid">
-      <div class="setting tilt-only"><span>Steering</span><div class="seg" data-pref="tilt"><button data-value="true">Tilt</button><button data-value="false">Stick</button></div></div>
-      <div class="setting tilt-only"><span>Sensitivity</span><div class="seg" data-pref="sensitivity"><button data-value="0.5">0.5×</button><button data-value="1">1×</button><button data-value="2">2×</button></div></div>
-      <div class="setting tilt-only"><span>Direction</span><div class="seg" data-pref="inverted"><button data-value="false">Normal</button><button data-value="true">Inverted</button></div></div>
-      <div class="setting tilt-only"><span>Straight</span><div class="seg" id="straight"><button data-value="level">Level</button><button data-value="here">Set Here</button></div></div>
-      <div class="setting tilt-only"><span>Shake for Trick</span><div class="seg" data-pref="shake"><button data-value="true">On</button><button data-value="false">Off</button></div></div>
-      <div class="setting"><span>Accelerate</span><div class="seg" data-pref="auto"><button data-value="true">Auto</button><button data-value="false">Hold</button></div></div>
-      <div class="setting"><span>Hand</span><div class="seg" data-pref="lefty"><button data-value="false">Right</button><button data-value="true">Left</button></div></div>
-      <div class="setting hidden" id="flipRow"><span>Screen</span><div class="seg"><button id="flip">Flip</button></div></div>
+      <div class="col">
+        <div class="setting tilt-only"><span>Steering</span><div class="seg" data-pref="tilt"><button data-value="true">Tilt</button><button data-value="false">Stick</button></div></div>
+        <div class="setting"><span>Accelerate</span><div class="seg" data-pref="auto"><button data-value="true">Auto</button><button data-value="false">Hold</button></div></div>
+        <div class="setting tilt-only"><span>Shake for Trick</span><div class="seg" data-pref="shake"><button data-value="true">On</button><button data-value="false">Off</button></div></div>
+        <div class="setting"><span>Hand</span><div class="seg" data-pref="lefty"><button data-value="false">Right</button><button data-value="true">Left</button></div></div>
+        <div class="setting hidden" id="flipRow"><span>Screen</span><div class="seg"><button id="flip">Flip</button></div></div>
+      </div>
+      <div class="col" id="tiltSettings">
+        <div class="setting"><span>Sensitivity</span><div class="seg" data-pref="sensitivity"><button data-value="0.5">0.5×</button><button data-value="1">1×</button><button data-value="2">2×</button></div></div>
+        <div class="setting"><span>Direction</span><div class="seg" data-pref="inverted"><button data-value="false">Normal</button><button data-value="true">Inverted</button></div></div>
+        <div class="setting"><span>Straight</span><div class="seg" id="straight"><button data-value="level">Level</button><button data-value="here">Set Here</button></div></div>
+      </div>
     </div>
     <p id="delay"></p>
     <div class="row"><button class="btn primary" id="closeSettings">Done</button><button class="btn" id="leave">Leave</button></div>
@@ -377,7 +390,7 @@ function rumble(on) {
 let sheet = "join";
 function show(name) {
   sheet = name;
-  for (const id of ["join", "message", "settings", "tiltAsk"]) $(id).classList.toggle("hidden", id !== name);
+  for (const id of ["join", "message", "settings", "tiltAsk", "shakeAsk"]) $(id).classList.toggle("hidden", id !== name);
   placeStage();
 }
 // button: its label ("" for none), which joins again unless action says otherwise.
@@ -751,16 +764,20 @@ function mismatch(v) {
                            () => location.reload());
   else message("Update KartPad", "KartPad on the Mac is older than this page.", "Try Again", true);
 }
-let askedTilt = false;
+let askedMotion = false;
 function welcome(m) {
   const first = !m.resumed;
   joined = true;
   failedInARow = 0;
   view = "menus";  // KartPad says what's on next
   player(m.player);
-  // Motion access needs a tap of its own, so tilt is offered once joined (it stays on through reconnects).
-  if (canTilt && !tilt && prefs.tilt && (first || !askedTilt)) { askedTilt = true; show("tiltAsk"); }
+  // Motion access needs a tap of its own on iPhone, so tilt, or else shaking, is offered once joined
+  // (it stays on through reconnects).
+  const ask = canTilt && (first || !askedMotion);
+  if (ask && !tilt && prefs.tilt) { askedMotion = true; show("tiltAsk"); }
+  else if (ask && !motionOn && prefs.shake && motionAsks) { askedMotion = true; show("shakeAsk"); }
   else show(null);
+  if (canTilt && prefs.shake && !motionAsks) wantMotion();
   applyLayout();
 }
 function goodbye(reason) {
@@ -937,24 +954,43 @@ function shake(magnitude, now) {
   setTimeout(() => { render(); send(); }, 160);
 }
 
-async function setTilt(on) {
-  if (on && typeof DeviceMotionEvent.requestPermission === "function") {
-    let refused;
-    try { refused = (await DeviceMotionEvent.requestPermission()) !== "granted"; } catch (e) { refused = true; }
-    if (refused) { on = false; toast("Tilt is off. Motion access was denied."); }
+// Motion, for tilt and for shaking with the stick too: once on, it stays on. On iPhone it has to be
+// asked for, from a tap.
+const motionAsks = canTilt && typeof DeviceMotionEvent.requestPermission === "function";
+let motionOn = false;
+async function wantMotion() {
+  if (motionOn) return true;
+  if (motionAsks) {
+    try { if ((await DeviceMotionEvent.requestPermission()) !== "granted") return false; } catch (e) { return false; }
   }
+  motionOn = true;
+  window.addEventListener("devicemotion", onMotion);
+  return true;
+}
+async function setTilt(on) {
+  if (on && !(await wantMotion())) { on = false; toast("Tilt is off. Motion access was denied."); }
   tilt = on;
   prefs.tilt = on;
   setPref("tilt", on);
   tiltSteer = 0;
   levelSide = null;
-  if (on) window.addEventListener("devicemotion", onMotion);
-  else window.removeEventListener("devicemotion", onMotion);
   syncSettings();
   applyLayout();
 }
+async function setShake(on) {
+  if (on && !(await wantMotion())) { on = false; toast("Shake is off. Motion access was denied."); }
+  prefs.shake = on;
+  setPref("shake", on);
+  syncSettings();
+}
 $("useTilt").onclick = () => { show(null); setTilt(true); };
-$("useStick").onclick = () => { prefs.tilt = false; setPref("tilt", false); show(null); setTilt(false); };
+$("useStick").onclick = () => {
+  setTilt(false);
+  if (prefs.shake && !motionOn && motionAsks) show("shakeAsk");
+  else { show(null); if (prefs.shake) wantMotion(); }
+};
+$("shakeOn").onclick = () => { show(null); setShake(true); };
+$("shakeOff").onclick = () => { show(null); setShake(false); };
 
 // ---- Settings
 function syncSettings() {
@@ -963,12 +999,14 @@ function syncSettings() {
   $("straight").querySelector('[data-value="level"]').classList.toggle("on", center === null);
   $("straight").querySelector('[data-value="here"]').classList.toggle("on", center !== null);
   for (const row of document.querySelectorAll(".tilt-only")) row.classList.toggle("hidden", !canTilt);
+  $("tiltSettings").classList.toggle("hidden", !tilt);
 }
 for (const seg of document.querySelectorAll(".seg[data-pref]")) {
   for (const b of seg.querySelectorAll("button")) {
     b.onclick = () => {
       const name = seg.dataset.pref, value = JSON.parse(b.dataset.value);
       if (name === "tilt") { setTilt(value); return; }
+      if (name === "shake") { setShake(value); return; }
       prefs[name] = value;
       setPref(name, value);
       if (name === "auto" && view === "race") aLocked = value;
