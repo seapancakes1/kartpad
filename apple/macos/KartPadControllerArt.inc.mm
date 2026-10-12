@@ -79,7 +79,7 @@ static CGFloat KPArtLuminance(unsigned rgb) {
   };
   return 0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0);
 }
-// Letters on a lit part: dark on light colours (Player 1's yellow, Player 4's green), white on the rest.
+// Letters on a lit part: dark on light colours (Player 3's yellow, Player 4's green), white on the rest.
 static unsigned KPArtInkOn(unsigned fill) { return KPArtLuminance(fill) > 0.3 ? KPArtMix(fill, 0x000000, 0.8) : 0xffffff; }
 // The player's number from their colour (-1 for the UI blue).
 static int KPArtPlayer(unsigned accent) {

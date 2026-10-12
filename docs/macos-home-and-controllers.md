@@ -38,8 +38,8 @@ underneath (online the race keeps going, and HOME says so). HOME has:
   Controllers on them, and on an empty player goes straight to "Press Ⓐ on the
   controller for this player".
 
-**Controllers.** Four player cards in the game's player colours (1 yellow,
-2 blue, 3 red, 4 green), each showing its Mii and a drawing of the controller
+**Controllers.** Four player cards in the player colours (1 red, 2 blue,
+3 yellow, 4 green), each showing its Mii and a drawing of the controller
 that lights up as you press. Pressing anything on a controller bounces its card,
 so you can tell which one is yours.
 

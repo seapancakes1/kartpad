@@ -230,7 +230,7 @@ static void KPHintDeviceChanged();  // KartPadHints.inc.mm
 
 @implementation KPControllerRoster {
   NSMutableDictionary<NSString *, KPPadDevice *> *_known;
-  NSMutableDictionary<NSString *, NSNumber *> *_lightSlot;
+  NSMutableDictionary<NSString *, NSNumber *> *_lightColor;  // the colour each pad's light was last set to
   std::array<PADKeyButtonBinding, PAD_BUTTON_COUNT> _keyButtons;
   std::array<PADKeyAxisBinding, PAD_AXIS_COUNT> _keyAxes;
   BOOL _haveKeys, _started;
@@ -262,7 +262,7 @@ static void KPHintDeviceChanged();  // KartPadHints.inc.mm
 - (instancetype)init {
   if ((self = [super init])) {
     _known = [NSMutableDictionary dictionary];
-    _lightSlot = [NSMutableDictionary dictionary];
+    _lightColor = [NSMutableDictionary dictionary];
     _devices = @[];
     _listeners = [NSHashTable weakObjectsHashTable];
     _benched = [NSMutableSet set];
@@ -491,21 +491,32 @@ static void KPHintDeviceChanged();  // KartPadHints.inc.mm
 
 #pragma mark Lights
 
-// A pad with a colour light glows in its player's colour; a pad that isn't playing glows dim white.
+// A light in a Mii's favourite colour (Red, Orange, Yellow, Light green, Green, Blue, Light blue, Pink,
+// Purple, Brown, White), saturated like KPPlayerLights. Black has no light: the player's colour stands in.
+static const unsigned char KPMiiLights[11][3] = {{255, 0, 0},   {255, 60, 0},  {255, 170, 0},  {110, 255, 0},
+                                                 {0, 255, 40},  {0, 70, 255},  {0, 190, 255},  {255, 30, 110},
+                                                 {140, 0, 255}, {160, 50, 0},  {255, 255, 255}};
+
+// A playing pad glows in its Mii's favourite colour, or its player's colour without one; a pad that
+// isn't playing glows dim white.
+- (unsigned)lightFor:(KPPadDevice *)device {
+  if (device.slot < 0) return 0x282828;
+  const unsigned char *rgb = KPPlayerLights[device.slot];
+  NSNumber *favorite = [self miiRecordFor:device][@"favoriteColor"];
+  if (favorite && favorite.unsignedIntValue < std::size(KPMiiLights)) rgb = KPMiiLights[favorite.unsignedIntValue];
+  return rgb[0] << 16 | rgb[1] << 8 | rgb[2];
+}
+
 - (void)updateLight:(KPPadDevice *)device {
   if (!device.hasLight) return;
-  NSNumber *last = _lightSlot[device.identifier];
-  if (last && last.intValue == device.slot) return;
-  _lightSlot[device.identifier] = @(device.slot);
+  const unsigned light = [self lightFor:device];
+  NSNumber *last = _lightColor[device.identifier];
+  if (last && last.unsignedIntValue == light) return;
+  _lightColor[device.identifier] = @(light);
   SDL_Gamepad *pad = device.gamepad;
   if (pad == nullptr) return;
-  if (device.slot >= 0) {
-    const unsigned char *rgb = KPPlayerLights[device.slot];
-    SDL_SetGamepadLED(pad, rgb[0], rgb[1], rgb[2]);
-    PADSetColor(device.slot, rgb[0], rgb[1], rgb[2]);
-  } else {
-    SDL_SetGamepadLED(pad, 40, 40, 40);
-  }
+  SDL_SetGamepadLED(pad, light >> 16, (light >> 8) & 255, light & 255);
+  if (device.slot >= 0) PADSetColor(device.slot, light >> 16, (light >> 8) & 255, light & 255);
 }
 
 // "This one is me": two buzzes and the light flashing white, the card answering on screen.
@@ -524,12 +535,8 @@ static void KPHintDeviceChanged();  // KartPadHints.inc.mm
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((pulse * 0.32 + 0.16) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
       SDL_Gamepad *live = SDL_GetGamepadFromID(joystick);
       if (live == nullptr || !device.hasLight) return;
-      if (device.slot >= 0) {
-        const unsigned char *rgb = KPPlayerLights[device.slot];
-        SDL_SetGamepadLED(live, rgb[0], rgb[1], rgb[2]);
-      } else {
-        SDL_SetGamepadLED(live, 40, 40, 40);
-      }
+      const unsigned light = [self lightFor:device];
+      SDL_SetGamepadLED(live, light >> 16, (light >> 8) & 255, light & 255);
     });
   }
 }
@@ -582,8 +589,8 @@ static void KPHintDeviceChanged();  // KartPadHints.inc.mm
   [KPControllers().applied removeAllObjects];
   if (slot >= 0) [_benched removeObject:device.identifier];
   AppendSessionLine([NSString stringWithFormat:@"controllerMove=%@; player=%d", device.name, slot + 1]);
-  _lightSlot[device.identifier] = nil;
-  if (occupant) _lightSlot[occupant.identifier] = nil;
+  _lightColor[device.identifier] = nil;
+  if (occupant) _lightColor[occupant.identifier] = nil;
   _keyboardMovedAt = NSProcessInfo.processInfo.systemUptime;
   [self refresh];
 }

@@ -193,11 +193,11 @@ static void KPTextWeight(NSString*text,CGRect rect,CGFloat size,unsigned hex,CGF
 }
 static CGSize KPTextSize(NSString*text,CGFloat size,CGFloat weight){return [text sizeWithAttributes:@{NSFontAttributeName:KPStyleFont(size,weight)}];}
 
-// Player colors, as the game's Register Controllers screen colours its four slots (yellow, blue, red,
-// green), so KartPad and the game agree. They tint player cards and badges and light controllers that
-// have a color light (DualShock 4, DualSense). Ink is the text color on the fill.
-static const unsigned KPPlayerColors[4]={0xf2b51e,0x2e7cf6,0xe5484d,0x30b85c};
-static const unsigned KPPlayerDarkColors[4]={0xc48a0c,0x1d5bc4,0xb5303a,0x218a43};
-static const unsigned KPPlayerInk[4]={0x3a2a00,0xffffff,0xffffff,0xffffff};
+// Player colors in Nintendo's usual four-player order (red, blue, yellow, green). They tint player
+// cards and badges and light controllers that have a color light (DualShock 4, DualSense). Ink is the
+// text color on the fill.
+static const unsigned KPPlayerColors[4]={0xe5484d,0x2e7cf6,0xf2b51e,0x30b85c};
+static const unsigned KPPlayerDarkColors[4]={0xb5303a,0x1d5bc4,0xc48a0c,0x218a43};
+static const unsigned KPPlayerInk[4]={0xffffff,0xffffff,0x3a2a00,0xffffff};
 // The same colors for a controller's light, which looks washed out at the UI's values.
-static const unsigned char KPPlayerLights[4][3]={{255,170,0},{0,70,255},{255,0,0},{0,255,40}};
+static const unsigned char KPPlayerLights[4][3]={{255,0,0},{0,70,255},{255,170,0},{0,255,40}};
