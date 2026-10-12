@@ -255,13 +255,14 @@ static void KPPadConfirmBack(SDL_Gamepad *pad, SDL_GamepadButton *confirm, SDL_G
 }
 
 // Every connected pad counts, Wii Remotes included. pressedBy is the pad that pressed something since
-// the last read (0 if none did).
-static uint32_t KPMiiPadRead(bool *anyHeld, SDL_JoystickID *pressedBy) {
+// the last read (0 if none did). turn is the right stick across, -1 to 1, from the pad pushing it furthest.
+static uint32_t KPMiiPadRead(bool *anyHeld, SDL_JoystickID *pressedBy, float *turn) {
   static NSMutableDictionary<NSNumber *, NSNumber *> *before = [NSMutableDictionary dictionary];
   NSMutableDictionary<NSNumber *, NSNumber *> *now = [NSMutableDictionary dictionary];
   uint32_t held = 0;
   *anyHeld = false;
   *pressedBy = 0;
+  int turnX = 0;
   int padCount = 0;
   SDL_JoystickID *padIDs = SDL_GetGamepads(&padCount);
   for (int i = 0; i < padCount; ++i) {
@@ -279,6 +280,9 @@ static uint32_t KPMiiPadRead(bool *anyHeld, SDL_JoystickID *pressedBy) {
     const int y = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTY);
     const bool horizontal = std::abs(x) >= std::abs(y), tilted = std::max(std::abs(x), std::abs(y)) > 16000;
     *anyHeld |= tilted;
+    // The right stick is free: the left one moves the focus.
+    const int right = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHTX);
+    if (std::abs(right) > std::abs(turnX)) turnX = right;
     set(KartPadMiiPadUp, down(SDL_GAMEPAD_BUTTON_DPAD_UP) || (tilted && !horizontal && y < 0));
     set(KartPadMiiPadDown, down(SDL_GAMEPAD_BUTTON_DPAD_DOWN) || (tilted && !horizontal && y > 0));
     set(KartPadMiiPadLeft, down(SDL_GAMEPAD_BUTTON_DPAD_LEFT) || (tilted && horizontal && x < 0));
@@ -298,6 +302,10 @@ static uint32_t KPMiiPadRead(bool *anyHeld, SDL_JoystickID *pressedBy) {
   }
   SDL_free(padIDs);
   [before setDictionary:now];
+  // Past a dead zone, scaled from there to full tilt.
+  constexpr float deadZone = 8000;
+  const float past = std::clamp((std::abs(turnX) - deadZone) / (32767 - deadZone), 0.0f, 1.0f);
+  *turn = turnX < 0 ? -past : past;
   return held;
 }
 
@@ -328,7 +336,8 @@ static void KPMiiPadPoll() {
   const bool visible = KPPadWindowsVisible();
   bool anyHeld = false;
   SDL_JoystickID pressedBy = 0;
-  const uint32_t held = KPMiiPadRead(&anyHeld, &pressedBy);
+  float turn = 0;
+  const uint32_t held = KPMiiPadRead(&anyHeld, &pressedBy, &turn);
   if (KPControllers().capture >= 0 || KPPadListening) KPMiiPadQuiet = true;
   else if (!anyHeld) KPMiiPadQuiet = false;
   // Buttons already down when a window opens aren't presses for it, and don't repeat.
@@ -357,6 +366,9 @@ static void KPMiiPadPoll() {
     return;
   }
   KPMiiPadOwned = true;
+  static NSTimeInterval turnedAt;
+  if (listening && turn != 0) KartPadMiiPadTurn(turn, now - turnedAt);
+  turnedAt = now;
   for (int button = 0; button < KartPadMiiPadButtonCount; ++button) {
     if (fire & (1u << button)) KPMiiPadSend((KartPadMiiPadButton)button, YES);
     if (button == KartPadMiiPadConfirm && (released & (1u << button))) KPMiiPadSend(KartPadMiiPadConfirm, NO);

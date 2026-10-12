@@ -26,6 +26,20 @@ static NSString *KPMiiConfigPath(){
         stringByAppendingPathComponent:@"Config.toml"];
 #endif
 }
+static float KPMiiSoundsLevel(){
+#if TARGET_OS_OSX&&!defined(KARTPAD_MII_MANAGER_TESTING)
+    // Read again only when Config.toml changes.
+    static NSString *stamp;static float level=1;
+    NSString *now=KPMiiFileStamp(KPMiiConfigPath())?:@"";
+    if(![now isEqual:stamp]){
+        auto config=RuntimeConfigFile::LoadConfigFile();stamp=now;
+        level=config.audioMuted.value_or(false)?0:std::clamp(config.audioVolume.value_or(1.f),0.f,1.f);
+    }
+    return level;
+#else
+    return 1;
+#endif
+}
 static NSString *KPMiiFindResourcePath() {
 #if TARGET_OS_OSX
 #if defined(KARTPAD_MII_MANAGER_TESTING)
@@ -985,12 +999,15 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
             add(KPAction::Start,CGRectMake(w/2+8,bodyY,cardW,cardH),@"Choose a look-alike",0,1);
             add(KPAction::Quit,CGRectMake(margin,_footerY,120,44),@"Cancel");
         }
+#if !TARGET_OS_OSX
+        // Mac has it in Settings › Sound instead.
         add(KPAction::Sound,CGRectMake(w-margin-96,6,96,40),@"Sound effects");
+#endif
         __weak KPMiiCanvas *weak=self;void(^ready)(void)=^{[weak redraw];};
         KPMiiRequestPortrait([self.editor scratch],ready);for(NSData *mii in self.editor.lookAlikes)KPMiiRequestPortrait(mii,ready);
     }else{
         // Category tabs: one row, two on portrait phones, or beside undo, redo and ⋯ on short screens
-        // (where Sound effects moves into the ⋯ menu).
+        // (where iPhone/iPad move Sound effects into the ⋯ menu).
         CGFloat gap=compact?5:8;int cols=_stacked?5:10;
         CGFloat tabsW=_shortHeader?w-2*margin-136-12:w-2*margin,tw=(tabsW-gap*(cols-1))/cols,tabY=_shortHeader?8:54;
         for(unsigned i=0;i<10;i++)
@@ -1011,7 +1028,9 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
             add(KPAction::Discard,CGRectMake(CGRectGetMaxX(_previewRect)-saveW-10-cancelW,_footerY,cancelW,44),@"Cancel");
         }
         CGFloat ay=_shortHeader?8:6;
+#if !TARGET_OS_OSX
         if(!_shortHeader)add(KPAction::Sound,CGRectMake(w-margin-136-12-96,6,96,40),@"Sound effects");
+#endif
         add(KPAction::Undo,CGRectMake(w-margin-136,ay,40,40),@"Undo");
         add(KPAction::Redo,CGRectMake(w-margin-88,ay,40,40),@"Redo");
         add(KPAction::More,CGRectMake(w-margin-40,ay,40,40),@"More");
@@ -1973,12 +1992,6 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
     NSMenuItem *animate=[[NSMenuItem alloc]initWithTitle:@"Animate Preview" action:@selector(toggleAnimation) keyEquivalent:@""];
     animate.target=self;animate.state=KPMiiPreviewAnimation()?NSControlStateValueOn:NSControlStateValueOff;
     [menu addItem:animate];
-    // Short screens have no room for the Sound effects switch, so it lives here.
-    if(self.canvas->_shortHeader){
-        NSMenuItem *sound=[[NSMenuItem alloc]initWithTitle:@"Sound Effects" action:@selector(toggleSound) keyEquivalent:@""];
-        sound.target=self;sound.state=[KPMiiSounds shared].enabled?NSControlStateValueOn:NSControlStateValueOff;
-        [menu addItem:sound];
-    }
     [menu popUpMenuPositioningItem:nil atLocation:CGPointMake(self.canvas.bounds.size.width-100,38) inView:self.canvas];
 #else
     UIAlertController *menu=[UIAlertController alertControllerWithTitle:nil message:nil preferredStyle:UIAlertControllerStyleActionSheet];

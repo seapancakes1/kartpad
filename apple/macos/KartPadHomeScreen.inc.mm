@@ -524,9 +524,10 @@ static KPScreen *KPMakeMiisScreen();
                  NSFontWeightMedium, NSTextAlignmentLeft);
     return;
   }
-  KPTextWeight(@"HOME", CGRectMake(s.origin.x + 110, s.origin.y + 24, 200, 50), 38, KPP->text, NSFontWeightHeavy, NSTextAlignmentLeft);
+  // HOME's capitals and the game's centre on the house (y 49).
+  KPTextWeight(@"HOME", CGRectMake(s.origin.x + 110, s.origin.y + 26, 200, 50), 38, KPP->text, NSFontWeightHeavy, NSTextAlignmentLeft);
   if (beside)
-    KPTextWeight(playing, CGRectMake(s.origin.x + 260, s.origin.y + 38, 460, 28), 20, KPP->secondaryText, NSFontWeightMedium,
+    KPTextWeight(playing, CGRectMake(s.origin.x + 260, s.origin.y + 37, 460, 28), 20, KPP->secondaryText, NSFontWeightMedium,
                  NSTextAlignmentLeft);
 }
 

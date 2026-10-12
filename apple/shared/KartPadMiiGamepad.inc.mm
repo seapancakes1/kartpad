@@ -3,8 +3,8 @@
 // file decides what each press does.
 // The D-pad or left stick moves the focus ring to the nearest control in that direction and A
 // presses it (held adjustments repeat, as with the mouse). B goes back: Done on the Miis screen,
-// close in the editor. In the editor LB and RB change category, X and Y undo and redo, and Start
-// saves; on the Miis screen Start is Done. Alerts move their default button and press it with A,
+// close in the editor. In the editor LB and RB change category, X and Y undo and redo, Start
+// saves and the right stick turns the Mii; on the Miis screen Start is Done. Alerts move their default button and press it with A,
 // and B picks Cancel. Pop-up menus take arrows and Return, and B closes them. A press hides the
 // mouse pointer until the mouse moves.
 // Names are typed on the controller keyboard (KartPadMiiPadKeyboard.inc.mm): A on the editor's
@@ -560,6 +560,14 @@ void KartPadMiiPadPress(KartPadMiiPadButton button,BOOL down){
     // The game window is in front: bring the window back, and let this press only do that.
     NSWindow *front=editorWindow?:browserWindow?:settingsWindow;[NSApp activateIgnoringOtherApps:YES];
     [front makeKeyAndOrderFront:nil];KPPadHidePointer();
+}
+void KartPadMiiPadTurn(float x,double seconds){
+    KPMiiEditor *editor=KPMiiActiveEditor;NSWindow *window=KPPadEditorWindow();
+    // Only the editor in front, with no menu or keyboard over it, and only while it shows the Mii.
+    if(!x||!NSApp.active||!window.isKeyWindow||KPPadMenu||KPPadKeyboardWindow()||editor.preview.hidden)return;
+    KPPadHidePointer();[editor.preview noteInteraction];
+    // Half a turn a second at full tilt.
+    editor.preview.yaw+=x*float(std::min(seconds,.1)*M_PI);
 }
 void KartPadMiiPadShowFocus(void){
     NSWindow *window=KPPadBrowserWindow();

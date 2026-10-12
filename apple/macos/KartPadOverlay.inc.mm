@@ -85,6 +85,8 @@ struct KPUIState {
 // points with the face rect. YES on the press takes the drag; NO leaves the press a click.
 @property(nonatomic, copy) BOOL (^slide)(CGPoint point, CGRect face, BOOL began);
 @property(nonatomic) BOOL enabled, focused, pressed;
+// The last press that fired the action was a click (not A from a pad or the keyboard).
+@property(nonatomic, readonly) BOOL clicked;
 @property(nonatomic) KPUISound sound;
 @property(nonatomic) CGFloat margin, radius, focusScale;
 @property(nonatomic, copy) NSString *label;
@@ -265,6 +267,7 @@ static void KPSaveSlideSoon(void (^save)(void)) {
 @implementation KPUIButton {
   NSTrackingArea *_tracking;
   BOOL _inside, _sliding;
+  CGFloat _wheel;       // trackpad travel not yet spent on an adjust step
   CGFloat _faceRadius;  // the corner radius the face last drew with (0 before it has drawn)
 }
 - (instancetype)initWithFrame:(NSRect)frame {
@@ -410,15 +413,34 @@ static void KPSaveSlideSoon(void (^save)(void)) {
   }
   const BOOL fire = self.pressed && _inside;
   self.pressed = NO;
-  if (fire) [self fire];
+  if (fire) [self fire:YES];
 }
+// A wheel's notch adjusts a step; a trackpad, a step for every 32 points it moves, and not while it coasts.
 - (void)scrollWheel:(NSEvent *)event {
-  if (self.adjust && fabs(event.scrollingDeltaY) > 0.5 && fabs(event.scrollingDeltaY) > fabs(event.scrollingDeltaX))
-    self.adjust(event.scrollingDeltaY > 0 ? 1 : -1);
-  else [super scrollWheel:event];
+  const CGFloat dy = event.scrollingDeltaY;
+  if (!self.adjust || fabs(dy) <= fabs(event.scrollingDeltaX)) {
+    [super scrollWheel:event];
+    return;
+  }
+  if (!event.hasPreciseScrollingDeltas) {
+    _wheel = 0;
+    self.adjust(dy > 0 ? 1 : -1);
+    return;
+  }
+  if (event.phase == NSEventPhaseBegan || event.momentumPhase != NSEventPhaseNone) _wheel = 0;
+  if (event.momentumPhase != NSEventPhaseNone) return;
+  if (_wheel * dy < 0) _wheel = 0;  // turning back starts a fresh step
+  _wheel += dy;
+  const CGFloat step = 32;
+  if (fabs(_wheel) < step) return;
+  const int direction = _wheel > 0 ? 1 : -1;
+  _wheel -= direction * step;
+  self.adjust(direction);
 }
-- (void)fire {
+- (void)fire { [self fire:NO]; }
+- (void)fire:(BOOL)clicked {
   if (!self.enabled || !self.activate) return;
+  _clicked = clicked;
   if (self.sound != KPUISound::Count) KPUIPlay(self.sound);
   void (^activate)(void) = self.activate;
   // Let this press finish before the action opens or closes a screen.

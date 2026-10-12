@@ -1,9 +1,10 @@
 // Time Trial ghosts, as Mario Kart Wii's own .rkg files. The Ghosts screen (Settings › Game, or
 // Data › Time Trial Ghosts…) shows each license's saved ghosts with the course, the time and the
 // racer's Mii; A saves one to Downloads. A ghost comes in by dropping its .rkg on the game window, or
-// from Import: it becomes the license's downloaded ghost for that course (the one Time Trials offer
-// to race against) at the next restart, with a backup, and personal bests stay as they are. Only the
-// original game's courses: the import and export live in KartPadMiiManager.mm, shared with iPhone.
+// from Import (the newest in a folder the player chooses, or any file): it becomes the license's
+// downloaded ghost for that course (the one Time Trials offer to race against) at the next restart,
+// with a backup, and personal bests stay as they are. Only the original game's courses: the import
+// and export live in KartPadMiiManager.mm, shared with iPhone.
 // Included by KartPadMacShell.mm after KartPadReconnect.inc.mm.
 
 #include "kartpad/mii/appearance.h"
@@ -147,16 +148,38 @@ static void KPImportGhostFile(NSString *path) {
   KPImportGhost(data, path.lastPathComponent);
 }
 
-// Choosing a file: the newest ghosts in Downloads and on the Desktop, or any file (with the mouse).
+// Choosing a file: the newest ghosts in the folder the player picked, or any file (with the mouse).
+static NSString *const KPGhostFolderKey = @"KartPadGhostFolder";
+static void KPChooseGhostToImport();
+
+static void KPChooseGhostFolder() {
+  NSOpenPanel *panel = NSOpenPanel.openPanel;
+  panel.canChooseFiles = NO;
+  panel.canChooseDirectories = YES;
+  panel.allowsMultipleSelection = NO;
+  panel.prompt = @"Choose Folder";
+  panel.message = @"Choose the folder with your ghosts (.rkg)";
+  NSString *current = [NSUserDefaults.standardUserDefaults stringForKey:KPGhostFolderKey];
+  if (current.length) panel.directoryURL = [NSURL fileURLWithPath:current isDirectory:YES];
+  [panel beginSheetModalForWindow:KPGameWindow() completionHandler:^(NSModalResponse response) {
+    if (response != NSModalResponseOK || panel.URL == nil) return;
+    [NSUserDefaults.standardUserDefaults setObject:panel.URL.path forKey:KPGhostFolderKey];
+    AppendSessionLine(@"ghostFolderChosen=1");
+    KPChooseGhostToImport();
+  }];
+}
+
 static void KPChooseGhostToImport() {
   NSFileManager *files = NSFileManager.defaultManager;
+  NSString *folder = [NSUserDefaults.standardUserDefaults stringForKey:KPGhostFolderKey];
+  BOOL isFolder = NO;
+  const BOOL present = folder.length && [files fileExistsAtPath:folder isDirectory:&isFolder] && isFolder;
   NSMutableArray<NSURL *> *found = [NSMutableArray array];
-  for (NSSearchPathDirectory place : {NSDownloadsDirectory, NSDesktopDirectory}) {
-    NSURL *folder = [files URLsForDirectory:place inDomains:NSUserDomainMask].firstObject;
-    for (NSURL *url in [files contentsOfDirectoryAtURL:folder includingPropertiesForKeys:@[NSURLContentModificationDateKey]
+  if (present)
+    for (NSURL *url in [files contentsOfDirectoryAtURL:[NSURL fileURLWithPath:folder isDirectory:YES]
+                            includingPropertiesForKeys:@[NSURLContentModificationDateKey]
                                                options:NSDirectoryEnumerationSkipsHiddenFiles error:nil])
       if ([url.pathExtension.lowercaseString isEqualToString:@"rkg"]) [found addObject:url];
-  }
   [found sortUsingComparator:^NSComparisonResult(NSURL *a, NSURL *b) {
     NSDate *first = nil, *second = nil;
     [a getResourceValue:&first forKey:NSURLContentModificationDateKey error:nil];
@@ -176,11 +199,16 @@ static void KPChooseGhostToImport() {
     [menu add:[NSString stringWithFormat:@"%@ · %@", info[@"course"], info[@"time"]] detail:url.lastPathComponent
         glyph:(int)KPUIGlyph::Ghost enabled:YES run:^{ KPImportGhostFile(path); }];
   }
-  if (listed == 0) menu.message = @"No ghosts in Downloads or on the Desktop.";
+  if (present && listed == 0) menu.message = [NSString stringWithFormat:@"No ghosts in %@.", folder.lastPathComponent];
+  else if (folder.length && !present) menu.message = @"Ghost folder not found.";
+  [menu add:present ? @"Change Folder…" : @"Choose Ghost Folder…"
+      detail:present ? folder.stringByAbbreviatingWithTildeInPath : @"Needs a mouse."
+       glyph:(int)KPUIGlyph::Folder enabled:YES run:^{ KPChooseGhostFolder(); }];
   [menu add:@"Choose a File…" detail:@"Needs a mouse." glyph:(int)KPUIGlyph::Folder enabled:YES run:^{
     NSOpenPanel *panel = NSOpenPanel.openPanel;
     panel.allowedContentTypes = KPGhostTypes();
     panel.message = @"Choose a Mario Kart Wii ghost (.rkg)";
+    if (present) panel.directoryURL = [NSURL fileURLWithPath:folder isDirectory:YES];
     [panel beginSheetModalForWindow:KPGameWindow() completionHandler:^(NSModalResponse response) {
       if (response == NSModalResponseOK && panel.URL) KPImportGhostFile(panel.URL.path);
     }];

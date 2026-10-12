@@ -11,6 +11,8 @@ __asm__(".linker_option \"-framework\", \"AVFoundation\"");
 #include "kartpad/audio/sound_archive.h"
 #include "kartpad/mii/editor_sounds.h"
 using KPSound=kartpad::mii::EditorSound;
+// Mac: Settings › Sound's switch and Master volume, as a level (0 when off); 1 elsewhere. KartPadMiiEditor.inc.mm.
+static float KPMiiSoundsLevel();
 static NSString *const KPMiiSoundsKey=@"KartPadMiiEditorSounds";
 // Posted when the switch changes, so the Miis screen and an open editor (separate windows on Mac) both redraw it.
 static NSNotificationName const KPMiiSoundsChangedNotification=@"KPMiiSoundsChanged";
@@ -117,7 +119,8 @@ static AVAudioPCMBuffer *KPMiiSoundBuffer(const kartpad::audio::Pcm &pcm,AVAudio
 - (void)play:(KPSound)sound{
     // Automated checks (KARTPAD_MUTED=1) stay silent.
     static const BOOL muted=[NSProcessInfo.processInfo.environment[@"KARTPAD_MUTED"] isEqual:@"1"];
-    if(!self.enabled||muted)return;
+    const float level=KPMiiSoundsLevel();
+    if(!self.enabled||muted||level<=0)return;
     if(!_buffers){if(_loadingKey){_pending=sound;_pendingTime=CACurrentMediaTime();_hasPending=YES;}return;}
     AVAudioPCMBuffer *buffer=_buffers[size_t(sound)];if(![buffer isKindOfClass:AVAudioPCMBuffer.class])return;
     // Pointer hover never cuts off another sound; anything else replaces whatever is playing.
@@ -125,6 +128,7 @@ static AVAudioPCMBuffer *KPMiiSoundBuffer(const kartpad::audio::Pcm &pcm,AVAudio
     if(sound==KPSound::Hover&&now<_currentUntil&&_currentSound!=KPSound::Hover)return;
     _suspendToken++;
     if(!_engine.running||!_node.playing){if(now<_retryAt||![self resume])return;}
+    _node.volume=.8f*level;
     [_node scheduleBuffer:buffer atTime:nil options:AVAudioPlayerNodeBufferInterrupts completionHandler:nil];
     _currentSound=sound;_currentUntil=now+buffer.frameLength/buffer.format.sampleRate;
 }

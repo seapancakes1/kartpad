@@ -37,6 +37,8 @@ BOOL KartPadMiiWindowsVisible(void);
 // down is NO when the button is released; only Confirm acts on release. Directions repeat while
 // held, as further presses.
 void KartPadMiiPadPress(KartPadMiiPadButton button, BOOL down);
+// The right stick turns the editor's Mii: x runs from -1 (full left) to 1, over seconds since the last call.
+void KartPadMiiPadTurn(float x, double seconds);
 // The Miis window has just opened from a controller: show the focus ring on the selected Mii.
 void KartPadMiiPadShowFocus(void);
 // Settings takes the same presses while it is the key window. The Mac shell gives its window and

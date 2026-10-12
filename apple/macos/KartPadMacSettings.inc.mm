@@ -223,7 +223,7 @@ static NSArray<NSNumber *> *KPVibrationStrengths() { return @[@0,@0.25,@0.5,@1];
     [self setting:@"video.disabled_post_processing_paths" checkbox:@"Bloom" page:graphics y:405];
     [self setting:@"video.skip_unready_pipelines" checkbox:@"Skip effects still loading" page:graphics y:355];
     [self setting:@"video.fullscreen_across_notch" checkbox:@"Use the notch area" page:graphics y:305];
-    [self setting:@"video.vsync" checkbox:@"VSync" page:graphics y:255];
+    [self setting:@"video.vsync" checkbox:@"VSync (Experimental)" page:graphics y:255];
 
     NSView *audio=[self settingsPage:@"Audio"];
     [self settingsLabel:@"Audio" page:audio y:680].font=[NSFont boldSystemFontOfSize:19];

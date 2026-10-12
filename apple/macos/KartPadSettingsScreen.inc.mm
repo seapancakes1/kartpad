@@ -99,7 +99,10 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
       KPDrawGlyph(c, icon, CGRectMake(r.origin.x + 20, CGRectGetMidY(r) - 16 + dy, 32, 32), chosen ? 0xffffff : KPP->accentBottom, 1);
       KPTextWeight(names[i], CGRectMake(r.origin.x + 66, CGRectGetMidY(r) - 15 + dy, r.size.width - 76, 30), 22, ink,
                    NSFontWeightSemibold, NSTextAlignmentLeft);
-    } action:^{ [weakSelf showCategory:i focusRows:YES]; }];
+    } action:nil];
+    // A from a pad goes into the category's rows; a click just shows them.
+    __weak KPUIButton *weakTab = tab;
+    tab.activate = ^{ [weakSelf showCategory:i focusRows:!weakTab.clicked]; };
     tab.tag2 = i;
     tab.radius = 12;
     tab.label = names[i];
@@ -549,7 +552,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
   [sound addObject:levelRow(@"Character voices", "voices_volume",
                             ^float(const RuntimeUserConfig &c) { return c.audioVoicesVolume.value_or(1); })];
   {
-    KPSettingRow *row = KPRow(@"HOME menu sounds", nil, KPRowSwitch);
+    KPSettingRow *row = KPRow(@"HOME and Mii sounds", nil, KPRowSwitch);
     row.on = ^BOOL { return KartPadUISoundsEnabled(); };
     row.setOn = ^(BOOL on) {
       KartPadUISetSoundsEnabled(on);
@@ -699,7 +702,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
                               "skip_unready_pipelines", true,
                               ^bool(const RuntimeUserConfig &c) { return c.skipUnreadyPipelines.value_or(true); }, false, true)];
   {
-    KPSettingRow *row = KPRow(@"VSync", nil, KPRowSwitch);
+    KPSettingRow *row = KPRow(@"VSync (Experimental)", nil, KPRowSwitch);
     row.on = ^BOOL { return config().vsync.value_or(false); };
     row.setOn = ^(BOOL on) {
       if (!KPWriteConfig("video", "vsync", on ? "true" : "false", false)) return;
