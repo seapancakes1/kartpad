@@ -1,5 +1,12 @@
 # Agent instructions
 
+## Where to start
+
+**What we're doing next:** [docs/CURRENT-LOOP.md](docs/CURRENT-LOOP.md), whose
+first section answers it in three lines. Released state:
+[docs/STATUS.md](docs/STATUS.md). Performance work (#339, slow
+phones): [docs/ANDROID-PERFORMANCE-HANDOFF.md](docs/ANDROID-PERFORMANCE-HANDOFF.md).
+
 ## Releases
 
 **Current distribution (from v0.7.14, 5 October 2026):** Android keeps the

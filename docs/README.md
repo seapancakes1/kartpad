@@ -31,14 +31,14 @@ and observations named in them.
 | Build for Android | [Android source builds](../android/README.md), [architecture](ANDROID.md) |
 | Test hardware | [iPhone/iPad](PHYSICAL-ACCEPTANCE.md), [Android handoff](ANDROID-PHYSICAL-HANDOFF.md), [tvOS](TVOS-TESTING.md) |
 | Work on platform behavior | [tvOS architecture](TVOS.md), [external displays](EXTERNAL-DISPLAYS.md), [UIKit menu repair](IOS-THREE-DOT-MENU-FIX.md) |
-| Target Android FPS, stalls and geometry | [Investigation handoff](ANDROID-PERFORMANCE-HANDOFF.md) |
+| Android speed (#339): where we stand and what to try next | [Performance handoff](ANDROID-PERFORMANCE-HANDOFF.md), bench in [tools/android-perf](../tools/android-perf/README.md) |
 | Investigate runtime correctness | [Portability](PORTABILITY.md), [PPC semantics](SEMANTICS.md), [performance](PERF.md) |
 
 ## Maintain and release
 
 | Task | Guide |
 | --- | --- |
-| Resume current work | [Current goal loop](CURRENT-LOOP.md), [handoff](HANDOFF.md), [maintenance workflow](MAINTENANCE.md), [work/test board](MAINTENANCE-BOARD.md) |
+| Resume current work | [11 October handoff](RESEARCH-HANDOFF-2026-10-11.md), [current goal loop](CURRENT-LOOP.md), [handoff](HANDOFF.md), [maintenance workflow](MAINTENANCE.md), [work/test board](MAINTENANCE-BOARD.md) |
 | Check requirements | [PRD](PRD.md); original [engineering](GOAL-LOOP.md) and [Android](ANDROID-GOAL-LOOP.md) goal loops (history) |
 | Prepare a release | [Release checklist](RELEASE-CHECKLIST.md), [Android publication](RELEASING_ANDROID.md), [upstream updates](UPSTREAM_UPDATES.md) |
 | Plan deferred work | [Technical debt](TECH-DEBT.md), [future features](FUTURE-FEATURES.md), [research](RESEARCH.md) |

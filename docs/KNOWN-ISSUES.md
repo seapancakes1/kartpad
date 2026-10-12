@@ -1,6 +1,6 @@
 # KartPad known issues
 
-Current for **KartPad 0.7.13** (5 October 2026). Each item links its GitHub
+Current for **KartPad 0.8.0** (October 2026). Each item links its GitHub
 issue, where updates appear first. If your problem isn't here, see the
 [reporting guide](REPORTING.md). The September evidence register is kept in
 the [archive](archive/known-issues-through-2026-09.md).
@@ -33,7 +33,7 @@ the [archive](archive/known-issues-through-2026-09.md).
 - **Snapdragon 8 Gen 3 and older Adreno GPUs** (Adreno 6xx and 7xx, for example
   Galaxy S24 Ultra and Moto G85): characters missing, white or washed out while
   tracks look fine. **Help → Character Graphics Test…** has workarounds that
-  help on some phones; there's no automatic fix yet. [#104](https://github.com/chrissotraidis/kartpad/issues/104), [#301](https://github.com/chrissotraidis/kartpad/issues/301)
+  help on some phones; there's no working automatic fix yet. [#104](https://github.com/chrissotraidis/kartpad/issues/104), [#301](https://github.com/chrissotraidis/kartpad/issues/301)
   From 0.7.12, **Report a Problem** logs include a one-line draw self-check
   that tells us whether this phone draws characters differently from the
   CPU path, without changing anything on screen. On the Galaxy S24 Ultra it
@@ -41,6 +41,14 @@ the [archive](archive/known-issues-through-2026-09.md).
   matrix lookup alone isn't either: on these GPUs only both workarounds
   together draw bodies, and then white. A real fix needs a renderer change;
   you don't need to send more logs for this.
+  0.8.0 tried one: on these GPUs **Automatic** reads the game's matrices the
+  standard way instead of through Dawn's integer rewrite, together with the
+  character fix. On the Galaxy S24 Ultra (Adreno 750) the characters are still
+  invisible with it; the rest of the race draws normally at 60 FPS. The next
+  release adds **Help → Character Graphics Test → Experimental: matrix rows
+  like Dolphin**, which reads the bone matrices as plain rows, the way Dolphin
+  does. It draws correctly on the emulator; an affected phone has to say
+  whether it brings the riders back.
 - **Snapdragon 8 Elite / Adreno 8xx:** fixed by **Automatic** in 0.7.10
   (confirmed on the OnePlus 15). If karts or item boxes go missing in Retro
   Rewind, choose **Experimental: fix broken characters** instead.
@@ -48,7 +56,20 @@ the [archive](archive/known-issues-through-2026-09.md).
   not found yet; 0.7.10's log ruled out the GPU's shader limit. [#304](https://github.com/chrissotraidis/kartpad/issues/304)
 - **Moto G75:** crashes while loading the game; we need a diagnostic log.
   [#332](https://github.com/chrissotraidis/kartpad/issues/332)
-- **AYN Thor:** black bars even with full screen. [#202](https://github.com/chrissotraidis/kartpad/issues/202)
+- **AYN Thor:** black bars even with full screen. From 0.8.0, **Fill Screen**
+  draws races under the display's cutout area (checked on a Pixel 9 Pro XL),
+  which may remove the band; menus keep their own width. Not yet confirmed on a
+  Thor. [#202](https://github.com/chrissotraidis/kartpad/issues/202)
+
+## Setup on iPhone and iPad
+
+- **Choosing the extracted folder in Files: Open does nothing.** Two players
+  (an iPad and an iPhone) report it on real devices. 0.7.4 fixed the greyed-out
+  Open button, but only in the Simulator. Workaround: put the folder (with
+  `sys` and `files` directly inside) in **On My iPhone/iPad → KartPad**, then tap
+  **Import from Extracted Folder…**. The next release opens a picker that only
+  chooses folders and always reports back after Open; it works in the
+  Simulator, and a real device has to confirm it. [#380](https://github.com/chrissotraidis/kartpad/issues/380)
 
 ## Graphics (Apple)
 
@@ -61,8 +82,10 @@ the [archive](archive/known-issues-through-2026-09.md).
 
 - **Short pauses** the first time a menu or course appears, while KartPad
   prepares its graphics. They get rarer the more you play.
-- **Slow on mid-range and older phones**, and higher render resolutions cost a
-  lot. Start at **1×**. The speed work is tracked in [#339](https://github.com/chrissotraidis/kartpad/issues/339).
+- **Slow on mid-range and older phones.** The game runs on one processor core,
+  so its speed follows that core's speed. Lowering the render resolution
+  usually helps little; resolutions above 1× still cost GPU time, so start at
+  **1×**. The speed work is tracked in [#339](https://github.com/chrissotraidis/kartpad/issues/339).
 
 ## Controllers
 
@@ -79,11 +102,21 @@ the [archive](archive/known-issues-through-2026-09.md).
   open the touch-only controller the Mac serves itself.
 - **Mac: phone controller haptics on iPhone** rely on Safari answering a
   switch toggle with a tick (iOS 18 and later), and may not tick on every press.
+- **Mac, fixed in 0.8.0: a controller that shows as connected does nothing.**
+  Xbox, PlayStation and Switch Pro controllers assigned to Player 1 were
+  ignored because the keyboard was also active for Player 1. From 0.8.0 the
+  keyboard and the controller both work.
 - **Mac: Wii Remote with Classic Controller Pro** has input lag and no D-pad.
   [#306](https://github.com/chrissotraidis/kartpad/issues/306)
 
 ## Online
 
+- **Retro Rewind online says "Invalid pack version! Please update or reinstall
+  your pack to log in. Error Code: 22010".** Retro WFC accepts only the current
+  Retro Rewind. Android updates Retro Rewind inside the app. iPhone, iPad and
+  Mac have it built in, so they need a new build: KartPad 0.8.0 with PadMint
+  0.5.1 or newer for Retro Rewind 6.13.1. Retro Rewind updates almost always
+  change its game code, so this repeats with each one.
 - **Finding a room fails on mobile data** (error 86420) while Wi-Fi works. Many
   carriers block the direct player-to-player connections the game uses; use
   Wi-Fi or a VPN. [#405](https://github.com/chrissotraidis/kartpad/issues/405)
@@ -95,15 +128,18 @@ the [archive](archive/known-issues-through-2026-09.md).
 
 These have a fix or explanation and are open until someone affected confirms
 it: the crash after the last race of a cup ([#131](https://github.com/chrissotraidis/kartpad/issues/131), no crash in automated
-full cups on 0.7.10), the hourly update notice ([#377](https://github.com/chrissotraidis/kartpad/issues/377)), the iPad folder
-picker ([#380](https://github.com/chrissotraidis/kartpad/issues/380)) and auto-hiding the ⋯ button ([#402](https://github.com/chrissotraidis/kartpad/issues/402)).
+full cups on 0.7.10), the hourly update notice ([#377](https://github.com/chrissotraidis/kartpad/issues/377)), auto-hiding the ⋯ button ([#402](https://github.com/chrissotraidis/kartpad/issues/402)), and from 0.8.0 Shake to Trick
+([#430](https://github.com/chrissotraidis/kartpad/issues/430)) and the app icon choice ([#437](https://github.com/chrissotraidis/kartpad/issues/437)).
 
 ## Feature requests
 
-Separate music and game-sound volume, including muting the game to play your
-own music ([#411](https://github.com/chrissotraidis/kartpad/issues/411)), is in
-progress: ••• → **Sound…** on Android and iPhone/iPad, in the next release. On
-the Mac it's already in **KartPad → Settings… → Sound**.
+Separate music and game-sound volume ([#411](https://github.com/chrissotraidis/kartpad/issues/411)) is in ••• → **Sound…** on
+Android (0.7.14) and iPhone/iPad (0.7.15), and in **KartPad → Settings… →
+Sound** on Mac.
+
+iPhone, iPad and Mac can't update themselves: each new KartPad, and almost
+every Retro Rewind update, needs a new build from PadMint. From 0.8.0 the apps
+say when an update is out.
 
 Ghost import/export ([#295](https://github.com/chrissotraidis/kartpad/issues/295)), older iOS and macOS versions ([#300](https://github.com/chrissotraidis/kartpad/issues/300)),
 AirPlay and external displays ([#100](https://github.com/chrissotraidis/kartpad/issues/100)), DSU controller apps ([#91](https://github.com/chrissotraidis/kartpad/issues/91)) and
