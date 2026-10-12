@@ -108,10 +108,12 @@ for motion_contract in \
   fi
 done
 
+# The Miis screen (Choose a Mii from a player's card) and HOME, which holds the game while it is open.
 for experimental_feature_contract in \
-  'Player Identity' \
-  'Edit Mii Name' \
-  'dev.kartpad.manage-miis' \
+  'Choose a Mii' \
+  'Restart to Apply' \
+  'screens opened; game held at frame' \
+  'KPMiiBrowser' \
   'PendingRFL_DB.dat' \
   'PendingPlayerIdentity.plist' \
   'Experimental Wii Remote + Nunchuk' \

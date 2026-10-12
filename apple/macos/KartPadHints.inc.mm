@@ -135,6 +135,9 @@ static void KPDrawHintBadge(CGContextRef c, NSString *label, CGRect r, CGFloat s
 // left out; one with no button is plain text.
 static void KPDrawHints(CGContextRef c, CGRect r, const std::vector<KPHint> &hints, CGFloat size, NSTextAlignment align,
                         KPPadDevice *device = nil, unsigned ink = 0) {
+#if !TARGET_OS_OSX
+  if (KPScreensTouching) return;  // worked by touch: no controller to show buttons for
+#endif
   if (device == nil) device = KPHintDevice();
   if (ink == 0) ink = KPP->secondaryText;
   struct Piece { NSString *first, *second, *text; CGFloat width; };

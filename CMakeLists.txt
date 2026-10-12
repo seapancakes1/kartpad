@@ -428,6 +428,12 @@ if(BUILD_TESTING)
   target_compile_options(kartpad_phone_pad_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME kartpad.network.phone-pad COMMAND kartpad_phone_pad_tests)
 
+  add_executable(kartpad_controller_slots_tests runtime/tests/kartpad_controller_slots_tests.cpp)
+  target_include_directories(kartpad_controller_slots_tests PRIVATE apple/mobile apple/third_party/sunpad)
+  target_compile_features(kartpad_controller_slots_tests PRIVATE cxx_std_20)
+  target_compile_options(kartpad_controller_slots_tests PRIVATE -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+  add_test(NAME kartpad.mobile.controller-slots COMMAND kartpad_controller_slots_tests)
+
   if(MKW_BUILD_MACOS)
     add_executable(kartpad_darwin_vm_probe runtime/tests/darwin_vm_probe.cpp)
     target_compile_features(kartpad_darwin_vm_probe PRIVATE cxx_std_20)

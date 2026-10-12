@@ -148,6 +148,7 @@ static void KPImportGhostFile(NSString *path) {
   KPImportGhost(data, path.lastPathComponent);
 }
 
+#if TARGET_OS_OSX
 // Choosing a file: the newest ghosts in the folder the player picked, or any file (with the mouse).
 static NSString *const KPGhostFolderKey = @"KartPadGhostFolder";
 static void KPChooseGhostToImport();
@@ -291,6 +292,9 @@ static void KPExportGhost(NSData *data, NSDictionary *info) {
   }];
 }
 
+#else
+#include "../ios/KartPadScreensGhostFiles.inc.mm"
+#endif
 #pragma mark Ghosts screen
 
 @interface KPGhostsScreen : KPScreen
@@ -494,8 +498,10 @@ static constexpr NSInteger KPGhostColumns = 4, KPGhostRows = 3;
     hints.insert(hints.begin(), {KartPadMiiPadPreviousTab, [NSString stringWithFormat:@"Page %ld of %ld", (long)self.page + 1,
                                                             (long)self.pages], KartPadMiiPadNextTab});
   KPDrawHints(c, CGRectMake(s.origin.x + 56, s.origin.y + 670, 1168, 26), hints, 16, NSTextAlignmentRight);
+#if TARGET_OS_OSX  // iPhone and iPad take files through Import alone
   KPTextWeight(@"Drag a ghost file here.", CGRectMake(s.origin.x + 56, s.origin.y + 670, 600, 26), 16,
                KPP->secondaryText, NSFontWeightRegular, NSTextAlignmentLeft);
+#endif
 }
 
 @end

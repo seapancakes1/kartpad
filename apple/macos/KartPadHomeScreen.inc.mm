@@ -348,12 +348,19 @@ static KPScreen *KPMakeMiisScreen();
   const BOOL restart = KPRestartWaiting();
   self.restart.hidden = !restart;
   CGFloat right = CGRectGetMaxX(s) - 52;
+#if TARGET_OS_OSX
   [self place:self.quit at:CGRectMake(right - 140, s.origin.y + 22, 140, 58)];
   right -= 140 + 14;
+#else
+  // iPhone and iPad have no quitting and no windows: Settings ends the bar.
+  self.quit.hidden = self.displayToggle.hidden = YES;
+#endif
   [self place:self.settings at:CGRectMake(right - 62, s.origin.y + 20, 62, 62)];
   right -= 62 + 14;
+#if TARGET_OS_OSX
   [self place:self.displayToggle at:CGRectMake(right - 210, s.origin.y + 22, 210, 58)];
   right -= 210 + 14;
+#endif
   if (KPCanSwitchGames()) {
     // Sized to the game's name (a 24-point icon at this height), centred on the house (y 49).
     const CGFloat width =

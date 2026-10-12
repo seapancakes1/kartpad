@@ -1,6 +1,6 @@
 #import "KartPadPhysicalControllers.h"
 
-#import "SunPadControllerSlots.h"
+#import "KartPadControllerSlots.h"
 #import "SunPadDiagnostics.h"
 #import "SunPadInputMixer.h"
 
@@ -30,21 +30,24 @@ GCControllerPlayerIndex PlayerIndexForSlot(const std::size_t slot) {
   }
 }
 
-SunPadPhysicalControllerButton PressedFaceButtons(GCExtendedGamepad *pad) {
+SunPadPhysicalControllerButton PressedFaceButtons(GCExtendedGamepad *pad, BOOL nintendo) {
   uint8_t buttons = 0;
-  if (pad.buttonA.isPressed) buttons |= SunPadPhysicalControllerButtonA;
-  if (pad.buttonB.isPressed) buttons |= SunPadPhysicalControllerButtonB;
-  if (pad.buttonX.isPressed) buttons |= SunPadPhysicalControllerButtonX;
-  if (pad.buttonY.isPressed) buttons |= SunPadPhysicalControllerButtonY;
+  // In Nintendo's layout the game's A is the right-hand button and its X the top one.
+  GCControllerButtonInput *a = nintendo ? pad.buttonB : pad.buttonA, *b = nintendo ? pad.buttonA : pad.buttonB;
+  GCControllerButtonInput *x = nintendo ? pad.buttonY : pad.buttonX, *y = nintendo ? pad.buttonX : pad.buttonY;
+  if (a.isPressed) buttons |= SunPadPhysicalControllerButtonA;
+  if (b.isPressed) buttons |= SunPadPhysicalControllerButtonB;
+  if (x.isPressed) buttons |= SunPadPhysicalControllerButtonX;
+  if (y.isPressed) buttons |= SunPadPhysicalControllerButtonY;
   if (pad.leftShoulder.isPressed) {
     buttons |= SunPadPhysicalControllerButtonLeftShoulder;
   }
   return static_cast<SunPadPhysicalControllerButton>(buttons);
 }
 
-KartPadPhysicalControllerSample SampleFromGamepad(GCExtendedGamepad *gamepad) {
+KartPadPhysicalControllerSample SampleFromGamepad(GCExtendedGamepad *gamepad, BOOL nintendo) {
   KartPadPhysicalControllerSample sample;
-  sample.faceButtons = PressedFaceButtons(gamepad);
+  sample.faceButtons = PressedFaceButtons(gamepad, nintendo);
   sample.menu = gamepad.buttonMenu.isPressed;
   sample.dpadUp = gamepad.dpad.up.isPressed;
   sample.dpadDown = gamepad.dpad.down.isPressed;
@@ -109,7 +112,8 @@ KartPadPhysicalControllerSample SampleFromMicroGamepad(GCController *controller)
 
 KartPadPhysicalControllerSample SampleFromController(GCController *controller) {
   GCExtendedGamepad *gamepad = controller.extendedGamepad;
-  return gamepad != nil ? SampleFromGamepad(gamepad)
+  const BOOL nintendo = KartPadNintendoLayoutEnabled() && KartPadControllerHasNintendoFace(controller);
+  return gamepad != nil ? SampleFromGamepad(gamepad, nintendo)
                         : SampleFromMicroGamepad(controller);
 }
 
@@ -122,6 +126,20 @@ void ClearControllerHandlers(GCController *controller) {
 }
 
 }  // namespace
+
+NSString *const KartPadNintendoLayoutKey = @"KartPadNintendoLayout";
+
+BOOL KartPadNintendoLayoutEnabled(void) {
+  NSNumber *saved = [NSUserDefaults.standardUserDefaults objectForKey:KartPadNintendoLayoutKey];
+  return saved == nil || saved.boolValue;
+}
+
+BOOL KartPadControllerHasNintendoFace(GCController *controller) {
+  NSString *symbol = controller.extendedGamepad.buttonA.sfSymbolsName;
+  if (symbol.length) return [symbol hasPrefix:@"b."];
+  NSString *category = (controller.productCategory ?: @"").lowercaseString;
+  return [category containsString:@"switch"] || [category containsString:@"joy-con"];
+}
 
 SunPadInputState KartPadAdaptPhysicalControllerSample(
     const KartPadPhysicalControllerSample& sample,
@@ -157,7 +175,7 @@ SunPadInputState KartPadAdaptPhysicalControllerSample(
 }
 
 @implementation KartPadPhysicalControllers {
-  SunPadControllerSlots _slots;
+  KartPadControllerSlots _slots;
   NSMutableDictionary<NSNumber *, GCController *> *_configuredControllers;
   std::mutex _stateMutex;
   std::array<SunPadInputState, SunPadControllerSlots::kMaxPlayers> _states;
@@ -303,6 +321,14 @@ SunPadInputState KartPadAdaptPhysicalControllerSample(
   }
 
   const SunPadControllerReconcileResult result = _slots.Reconcile(instances);
+  // A controller taken out (no player) that has gone since.
+  for (NSNumber *key in _configuredControllers.allKeys) {
+    const uintptr_t instance = key.unsignedLongValue;
+    if (_slots.SlotFor(instance) >= 0 ||
+        std::find(instances.begin(), instances.end(), instance) != instances.end()) continue;
+    ClearControllerHandlers(_configuredControllers[key]);
+    [_configuredControllers removeObjectForKey:key];
+  }
   for (const SunPadControllerSlotChange& change : result.removed) {
     NSNumber *key = @(change.instance);
     GCController *controller = _configuredControllers[key];
@@ -362,6 +388,34 @@ SunPadInputState KartPadAdaptPhysicalControllerSample(
         (unsigned long)slot + 1, controller ? name : @"Not connected"]];
   }
   return players;
+}
+
+- (GCController *)controllerForPlayer:(NSUInteger)player {
+  if (player >= SunPadControllerSlots::kMaxPlayers) return nil;
+  const uintptr_t instance = _slots.InstanceAt(player);
+  return instance ? _configuredControllers[@(instance)] : nil;
+}
+
+- (void)moveController:(GCController *)controller toPlayer:(NSInteger)player {
+  NSAssert(NSThread.isMainThread, @"Players change on the main thread");
+  const uintptr_t instance = ControllerInstanceID(controller);
+  if (_configuredControllers[@(instance)] == nil && !_slots.IsBenched(instance)) return;
+  const std::vector<std::size_t> changed = _slots.Move(instance, static_cast<int>(player));
+  for (const std::size_t slot : changed) {
+    {
+      std::scoped_lock lock(_stateMutex);
+      _states[slot] = {};
+      _latchedButtons[slot] = 0;
+    }
+    if (slot == 0) [[SunPadInputMixer sharedMixer] clearInputFromTouch:NO];
+  }
+  // Every controller's light and input follow its player now; one taken out lights none.
+  for (GCController *configured in _configuredControllers.allValues) {
+    const int slot = _slots.SlotFor(ControllerInstanceID(configured));
+    configured.playerIndex = slot >= 0 ? PlayerIndexForSlot(static_cast<std::size_t>(slot)) : GCControllerPlayerIndexUnset;
+    [self publishController:configured];
+  }
+  SunPadLog(@"controller moved player=%ld vendor=%@", (long)player + 1, controller.vendorName ?: @"unknown");
 }
 
 - (NSUInteger)connectedControllerCount {

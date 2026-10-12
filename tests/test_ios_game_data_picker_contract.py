@@ -93,7 +93,8 @@ class IOSGameDataPickerContractTests(unittest.TestCase):
         )
         self.assertIn("[self presentGameDataPicker];", source)
         self.assertIn("[self presentGameDataFolderPicker];", source)
-        self.assertIn("gameOverlayRequestsGameDataFolderImport:weakSelf", source)
+        # Settings › Advanced › Mario Kart Wii files offers the same folder import.
+        self.assertIn("[weakSelf gameOverlayRequestsGameDataFolderImport:nil]", source)
         self.assertEqual(
             source.count('NSLog(@"[KartPad] %@", KartPadDocumentsFolderScanDetail(error));'),
             1,

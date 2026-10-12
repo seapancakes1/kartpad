@@ -1,6 +1,7 @@
 #pragma once
 
 #import <Foundation/Foundation.h>
+#import <GameController/GameController.h>
 
 #import "SunPadControllerMapping.h"
 #import "SunPadInputState.h"
@@ -39,7 +40,20 @@ SunPadInputState KartPadAdaptPhysicalControllerSample(
 - (BOOL)isPlayerConnected:(NSUInteger)player;
 - (NSArray<NSString *> *)playerDescriptions;
 - (NSUInteger)connectedControllerCount;
+// The controller playing as player (0-3), nil for none. Main thread.
+- (nullable GCController *)controllerForPlayer:(NSUInteger)player;
+// Puts a controller on a player (0-3); whoever was there takes its old player, or stops playing.
+// -1 takes it out until it's given a player again or reconnects. Main thread.
+- (void)moveController:(GCController *)controller toPlayer:(NSInteger)player;
 
 @end
+
+// Switch Pro Controllers and Joy-Cons play with the letters printed on them (A on the right, B at the
+// bottom), as on a Switch, unless this is off. On by default.
+FOUNDATION_EXPORT NSString *const KartPadNintendoLayoutKey;
+BOOL KartPadNintendoLayoutEnabled(void);
+// The controller's face buttons are printed in Nintendo's layout: what iOS calls its A button (the
+// bottom one) says B.
+BOOL KartPadControllerHasNintendoFace(GCController *controller);
 
 NS_ASSUME_NONNULL_END

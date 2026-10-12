@@ -131,6 +131,9 @@ enum : unsigned { KPPressConfirm = 1, KPPressBack = 2, KPPressStart = 4 };
   self.order.hidden = self.connect.hidden = self.done.hidden = !browsing;
   self.useKeyboard.hidden = self.mode != KPControllersAssigning ||
                             [KPControllerRoster.shared deviceInSlot:self.target].isKeyboard;
+#if !TARGET_OS_OSX
+  self.useKeyboard.hidden = YES;  // no keyboard player on iPhone and iPad
+#endif
   self.finish.hidden = self.mode != KPControllersOrdering;
   self.cancel.hidden = browsing;
   const CGFloat right = CGRectGetMaxX(s) - 56, y = s.origin.y + 30;
@@ -368,6 +371,7 @@ enum : unsigned { KPPressConfirm = 1, KPPressBack = 2, KPPressStart = 4 };
   const BOOL first = self.held == nil;
   NSMutableDictionary<NSNumber *, NSNumber *> *now = [NSMutableDictionary dictionary];
   NSMutableArray<NSArray *> *presses = [NSMutableArray array];
+#if TARGET_OS_OSX
   int count = 0;
   SDL_JoystickID *ids = SDL_GetGamepads(&count);
   for (int i = 0; i < count; ++i) {
@@ -384,6 +388,9 @@ enum : unsigned { KPPressConfirm = 1, KPPressBack = 2, KPPressStart = 4 };
     if (pressed) [presses addObject:@[@(ids[i]), @(pressed)]];
   }
   SDL_free(ids);
+#else
+#include "../ios/KartPadScreensListen.inc.mm"
+#endif
   self.held = now;
   for (NSArray *press in presses) {
     if (self.mode == KPControllersBrowsing) break;
@@ -489,6 +496,12 @@ enum : unsigned { KPPressConfirm = 1, KPPressBack = 2, KPPressStart = 4 };
     [self beginAssigning:slot];
     return;
   }
+#if !TARGET_OS_OSX
+  if (device.isTouch) {
+    KPOpenTouchCard(self, slot, device);
+    return;
+  }
+#endif
   KPMenuScreen *menu = [[KPMenuScreen alloc] initWithFrame:NSZeroRect];
   __weak KPControllersScreen *weakSelf = self;
   NSDictionary *mii = [roster miiRecordFor:device];
@@ -725,6 +738,7 @@ static KPScreen *KPMakeControllersScreenFor(int slot) {
   return screen;
 }
 
+#if TARGET_OS_OSX
 #pragma mark Button setup
 
 // The twelve things a controller does in the game, in Control Reference's words (KartPadMacShell.mm),
@@ -1136,6 +1150,9 @@ static void KPSetUpButtons(KPPadDevice *device) {
   [KPOverlay() present:screen];
 }
 
+#else
+#include "../ios/KartPadScreensButtonSetup.inc.mm"
+#endif
 #pragma mark Choosing a Mii
 
 @interface KPMiiPickerScreen : KPScreen
@@ -1262,6 +1279,7 @@ static void KPChooseMii(KPPadDevice *device) {
   [KPOverlay() present:screen];
 }
 
+#if TARGET_OS_OSX
 #pragma mark Connecting a controller
 
 // Pairing: what's being connected, then KartPad finds it and pairs it right here
@@ -1642,6 +1660,9 @@ static constexpr CGFloat KPPhoneListTop = 300, KPPhoneRowHeight = 58;
 @end
 
 static KPScreen *KPMakeConnectScreen() { return [[KPConnectScreen alloc] initWithFrame:NSZeroRect]; }
+#else
+#include "../ios/KartPadScreensConnect.inc.mm"
+#endif
 
 // For phones (KartPadPhoneControllers.inc.mm): while one of KartPad's screens is up, the controllers are
 // its, so phones show the menus' controls.

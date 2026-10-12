@@ -452,6 +452,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
 
 #pragma mark Rows
 
+#if TARGET_OS_OSX
 - (void)makeRows {
   __weak KPSettingsScreen *weakSelf = self;
   auto config = [weakSelf]() -> RuntimeUserConfig { return weakSelf ? weakSelf.config : RuntimeConfigFile::LoadConfigFile(); };
@@ -759,6 +760,9 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
 
   self.rows = @[picture, sound, controls, game, advanced];
 }
+#else
+#include "../ios/KartPadScreensSettingsRows.inc.mm"
+#endif
 @end
 
 static KPScreen *KPMakeSettingsScreen() { return [[KPSettingsScreen alloc] initWithFrame:NSZeroRect]; }

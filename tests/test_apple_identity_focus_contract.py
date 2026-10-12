@@ -31,10 +31,13 @@ class AppleIdentityFocusTests(unittest.TestCase):
         mac_screen = (ROOT / 'apple/macos/KartPadMiisScreen.inc.mm').read_text()
         mac_window = (ROOT / 'apple/macos/KartPadMacMiis.inc.mm').read_text()
         browser = (ROOT / 'apple/shared/KartPadMiiBrowser.inc.mm').read_text()
-        self.assertIn('systemImageNamed:@"externaldrive"', ios)
-        # Every shell opens the shared Miis screen for names and licenses: Player Identity on
+        # Miis are a tile of their own on HOME, on every Apple device.
+        self.assertIn('@"Miis", nil);', (ROOT / 'apple/macos/KartPadHomeScreen.inc.mm').read_text())
+        self.assertIn('#include "../macos/KartPadHomeScreen.inc.mm"', (ROOT / 'apple/ios/KartPadScreens.mm').read_text())
+        # Every shell opens the shared Miis screen for names and licenses: HOME › Miis on
         # iPhone/iPad, and Player > Miis (in the game window or its own window) on the Mac.
-        ios_manager = ios.split('- (void)showMiiManager {', 1)[1].split('\n}\n', 1)[0]
+        ios_glue = (ROOT / 'apple/ios/KartPadScreensGlue.inc.mm').read_text()
+        ios_manager = ios_glue.split('@implementation KPMiisScreen', 1)[1].split('@end', 1)[0]
         self.assertIn('KartPadMakeMiiBrowser()', ios_manager)
         self.assertIn('@selector(showMiis:)', mac)
         self.assertIn('#include "KartPadMiisScreen.inc.mm"', mac)

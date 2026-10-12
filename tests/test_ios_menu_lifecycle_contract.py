@@ -21,36 +21,39 @@ class IOSMenuLifecycleContractTests(unittest.TestCase):
         self.assertIn("KartPadConfigureMenuButton(KartPadFindMenuButton(_overlay));", shell)
         self.assertIn("KartPadConfigureMenuButton(menuButton);", runtime)
 
-    def test_kartpad_menu_has_bounded_top_level_groups(self) -> None:
+    def test_menu_button_opens_home_and_its_menu_never_shows(self) -> None:
         runtime = (REPO / "apple/ios/KartPadRuntimeOverlayHost.mm").read_text()
-        self.assertIn('menuWithTitle:@"Controls"', runtime)
-        self.assertIn('identifier:@"dev.kartpad.controls"', runtime)
-        self.assertIn('menuWithTitle:@"Display"', runtime)
-        self.assertIn('identifier:@"dev.kartpad.display"', runtime)
+        layout = runtime.split("- (void)layoutSubviews {", 1)[1].split("\n}\n", 1)[0]
+        # A tap opens HOME (KartPadScreens.mm), which holds the game and has everything the old
+        # drop-down had; SunPad's own menu, set again on every refresh, is cleared each layout.
+        self.assertIn("menuButton.showsMenuAsPrimaryAction = NO;", layout)
+        self.assertIn("@selector(kartPadOpenHome)", layout)
+        self.assertIn("UIControlEventPrimaryActionTriggered", layout)
+        self.assertIn("menuButton.menu = nil;", layout)
+        self.assertNotIn("UIMenu menuWithTitle", runtime)
+        self.assertIn("- (void)kartPadOpenHome { KartPadScreensToggleHome(); }", runtime)
 
-        controls = runtime.index('menuWithTitle:@"Controls"')
-        display = runtime.index('menuWithTitle:@"Display"')
-        self.assertLess(runtime.index("[controlItems addObject:controllerMapping]"), controls)
-        self.assertLess(runtime.index("[controlItems addObject:touchControlSettings]"), controls)
-        self.assertLess(runtime.index("[controlItems addObject:motionSteering]"), controls)
-        self.assertLess(runtime.index("[displayItems addObject:aspectRatio]"), display)
-        self.assertLess(runtime.index("[displayItems addObject:renderResolution]"), display)
-
-        root_start = runtime.index(
-            "NSMutableArray<UIMenuElement *> *children = [NSMutableArray array];"
-        )
-        root_end = runtime.index('menuButton.menu = [UIMenu menuWithTitle:@"KartPad"')
-        root = runtime[root_start:root_end]
-        expected_order = [
-            "[children addObject:multiplayer]",
-            "[children addObject:fpsCounter]",
-            "[children addObject:controls]",
-            "[children addObject:display]",
-            "[children addObject:gameData]",
-            "[children addObject:reportProblem]",
-        ]
-        offsets = [root.index(value) for value in expected_order]
-        self.assertEqual(offsets, sorted(offsets))
+    def test_home_and_settings_reach_everything_the_menu_had(self) -> None:
+        screens = (REPO / "apple/ios/KartPadScreens.mm").read_text()
+        for screen in ("KartPadOverlay", "KartPadHomeScreen", "KartPadControllersScreen", "KartPadGhostsScreen",
+                       "KartPadSettingsScreen", "KartPadReconnect"):
+            self.assertIn(f'#include "../macos/{screen}.inc.mm"', screens)
+        rows = (REPO / "apple/ios/KartPadScreensSettingsRows.inc.mm").read_text()
+        for host in ("screensShowMultiplayer", "screensShowMotionSteering", "screensShowShakeTricks",
+                     "screensShowButtonMapping", "screensShowTouchControls", "screensManageSaves",
+                     "screensManageRetroRewind", "screensManageGameData", "screensShowPrivateServer",
+                     "screensShowWiiRemoteInfo", "screensReportProblem", "screensReturnToLauncher",
+                     "screensSetFPSCounterSize", "renderScale", "aspectRatioMode", "showFPSCounter",
+                     "setAlternateIconName", "KPMakeMiisScreen()", "KPMakeGhostsScreen()"):
+            self.assertIn(host, rows)
+        # The game holds still under the screens, as it does under the KartPad menu.
+        hold = runtime_hold = (REPO / "apple/ios/KartPadRuntimeOverlayHost.mm").read_text()
+        hold = hold.split("- (void)runScreensHold {", 1)[1].split("\n}\n", 1)[0]
+        self.assertIn("SetPausedForHost(true)", hold)
+        self.assertIn("while (KartPadScreensHoldGame())", hold)
+        self.assertIn("SetPausedForHost(false)", hold)
+        self.assertIn("KartPadScreensQuietHeldButtons();", hold)
+        self.assertIn("[gRuntimeOverlayHost runScreensHold];", runtime_hold)
 
     def test_inherited_refresh_cannot_restore_the_sunpad_menu(self) -> None:
         runtime = (REPO / "apple/ios/KartPadRuntimeOverlayHost.mm").read_text()
@@ -60,9 +63,7 @@ class IOSMenuLifecycleContractTests(unittest.TestCase):
         self.assertIn("[super refreshMenuButton];", refresh)
         self.assertIn("[self setNeedsLayout];", refresh)
         self.assertIn("[self layoutIfNeeded];", refresh)
-        self.assertIn('hasPrefix:@"Experimental Performance Mode"', runtime)
-        self.assertIn('hasPrefix:@"Experimental 60 FPS"', runtime)
-        self.assertIn('menuButton.menu = [UIMenu menuWithTitle:@"KartPad"', runtime)
+        self.assertIn("menuButton.menu = nil;", runtime)
 
     def test_foreground_reasserts_overlay_attachment_and_z_order(self) -> None:
         shell = (REPO / "apple/ios/KartPadShellViewController.mm").read_text()

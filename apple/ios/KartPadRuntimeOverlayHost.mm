@@ -7,6 +7,7 @@
 #import "KartPadFloatingStick.h"
 #import "KartPadMotionSteering.h"
 #import "KartPadPhysicalControllers.h"
+#import "KartPadScreens.h"
 #import "KartPadRetroRewindInstaller.h"
 #import "KartPadDiagnosticContext.h"
 #import "KartPadMiiManager.h"
@@ -56,11 +57,12 @@ static std::atomic<float> gKartPadFpsScale{1.0f};
 extern "C" float KartPadMobileFpsOverlayScale(){return gKartPadFpsScale.load(std::memory_order_relaxed);}
 
 @interface KartPadRuntimeOverlayHost : NSObject <SunPadGameOverlayDelegate,
-                                                 UIDocumentPickerDelegate>
+                                                 UIDocumentPickerDelegate, KartPadScreensHost>
 - (instancetype)initWithSDLWindow:(SDL_Window *)window;
 - (void)uninstall;
 - (void)reattachOverlayIfNeeded;
 - (void)runMainMenu;
+- (void)runScreensHold;
 - (void)showReportPreview;
 @end
 
@@ -68,16 +70,6 @@ extern "C" float KartPadMobileFpsOverlayScale(){return gKartPadFpsScale.load(std
 @property(nonatomic, strong) NSURL *reportDraftURL;
 - (void)presentReportBrowserURL:(NSURL *)url;
 @property(nonatomic, strong) KartPadFloatingStickView *kartPadMoveStick;
-@property(nonatomic, copy) void (^multiplayerRequested)(void);
-@property(nonatomic, copy) void (^mainMenuRequested)(void);
-@property(nonatomic, copy) void (^motionSteeringRequested)(void);
-@property(nonatomic, copy) void (^shakeTricksRequested)(void);
-@property(nonatomic, copy) void (^miiManagerRequested)(void);
-@property(nonatomic, copy) void (^ghostManagerRequested)(void);
-@property(nonatomic, copy) void (^saveManagerRequested)(void);
-@property(nonatomic, copy) void (^buttonMappingRequested)(void);
-@property(nonatomic, copy) void (^retroManagerRequested)(void);
-@property(nonatomic, copy) void (^wiimoteRequested)(void);
 @property(nonatomic, weak) UIButton *kartPadGasButton;
 @property(nonatomic, strong) UIColor *kartPadGasRestColor;
 @property(nonatomic, assign) NSUInteger kartPadGasHoldGeneration;
@@ -109,6 +101,7 @@ extern "C" float KartPadMobileFpsOverlayScale(){return gKartPadFpsScale.load(std
 - (void)buildSettingsPanel;
 - (void)resetLayout;
 - (void)toggleSettingsPanel;
+- (void)confirmGameDataRemoval;
 - (void)selectControlForEditing:(UIView *)control;
 - (void)reportProblem;
 - (void)createDiagnosticReportFromPrompt:(UIAlertController *)prompt
@@ -2433,6 +2426,8 @@ static void KartPadApplySoundLevels(BOOL persist) {
   [super setTouchControlsHidden:hidden animated:animated];
 }
 
+- (void)kartPadOpenHome { KartPadScreensToggleHome(); }
+
 - (void)refreshMenuButton {
   // SunPad rebuilds its source menu after any inherited setting changes. Run
   // the KartPad rewrite immediately so that refreshes cannot expose the
@@ -2460,6 +2455,12 @@ static void KartPadApplySoundLevels(BOOL persist) {
   }
 
   KartPadConfigureMenuButton(menuButton);
+  // A tap opens HOME (KartPadScreens.mm), which holds the game and has everything the menu had.
+  if (menuButton != nil && menuButton.showsMenuAsPrimaryAction) {
+    menuButton.showsMenuAsPrimaryAction = NO;
+    [menuButton addTarget:self action:@selector(kartPadOpenHome) forControlEvents:UIControlEventPrimaryActionTriggered];
+    menuButton.accessibilityHint = @"Opens HOME";
+  }
 
   // Mario Kart's Classic R input is a normal digital shoulder button. Match
   // L exactly and suppress SunPad's Sunshine-specific pressure-fill artwork.
@@ -2648,262 +2649,9 @@ static void KartPadApplySoundLevels(BOOL persist) {
 
   [self kartPadConfigureTouchLayoutEditor];
 
-  UIMenu *sourceMenu = menuButton.menu;
-  if (sourceMenu == nil ||
-      [sourceMenu.identifier isEqualToString:@"dev.kartpad.menu"]) {
-    return;
-  }
-
-  __weak KartPadGameOverlay *weakSelf = self;
-  UIAction *multiplayer =
-      [UIAction actionWithTitle:@"Multiplayer…"
-                          image:[UIImage systemImageNamed:@"person.2.fill"]
-                     identifier:@"dev.kartpad.multiplayer"
-                        handler:^(__kindof UIAction *action) {
-                          (void)action;
-                          if (weakSelf.multiplayerRequested != nil) {
-                            weakSelf.multiplayerRequested();
-                          }
-                        }];
-  UIAction *shakeTricks =
-      [UIAction actionWithTitle:@"Shake to Trick…"
-                          image:[UIImage systemImageNamed:@"gyroscope"]
-                     identifier:@"dev.kartpad.shake-tricks"
-                        handler:^(__kindof UIAction *action) {
-                          (void)action;
-                          if (weakSelf.shakeTricksRequested != nil) {
-                            weakSelf.shakeTricksRequested();
-                          }
-                        }];
-  UIAction *motionSteering =
-      [UIAction actionWithTitle:@"Motion Steering…"
-                          image:[UIImage systemImageNamed:@"gyroscope"]
-                     identifier:@"dev.kartpad.motion-steering"
-                        handler:^(__kindof UIAction *action) {
-                          (void)action;
-                          if (weakSelf.motionSteeringRequested != nil) {
-                            weakSelf.motionSteeringRequested();
-                          }
-                        }];
-  UIAction *experimentalWiimote =
-      [UIAction actionWithTitle:@"Experimental Wii Remote + Nunchuk…"
-                          image:[UIImage systemImageNamed:@"antenna.radiowaves.left.and.right"]
-                     identifier:@"dev.kartpad.experimental-wiimote"
-                        handler:^(__kindof UIAction *action) {
-                          (void)action;
-                          if (weakSelf.wiimoteRequested != nil) {
-                            weakSelf.wiimoteRequested();
-                          }
-                        }];
-  UIAction *fpsCounter = nil;
-  UIAction *controllerMapping = nil;
-  UIAction *touchControlSettings = nil;
-  UIAction *reportProblem = nil;
-  UIMenu *aspectRatio = nil;
-  UIMenu *renderResolution = nil;
-  UIMenu *gameData = nil;
-  for (UIMenuElement *element in sourceMenu.children) {
-    if ([element isKindOfClass:UIAction.class]) {
-      UIAction *action = (UIAction *)element;
-      if ([action.title isEqualToString:@"Show FPS Counter"]) {
-        fpsCounter = action;
-        continue;
-      }
-      if ([action.title isEqualToString:@"Controller Button Mapping…"]) {
-        controllerMapping = [UIAction actionWithTitle:action.title image:action.image identifier:action.identifier handler:^(__kindof UIAction *selection){if(weakSelf.buttonMappingRequested)weakSelf.buttonMappingRequested();}];
-        continue;
-      }
-      if ([action.title isEqualToString:@"Touch Control Settings…"]) {
-        touchControlSettings = action;
-        continue;
-      }
-      if ([action.title isEqualToString:@"Report a Problem…"]) {
-        reportProblem = action;
-        continue;
-      }
-      if ([action.title hasPrefix:@"Experimental Performance Mode"] ||
-          [action.title hasPrefix:@"Experimental 60 FPS"]) {
-        // These are Sunshine-specific experiments inherited from SunPad.
-        // Mario Kart Wii already uses its retail 60 FPS cadence, and neither
-        // setting changes KartPad's ahead-of-time runtime.
-        continue;
-      }
-    }
-
-    if ([element isKindOfClass:UIMenu.class] &&
-        [element.title isEqualToString:@"Render Resolution"]) {
-      renderResolution = (UIMenu *)element;
-      continue;
-    }
-    if ([element isKindOfClass:UIMenu.class] &&
-        [element.title isEqualToString:@"Aspect Ratio"]) {
-      aspectRatio = (UIMenu *)element;
-      continue;
-    }
-    if ([element isKindOfClass:UIMenu.class] &&
-        [element.title isEqualToString:@"Game Data & Saves"]) {
-      UIMenu *dataMenu = (UIMenu *)element;
-      NSMutableArray<UIMenuElement *> *dataItems = [NSMutableArray array];
-      for (UIMenuElement *dataElement in dataMenu.children) {
-        if ([dataElement isKindOfClass:UIAction.class] &&
-            [dataElement.title isEqualToString:@"Import from SunPad Folder"]) {
-          UIAction *sourceAction = (UIAction *)dataElement;
-          UIAction *replacement =
-              [UIAction actionWithTitle:@"Import from Extracted Folder…"
-                                  image:sourceAction.image
-                             identifier:sourceAction.identifier
-                                handler:^(__kindof UIAction *action) {
-            (void)action;
-            [weakSelf.delegate gameOverlayRequestsGameDataFolderImport:weakSelf];
-          }];
-          replacement.attributes = sourceAction.attributes;
-          replacement.state = sourceAction.state;
-          replacement.discoverabilityTitle = sourceAction.discoverabilityTitle;
-          [dataItems addObject:replacement];
-        } else {
-          if ([dataElement isKindOfClass:UIAction.class]) {
-            UIAction *renamed = (UIAction *)dataElement;
-            if ([renamed.title isEqualToString:@"Import or Reimport Game Data"]) renamed.title = @"Import or Reimport Wii Disc Image…";
-            if ([renamed.title isEqualToString:@"Remove Stored Game Data"]) renamed.title = @"Remove Stored Game Data…";
-          }
-          [dataItems addObject:dataElement];
-        }
-      }
-      // Offer the extracted folder (no key needed) before the disc image (needs a Wii key).
-      NSUInteger discIndex = NSNotFound, folderIndex = NSNotFound;
-      for (NSUInteger i = 0; i < dataItems.count; ++i) {
-        NSString *title = dataItems[i].title;
-        if ([title isEqualToString:@"Import or Reimport Wii Disc Image…"]) discIndex = i;
-        if ([title isEqualToString:@"Import from Extracted Folder…"]) folderIndex = i;
-      }
-      if (discIndex != NSNotFound && folderIndex != NSNotFound && folderIndex > discIndex) {
-        [dataItems exchangeObjectAtIndex:discIndex withObjectAtIndex:folderIndex];
-      }
-      UIAction *miiManager =
-          [UIAction actionWithTitle:@"Player Identity…"
-                              image:[UIImage systemImageNamed:@"person.crop.circle.badge.plus"]
-                         identifier:@"dev.kartpad.manage-miis"
-                            handler:^(__kindof UIAction *action) {
-        (void)action;
-        if (weakSelf.miiManagerRequested != nil) {
-          weakSelf.miiManagerRequested();
-        }
-      }];
-      [dataItems insertObject:miiManager atIndex:0];
-      [dataItems insertObject:[UIAction actionWithTitle:@"Time Trial Ghosts (.rkg)…" image:[UIImage systemImageNamed:@"flag.checkered"] identifier:nil handler:^(__kindof UIAction *action) {
-        if (weakSelf.ghostManagerRequested) weakSelf.ghostManagerRequested();
-      }] atIndex:1];
-      [dataItems insertObject:[UIAction actionWithTitle:@"Manage Saves…" image:[UIImage systemImageNamed:@"externaldrive"] identifier:nil handler:^(__kindof UIAction *action) { if (weakSelf.saveManagerRequested) weakSelf.saveManagerRequested(); }] atIndex:2];
-      [dataItems insertObject:[UIAction actionWithTitle:@"Manage Retro Rewind…" image:[UIImage systemImageNamed:@"arrow.clockwise"] identifier:nil handler:^(__kindof UIAction *action) { if (weakSelf.retroManagerRequested) weakSelf.retroManagerRequested(); }] atIndex:3];
-      gameData = [UIMenu menuWithTitle:dataMenu.title
-                                 image:[UIImage systemImageNamed:@"externaldrive"]
-                            identifier:dataMenu.identifier
-                               options:dataMenu.options
-                              children:dataItems];
-      continue;
-    }
-  }
-
-  NSMutableArray<UIMenuElement *> *controlItems = [NSMutableArray array];
-  if (controllerMapping != nil) [controlItems addObject:controllerMapping];
-  if (touchControlSettings != nil) [controlItems addObject:touchControlSettings];
-  [controlItems addObject:[UIAction actionWithTitle:@"Controller Player Setup…" image:[UIImage systemImageNamed:@"gamecontroller"] identifier:nil handler:^(__kindof UIAction *action) { [weakSelf.delegate gameOverlayRequestsControllerMapping:weakSelf]; }]];
-  [controlItems addObject:shakeTricks];
-  [controlItems addObject:motionSteering];
-  [controlItems addObject:experimentalWiimote];
-  UIMenu *controls =
-      [UIMenu menuWithTitle:@"Controls"
-                      image:[UIImage systemImageNamed:@"gamecontroller"]
-                 identifier:@"dev.kartpad.controls"
-                    options:0
-                   children:controlItems];
-
-  NSMutableArray<UIMenuElement *> *displayItems = [NSMutableArray array];
-  if (aspectRatio != nil) [displayItems addObject:aspectRatio];
-  if (renderResolution != nil) [displayItems addObject:renderResolution];
-  NSMutableArray *sizes=[NSMutableArray array];
-  NSArray *sizeNames=@[@"Small",@"Medium",@"Large"];
-  for (NSInteger index=0;index<3;++index) {
-    UIAction *size=[UIAction actionWithTitle:sizeNames[index] image:nil identifier:nil handler:^(__kindof UIAction *action) {
-      [NSUserDefaults.standardUserDefaults setInteger:index forKey:@"KartPadFPSCounterSize"];
-      gKartPadFpsScale.store(index==0?1.0f:index==1?1.5f:2.0f,std::memory_order_relaxed);
-      [weakSelf refreshMenuButton];
-    }];
-    size.state=[NSUserDefaults.standardUserDefaults integerForKey:@"KartPadFPSCounterSize"]==index ? UIMenuElementStateOn : UIMenuElementStateOff;
-    [sizes addObject:size];
-  }
-  [displayItems addObject:[UIMenu menuWithTitle:@"FPS Counter Size" children:sizes]];
-  if (UIApplication.sharedApplication.supportsAlternateIcons) {
-    // Original KartPad artwork only (see branding/PROVENANCE.md). nil is the default icon.
-    NSArray<NSString *> *iconTitles = @[@"Red K", @"Circuit", @"Mono"];
-    NSArray *iconNames = @[NSNull.null, @"AppIcon-Circuit", @"AppIcon-Mono"];
-    NSString *currentIcon = UIApplication.sharedApplication.alternateIconName;
-    NSMutableArray<UIMenuElement *> *icons = [NSMutableArray array];
-    for (NSUInteger index = 0; index < iconTitles.count; ++index) {
-      NSString *iconName = iconNames[index] == NSNull.null ? nil : iconNames[index];
-      UIAction *icon = [UIAction actionWithTitle:iconTitles[index] image:nil identifier:nil
-          handler:^(__kindof UIAction *action) {
-        [UIApplication.sharedApplication setAlternateIconName:iconName completionHandler:^(NSError *error) {
-          dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf refreshMenuButton]; });
-        }];
-      }];
-      icon.state = (iconName == nil ? currentIcon == nil : [iconName isEqualToString:currentIcon])
-          ? UIMenuElementStateOn : UIMenuElementStateOff;
-      [icons addObject:icon];
-    }
-    [displayItems addObject:[UIMenu menuWithTitle:@"App Icon"
-        image:[UIImage systemImageNamed:@"app.badge"] identifier:@"dev.kartpad.app-icon"
-        options:0 children:icons]];
-  }
-  UIMenu *display =
-      [UIMenu menuWithTitle:@"Display"
-                      image:[UIImage systemImageNamed:@"display"]
-                 identifier:@"dev.kartpad.display"
-                    options:0
-                   children:displayItems];
-
-  NSMutableArray<UIMenuElement *> *children = [NSMutableArray array];
-  [children addObject:[UIAction actionWithTitle:@"Return to KartPad Menu"
-      image:[UIImage systemImageNamed:@"house"] identifier:@"dev.kartpad.main-menu"
-      handler:^(__kindof UIAction *action) {
-    if (weakSelf.mainMenuRequested) weakSelf.mainMenuRequested();
-  }]];
-  [children addObject:multiplayer];
-  if (fpsCounter != nil) [children addObject:fpsCounter];
-  [children addObject:controls];
-  [children addObject:display];
-  [children addObject:[UIAction actionWithTitle:@"Sound…"
-      image:[UIImage systemImageNamed:@"speaker.wave.2"] identifier:@"dev.kartpad.sound"
-      handler:^(__kindof UIAction *action) {
-    UIViewController *presenter = KartPadVisibleViewController(weakSelf.window);
-    if (presenter == nil) return;
-    UINavigationController *navigation =
-        [[UINavigationController alloc] initWithRootViewController:[KartPadSoundSettingsController new]];
-    navigation.modalPresentationStyle = UIModalPresentationFormSheet;
-    [presenter presentViewController:navigation animated:YES completion:nil];
-  }]];
-  if (gameData != nil) [children addObject:gameData];
-  if (reportProblem != nil) [children addObject:reportProblem];
-  if (KartPadSystemDiagnosticsIsCandidate()) {
-    [children addObject:[UIAction actionWithTitle:@"Test Native Crash…"
-        image:[UIImage systemImageNamed:@"exclamationmark.triangle"] identifier:nil
-        handler:^(__kindof UIAction *action) {
-      UIViewController *presenter = KartPadVisibleViewController(weakSelf.window);
-      UIAlertController *confirm = [UIAlertController alertControllerWithTitle:@"Test Native Crash?"
-          message:@"This intentionally closes KartPad to test crash reporting. Finish your race first. Reopen KartPad afterward and export the test session. Unsaved progress may be lost."
-          preferredStyle:UIAlertControllerStyleAlert];
-      [confirm addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-      [confirm addAction:[UIAlertAction actionWithTitle:@"Crash Test" style:UIAlertActionStyleDestructive
-          handler:^(UIAlertAction *action) { KartPadDiagnosticCrashProbe(); }]];
-      [presenter presentViewController:confirm animated:YES completion:nil];
-    }]];
-  }
-
-  menuButton.menu = [UIMenu menuWithTitle:@"KartPad"
-                                    image:sourceMenu.image
-                               identifier:@"dev.kartpad.menu"
-                                  options:sourceMenu.options
-                                 children:children];
+  // The button opens HOME, which has everything the menu had; SunPad sets its own menu again on
+  // every refresh, and it never shows.
+  menuButton.menu = nil;
 }
 
 - (void)reportProblem {
@@ -3254,6 +3002,7 @@ static void KartPadApplySoundLevels(BOOL persist) {
   BOOL _choosingGhostImport;
   NSString *_saveImportProfile;
   NSUInteger _ghostLicense;
+  BOOL _screensHolding;  // the game is held under KartPad's screens (runScreensHold)
 }
 
 - (instancetype)initWithSDLWindow:(SDL_Window *)window {
@@ -3277,31 +3026,6 @@ static void KartPadApplySoundLevels(BOOL persist) {
   _window = uiWindow;
   KartPadGameOverlay *overlay =
       [[KartPadGameOverlay alloc] initWithFrame:container.bounds];
-  __weak KartPadRuntimeOverlayHost *weakSelf = self;
-  overlay.multiplayerRequested = ^{
-    [weakSelf showMultiplayerAccess];
-  };
-  overlay.mainMenuRequested = ^{
-    gKartPadMainMenuRequested = YES;
-  };
-  overlay.shakeTricksRequested = ^{
-    [weakSelf showShakeTricks];
-  };
-  overlay.motionSteeringRequested = ^{
-    [weakSelf showMotionSteering];
-  };
-  overlay.ghostManagerRequested = ^{ [weakSelf showGhostManager]; };
-  overlay.saveManagerRequested = ^{ [weakSelf showSaveManager]; };
-  overlay.buttonMappingRequested = ^{ [weakSelf showControllerButtonMapping]; };
-  overlay.retroManagerRequested = ^{ [weakSelf showRetroManager]; };
-  overlay.miiManagerRequested = ^{
-    [weakSelf showMiiManager];
-  };
-  NSString *preview=NSProcessInfo.processInfo.environment[@"KARTPAD_UI_PREVIEW"];
-  (void)preview;
-  overlay.wiimoteRequested = ^{
-    [weakSelf showExperimentalWiimoteInfo];
-  };
   _overlay = overlay;
   _overlay.autoresizingMask = UIViewAutoresizingFlexibleWidth |
                               UIViewAutoresizingFlexibleHeight;
@@ -3309,6 +3033,7 @@ static void KartPadApplySoundLevels(BOOL persist) {
   _overlay.delegate = self;
   [container addSubview:_overlay];
   [container bringSubviewToFront:_overlay];
+  KartPadScreensAttach(uiWindow, container, self);
   [[KartPadPhysicalControllers sharedControllers] start];
   [[KartPadMotionSteering sharedSteering] start];
 
@@ -3364,6 +3089,7 @@ static void KartPadApplySoundLevels(BOOL persist) {
   menuButton.highlighted = NO;
   menuButton.hidden = NO;
   menuButton.alpha = 1.0;
+  KartPadScreensBringToFront();
 }
 
 - (void)userDidTakeScreenshot:(NSNotification *)notification {
@@ -3553,6 +3279,110 @@ static void KartPadApplySoundLevels(BOOL persist) {
   NSLog(@"[KartPad] current game resumed from main menu; frame %d -> %d", pausedFrame, g_gxFrameCount);
 }
 
+// While one of KartPad's screens is open (KartPadScreens.mm) the game holds still, as it does under
+// the KartPad menu: called by the guest's event pump, it keeps the guest stack suspended and UIKit
+// responsive until the last screen closes.
+- (void)runScreensHold {
+  [(KartPadGameOverlay *)_overlay resetKartPadControlAppearance];
+  [[SunPadInputMixer sharedMixer] clearInputFromTouch:YES];
+  [[KartPadMotionSteering sharedSteering] stop];
+  AudioBackend::Instance().SetPausedForHost(true);
+  _screensHolding = YES;
+  const int pausedFrame = g_gxFrameCount;
+  NSLog(@"[KartPad] screens opened; game held at frame %d", pausedFrame);
+  while (KartPadScreensHoldGame()) {
+    @autoreleasepool {
+      [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:1.0 / 60]];
+      KartPadScreensHoldTick();
+    }
+  }
+  _screensHolding = NO;
+  [[SunPadInputMixer sharedMixer] clearInputFromTouch:YES];
+  for (NSUInteger player = 0; player < 4; ++player) {
+    SunPadInputState ignored{};
+    [[KartPadPhysicalControllers sharedControllers] consumePlayer:player state:&ignored];
+  }
+  KartPadScreensQuietHeldButtons();
+  if (UIApplication.sharedApplication.applicationState == UIApplicationStateActive)
+    [[KartPadMotionSteering sharedSteering] start];
+  AudioBackend::Instance().SetPausedForHost(false);
+  NSLog(@"[KartPad] screens closed; game resumed; frame %d -> %d", pausedFrame, g_gxFrameCount);
+}
+
+#pragma mark KartPadScreensHost
+
+- (BOOL)screensRetroRewindRunning { return gKartPadRetroRewindSelected; }
+- (BOOL)screensRetroRewindReady {
+  NSString *version = [NSString stringWithContentsOfFile:[KartPadRetroRewindInstaller.installedRootPath
+      stringByAppendingPathComponent:@"version.txt"] encoding:NSUTF8StringEncoding error:nil];
+  version = [version stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+  return version.length > 0 && [version isEqualToString:KartPadRetroRewindInstaller.requiredVersion];
+}
+- (UIViewController *)screensPresenter { return KartPadVisibleViewController(_window); }
+- (void)screensManageGameData {
+  UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"Mario Kart Wii Files"
+      message:@"Import a new copy, or remove the stored one. Saves and control settings are kept."
+      preferredStyle:UIAlertControllerStyleActionSheet];
+  __weak KartPadRuntimeOverlayHost *weakSelf = self;
+  [sheet addAction:[UIAlertAction actionWithTitle:@"Import from Extracted Folder…" style:UIAlertActionStyleDefault
+      handler:^(UIAlertAction *action) { [weakSelf gameOverlayRequestsGameDataFolderImport:nil]; }]];
+  [sheet addAction:[UIAlertAction actionWithTitle:@"Import or Reimport Wii Disc Image…" style:UIAlertActionStyleDefault
+      handler:^(UIAlertAction *action) { [weakSelf gameOverlayRequestsGameDataChange:nil]; }]];
+  [sheet addAction:[UIAlertAction actionWithTitle:@"Remove Stored Game Data…" style:UIAlertActionStyleDestructive
+      handler:^(UIAlertAction *action) {
+    KartPadRuntimeOverlayHost *host = weakSelf;
+    if (host) dispatch_async(dispatch_get_main_queue(), ^{ [host->_overlay confirmGameDataRemoval]; });
+  }]];
+  [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+  [self presentOverlayAlert:sheet];
+}
+- (void)screensManageRetroRewind { [self showRetroManager]; }
+- (void)screensManageSaves { [self showSaveManager]; }
+- (void)screensShowMultiplayer { [self showMultiplayerAccess]; }
+- (void)screensShowPrivateServer { [self showPrivateServerSettings]; }
+- (void)screensShowMotionSteering { [self showMotionSteering]; }
+- (void)screensShowShakeTricks { [self showShakeTricks]; }
+- (void)screensShowWiiRemoteInfo { [self showExperimentalWiimoteInfo]; }
+- (void)screensShowButtonMapping { [self showControllerButtonMapping]; }
+- (void)screensShowTouchControls {
+  KartPadScreensCloseAll();
+  KartPadGameOverlay *overlay = (KartPadGameOverlay *)_overlay;
+  dispatch_async(dispatch_get_main_queue(), ^{ [overlay toggleSettingsPanel]; });
+}
+- (void)screensReturnToLauncher {
+  KartPadScreensCloseAll();
+  gKartPadMainMenuRequested = YES;
+}
+- (void)screensReportProblem { [(KartPadGameOverlay *)_overlay reportProblem]; }
+- (BOOL)screensDiagnosticsAvailable { return KartPadSystemDiagnosticsIsCandidate(); }
+- (void)screensTestNativeCrash {
+  UIAlertController *confirm = [UIAlertController alertControllerWithTitle:@"Test Native Crash?"
+      message:@"This intentionally closes KartPad to test crash reporting. Finish your race first. Reopen KartPad afterward and export the test session. Unsaved progress may be lost."
+      preferredStyle:UIAlertControllerStyleAlert];
+  [confirm addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+  [confirm addAction:[UIAlertAction actionWithTitle:@"Crash Test" style:UIAlertActionStyleDestructive
+      handler:^(UIAlertAction *action) { KartPadDiagnosticCrashProbe(); }]];
+  [self presentOverlayAlert:confirm];
+}
+- (BOOL)screensSoundCustom { return [NSUserDefaults.standardUserDefaults boolForKey:kKartPadSoundCustomKey]; }
+- (void)screensSetSoundCustom:(BOOL)custom {
+  [NSUserDefaults.standardUserDefaults setBool:custom forKey:kKartPadSoundCustomKey];
+  KartPadApplySoundLevels(YES);
+}
+- (float)screensSoundLevel:(BOOL)music {
+  return KartPadSoundPercent(music ? kKartPadSoundMusicKey : kKartPadSoundGameKey) / 100.0f;
+}
+- (void)screensSetSoundLevel:(float)level music:(BOOL)music {
+  [NSUserDefaults.standardUserDefaults setInteger:std::lround(std::clamp(level, 0.0f, 1.0f) * 100)
+                                           forKey:music ? kKartPadSoundMusicKey : kKartPadSoundGameKey];
+  KartPadApplySoundLevels(YES);
+}
+- (NSInteger)screensFPSCounterSize { return [NSUserDefaults.standardUserDefaults integerForKey:@"KartPadFPSCounterSize"]; }
+- (void)screensSetFPSCounterSize:(NSInteger)size {
+  [NSUserDefaults.standardUserDefaults setInteger:size forKey:@"KartPadFPSCounterSize"];
+  gKartPadFpsScale.store(size == 0 ? 1.0f : size == 1 ? 1.5f : 2.0f, std::memory_order_relaxed);
+}
+
 - (void)showPrivateServerSettings {
   UIViewController *controller = KartPadVisibleViewController(_window);
   if (controller == nil) return;
@@ -3653,7 +3483,7 @@ static void KartPadApplySoundLevels(BOOL persist) {
 - (void)applicationDidBecomeActive:(NSNotification *)notification {
   (void)notification;
   [[KartPadPhysicalControllers sharedControllers] reconcileControllers];
-  [[KartPadMotionSteering sharedSteering] start];
+  if (!_screensHolding) [[KartPadMotionSteering sharedSteering] start];
   [self reattachOverlayIfNeeded];
   [_overlay refreshControllerVisibility];
   [_overlay applySettings];
@@ -3678,18 +3508,6 @@ static void KartPadApplySoundLevels(BOOL persist) {
 - (void)showExperimentalWiimoteInfo {
   [self showIntegrationAlert:@"Experimental Wii Remote + Nunchuk"
                      message:@"Direct Wii Remote pairing is currently available only in the macOS build. KartPad for iPhone and iPad keeps this option visible so the control layout remains consistent, but iOS does not expose the Bluetooth HID pairing path required by an original Wii Remote. No DolphinBar is required on macOS."];
-}
-
-- (void)showMiiManager {
-  [[SunPadInputMixer sharedMixer] clearInputFromTouch:YES];
-  UIViewController *controller = KartPadVisibleViewController(_window);
-  if (controller == nil) return;
-  // The shared Miis screen: create, edit, duplicate, import, export and remove Miis, and
-  // rename, relink or delete licenses. It follows the launcher's light/dark choice.
-  UIViewController *browser = (UIViewController *)KartPadMakeMiiBrowser();
-  browser.modalPresentationStyle = UIModalPresentationFullScreen;
-  browser.overrideUserInterfaceStyle = controller.traitCollection.userInterfaceStyle;
-  [controller presentViewController:browser animated:YES completion:nil];
 }
 
 - (void)presentGameDataFolderPicker {
@@ -4096,6 +3914,10 @@ extern "C" void KartPadMobileServiceMainMenu() {
   if (gKartPadMainMenuRequested && gRuntimeOverlayHost != nil && NSThread.isMainThread) {
     [gRuntimeOverlayHost runMainMenu];
   }
+  if (gRuntimeOverlayHost != nil && NSThread.isMainThread) {
+    KartPadScreensFrameTick();
+    if (KartPadScreensHoldGame()) [gRuntimeOverlayHost runScreensHold];
+  }
 }
 
 extern "C" void KartPadMobileRuntimeHostInstall(void *sdlWindow) {
@@ -4207,9 +4029,15 @@ extern "C" bool KartPadMobileReadClassicInputForPlayer(
   }
   KartPadClassicInputState adapted =
       kartpad::mobile::AdaptSunPadInput(source);
+  adapted.buttons = KartPadScreensMaskHeld(player, adapted.buttons);
+  // KartPad's screens take the controls while one is open (online, the game runs on under it).
+  if (KartPadScreensActive()) {
+    adapted.buttons = 0;
+    adapted.leftStickX = adapted.leftStickY = adapted.rightStickX = adapted.rightStickY = 0;
+  }
   KartPadMotionSteering *motion = [KartPadMotionSteering sharedSteering];
   const BOOL shakeTrick = player == 0 ? [motion consumeShakeTrick] : NO;
-  if (player == 0 &&
+  if (player == 0 && !KartPadScreensActive() &&
       [KartPadPhysicalControllers sharedControllers].connectedControllerCount == 0) {
     kartpad::mobile::ApplyMotionInput(adapted, motion.currentSteering,
                                       shakeTrick);

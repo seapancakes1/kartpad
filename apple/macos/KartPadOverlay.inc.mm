@@ -37,6 +37,12 @@ static void KPPadHideCursor() { [NSCursor setHiddenUntilMouseMoves:YES]; }
     _scale = 1;
     self.wantsLayer = YES;
     self.layerContentsRedrawPolicy = NSViewLayerContentsRedrawOnSetNeedsDisplay;
+#if !TARGET_OS_OSX
+    // UIKit draws a view opaque black behind its drawing unless told otherwise.
+    self.opaque = NO;
+    self.backgroundColor = UIColor.clearColor;
+    self.contentMode = UIViewContentModeRedraw;
+#endif
   }
   return self;
 }
@@ -272,6 +278,9 @@ static void KPSaveSlideSoon(void (^save)(void)) {
   CGFloat _wheel;       // trackpad travel not yet spent on an adjust step
   CGFloat _faceRadius;  // the corner radius the face last drew with (0 before it has drawn)
 }
+#if !TARGET_OS_OSX
+@synthesize focused = _focused;  // UIView has a read-only focused of its own (isFocused)
+#endif
 - (instancetype)initWithFrame:(NSRect)frame {
   if ((self = [super initWithFrame:frame])) {
     _enabled = YES;
