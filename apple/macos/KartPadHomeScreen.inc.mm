@@ -775,11 +775,11 @@ static void KPGhostsTick();  // KartPadGhostsScreen.inc.mm
 
 // A controller connecting or joining: which player it is (or, without one, how to join) and the
 // controller, drawn with its lights in the player's colour.
-static void KPToastController(NSString *name, KPPadFamily family, NSString *systemName, int slot, NSImage *portrait) {
+static void KPToastController(NSString *name, KPPadFamily family, NSString *systemName, int slot, NSData *mii) {
   KPArtState art;
   if (slot >= 0) art.accent = KPPlayerColors[slot];
   [KPOverlay() toastController:slot >= 0 ? KPPlayerName(slot) : name detail:slot >= 0 ? name : @"Press any button to join"
-                        player:slot image:portrait icon:^(CGContextRef c, CGRect r) {
+                        player:slot mii:mii icon:^(CGContextRef c, CGRect r) {
     KPDrawGlyph(c, KPFamilyGlyph(family), r, KPP->secondaryText);
   } art:^(CGContextRef c, CGRect r) { KPDrawControllerArt(c, r, family, art, systemName); }];
 }
@@ -845,9 +845,7 @@ static void KPAutoJoinTick() {
     [roster move:device toSlot:slot];
     [roster identify:device];
     AppendSessionLine([NSString stringWithFormat:@"controllerJoined=%@; player=%d", device.name, slot + 1]);
-    NSImage *portrait = nil;
-    if (NSData *mii = [roster miiFor:device]) portrait = KartPadMiiPortrait(mii, ^{});
-    KPToastController(device.name, device.family, device.systemName, slot, portrait);
+    KPToastController(device.name, device.family, device.systemName, slot, [roster miiFor:device]);
     KPUIPlay(KPUISound::Saved);
   }
 }
@@ -909,9 +907,7 @@ static void KPShowHomeHint() {
 - (void)announceConnected:(KPPadDevice *)device {
   // The disconnected card shows who's back itself.
   if (KPReconnectShowing()) return;
-  NSImage *portrait = nil;
-  if (NSData *mii = [self miiFor:device]) portrait = KartPadMiiPortrait(mii, ^{});
-  KPToastController(device.name, device.family, device.systemName, device.slot, portrait);
+  KPToastController(device.name, device.family, device.systemName, device.slot, [self miiFor:device]);
   KPUIPlay(KPUISound::Confirm);
 }
 - (void)announceGone:(KPPadDevice *)device {

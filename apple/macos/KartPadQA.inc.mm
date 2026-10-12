@@ -114,7 +114,7 @@ static void KPQARun(NSString *line) {
   else if ([command isEqualToString:@"toast"]) {
     // The controller toasts: Player 1 with the first Mii, Player 2 without one, and one still without a player.
     NSData *mii = KartPadReadMii(0, nil);
-    KPToastController(@"Wii Remote", KPFamilyWiiRemote, @"Wii Remote", 0, mii ? KartPadMiiPortrait(mii, ^{}) : nil);
+    KPToastController(@"Wii Remote", KPFamilyWiiRemote, @"Wii Remote", 0, mii);
     KPToastController(@"Xbox controller", KPFamilyXbox, nil, 1, nil);
     KPToastController(@"DualSense", KPFamilyPlayStation, nil, -1, nil);
     KPOverlayController *overlay = KPOverlay();

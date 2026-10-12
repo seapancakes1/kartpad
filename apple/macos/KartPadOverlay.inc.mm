@@ -146,8 +146,9 @@ struct KPUIState {
 @property(nonatomic) unsigned stripe;
 @property(nonatomic, copy) void (^icon)(CGContextRef c, CGRect r);
 @property(nonatomic, strong) NSImage *image;
-// A controller's toast: its player (-1 while it has none) and a drawing of the controller.
+// A controller's toast: its player (-1 while it has none), their Mii and a drawing of the controller.
 @property(nonatomic) int player;
+@property(nonatomic, strong) NSData *mii;
 @property(nonatomic, copy) void (^art)(CGContextRef c, CGRect r);
 // The screen that was showing when it came (nil over the game, or for a controller's): it goes when
 // that screen does.
@@ -202,7 +203,7 @@ struct KPUIState {
          icon:(void (^)(CGContextRef c, CGRect r))icon image:(NSImage *)image;
 - (void)toast:(NSString *)heading detail:(NSString *)detail stripe:(unsigned)stripe
          icon:(void (^)(CGContextRef c, CGRect r))icon image:(NSImage *)image seconds:(NSTimeInterval)seconds;
-- (void)toastController:(NSString *)heading detail:(NSString *)detail player:(int)player image:(NSImage *)image
+- (void)toastController:(NSString *)heading detail:(NSString *)detail player:(int)player mii:(NSData *)mii
                    icon:(void (^)(CGContextRef c, CGRect r))icon art:(void (^)(CGContextRef c, CGRect r))art;
 // Takes away the toasts raised on screen (and any whose screen has gone).
 - (void)dismissToastsFrom:(KPScreen *)screen;
@@ -680,8 +681,8 @@ static void KPDrawPlayerBadge(CGContextRef c, CGRect r, int slot, BOOL dim);
     KPTextWeight(self.heading, CGRectMake(x, CGRectGetMidY(card) - 13, w, 26), 19, KPP->text, NSFontWeightSemibold, NSTextAlignmentLeft);
   }
 }
-// The player's colour fills the leading end, with their number on it (or their Mii, badged); a
-// controller still without a player gets a grey end and its icon. The controller itself sits at the
+// The player's colour fills the leading end, with their Mii's head on it (their number without one);
+// a controller still without a player gets a grey end and its icon. The controller itself sits at the
 // trailing end, its lights in the player's colour.
 - (void)drawController:(CGContextRef)c card:(CGRect)card {
   const int player = self.player;
@@ -699,15 +700,18 @@ static void KPDrawPlayerBadge(CGContextRef c, CGRect r, int slot, BOOL dim);
   }
   CGContextRestoreGState(c);
   KPStroke(c, card, KPP->panelStroke, 1, 18);
-  if (player >= 0 && self.image) {
-    const CGRect well = CGRectMake(CGRectGetMidX(band) - 29, CGRectGetMidY(band) - 29, 52, 52);
-    KPFill(c, CGRectOffset(well, 0, 2), 0x000000, 52 * 0.22, 0.18);
-    KPDrawMiiWell(c, well, self.image, KPPlayerColors[player], NO);
-    // On the well's corner, ringed in white, as on the HOME player cards.
-    const CGRect badge = CGRectMake(CGRectGetMaxX(well) - 13, CGRectGetMaxY(well) - 13, 24, 24);
-    KPSetInk(c, 0xffffff);
-    CGContextFillEllipseInRect(c, CGRectInset(badge, -2.5, -2.5));
-    KPDrawPlayerBadge(c, badge, player, NO);
+  // The portrait may still be rendering: the toast redraws once it's ready.
+  __weak KPToastView *weakSelf = self;
+  NSImage *portrait = player >= 0 && self.mii ? KartPadMiiPortrait(self.mii, ^{ weakSelf.needsDisplay = YES; }) : nil;
+  if (portrait) {
+    const CGRect head = CGRectMake(CGRectGetMidX(band) - 34, CGRectGetMidY(band) - 34, 68, 68);
+    CGContextSaveGState(c);
+    CGContextSetShadowWithColor(c, CGSizeMake(0, 2), 6, [NSColor colorWithWhite:0 alpha:0.3].CGColor);
+    NSGraphicsContext *previous = NSGraphicsContext.currentContext;
+    [portrait drawInRect:head fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1
+          respectFlipped:YES hints:@{NSImageHintInterpolation: @(NSImageInterpolationHigh)}];
+    NSGraphicsContext.currentContext = previous;
+    CGContextRestoreGState(c);
   } else if (player >= 0) {
     KPCentredLabel(c, [NSString stringWithFormat:@"%d", player + 1], band, 50, KPPlayerInk[player], NSFontWeightHeavy);
   } else if (self.icon) {
@@ -1148,14 +1152,14 @@ static constexpr CGFloat KPToastWidth = 420, KPToastHeight = 92;
   toast.owned = self.top != nil;
   [self show:toast seconds:seconds];
 }
-- (void)toastController:(NSString *)heading detail:(NSString *)detail player:(int)player image:(NSImage *)image
+- (void)toastController:(NSString *)heading detail:(NSString *)detail player:(int)player mii:(NSData *)mii
                    icon:(void (^)(CGContextRef c, CGRect r))icon art:(void (^)(CGContextRef c, CGRect r))art {
   KPToastView *toast = [[KPToastView alloc] initWithFrame:NSZeroRect];
   toast.heading = heading;
   toast.detail = detail;
   toast.player = player;
   toast.icon = icon;
-  toast.image = image;
+  toast.mii = mii;
   toast.art = art;
   [self show:toast seconds:3.4];
 }
@@ -1171,6 +1175,7 @@ static constexpr CGFloat KPToastWidth = 420, KPToastHeight = 92;
     shown.stripe = toast.stripe;
     shown.icon = toast.icon;
     shown.image = toast.image;
+    shown.mii = toast.mii;
     shown.art = toast.art;
     shown.seconds = seconds;
     shown.needsDisplay = YES;
