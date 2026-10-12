@@ -7,6 +7,7 @@
 #import <TargetConditionals.h>
 #include <algorithm>
 #include <cmath>
+#import <CoreText/CoreText.h>
 #if TARGET_OS_OSX
 #import <AppKit/AppKit.h>
 using KPMiiImage=NSImage;
@@ -192,6 +193,23 @@ static void KPTextWeight(NSString*text,CGRect rect,CGFloat size,unsigned hex,CGF
     [text drawInRect:rect withAttributes:@{NSFontAttributeName:KPStyleFont(size,weight),NSForegroundColorAttributeName:KPColor(hex),NSParagraphStyleAttributeName:style}];
 }
 static CGSize KPTextSize(NSString*text,CGFloat size,CGFloat weight){return [text sizeWithAttributes:@{NSFontAttributeName:KPStyleFont(size,weight)}];}
+// A short label (a button's letter, a player's number, a keycap's word) centred on its ink in r, in a
+// flipped context: across by the glyphs' outlines, and up and down by them too when it has no
+// lowercase; a word centres its cap height (x-height when all lowercase), so keycaps share a baseline.
+static void KPCentredLabel(CGContextRef c,NSString*text,CGRect r,CGFloat size,unsigned hex,CGFloat weight){
+    KPMiiFont *font=KPStyleFont(size,weight);
+    NSAttributedString *string=[[NSAttributedString alloc]initWithString:text attributes:@{(__bridge NSString*)kCTFontAttributeName:font,(__bridge NSString*)kCTForegroundColorFromContextAttributeName:@YES}];
+    CTLineRef line=CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)string);
+    const CGRect ink=CTLineGetBoundsWithOptions(line,kCTLineBoundsUseGlyphPathBounds);
+    const BOOL lower=[text rangeOfCharacterFromSet:NSCharacterSet.lowercaseLetterCharacterSet].location!=NSNotFound;
+    const BOOL upper=[text rangeOfCharacterFromSet:NSCharacterSet.uppercaseLetterCharacterSet].location!=NSNotFound;
+    const CGFloat middle=!lower?CGRectGetMidY(ink):upper?font.capHeight/2:font.xHeight/2;
+    CGContextSaveGState(c);KPSetInk(c,hex);
+    CGContextSetTextMatrix(c,CGAffineTransformMakeScale(1,-1));
+    CGContextSetTextPosition(c,CGRectGetMidX(r)-CGRectGetMidX(ink),CGRectGetMidY(r)+middle);
+    CTLineDraw(line,c);
+    CGContextRestoreGState(c);CFRelease(line);
+}
 
 // Player colors in Nintendo's usual four-player order (red, blue, yellow, green). They tint player
 // cards and badges and light controllers that have a color light (DualShock 4, DualSense). Ink is the

@@ -676,8 +676,7 @@ static void KPDrawPlayerBadge(CGContextRef c, CGRect r, int slot, BOOL dim);
     CGContextFillEllipseInRect(c, CGRectInset(badge, -2.5, -2.5));
     KPDrawPlayerBadge(c, badge, player, NO);
   } else if (player >= 0) {
-    KPTextWeight([NSString stringWithFormat:@"%d", player + 1], CGRectMake(band.origin.x, CGRectGetMidY(band) - 31, band.size.width, 60),
-                 50, KPPlayerInk[player], NSFontWeightHeavy);
+    KPCentredLabel(c, [NSString stringWithFormat:@"%d", player + 1], band, 50, KPPlayerInk[player], NSFontWeightHeavy);
   } else if (self.icon) {
     self.icon(c, CGRectMake(CGRectGetMidX(band) - 18, CGRectGetMidY(band) - 18, 36, 36));
   }

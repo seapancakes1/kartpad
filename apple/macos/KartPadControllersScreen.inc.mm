@@ -606,8 +606,7 @@ enum : unsigned { KPPressConfirm = 1, KPPressBack = 2, KPPressStart = 4 };
     KPDrawHintBadge(c, label, CGRectInset(button, size * 0.12, size * 0.12), size * 0.55, color, KPPlayerInk[slot]);
   } else {
     const CGFloat type = label.length <= 2 ? size * 0.5 : size * 0.24;
-    KPTextWeight(label, CGRectMake(button.origin.x, CGRectGetMidY(button) - type * 0.66, size, type * 1.32), type, KPPlayerInk[slot],
-                 NSFontWeightHeavy);
+    KPCentredLabel(c, label, button, type, KPPlayerInk[slot], NSFontWeightHeavy);
   }
   // Which controller is in the subtitle above.
   KPTextWeight([@"Press " stringByAppendingString:KPButtonWord(KPJoinDevice(), KartPadMiiPadConfirm)],

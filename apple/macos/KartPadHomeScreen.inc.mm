@@ -137,8 +137,8 @@ static void KPDrawPlayerBadge(CGContextRef c, CGRect r, int slot, BOOL dim) {
   KPSetInk(c, KPPlayerDarkColors[slot], dim ? 0.3 : 0.9);
   CGContextSetLineWidth(c, 1.5);
   CGContextStrokeEllipseInRect(c, CGRectInset(r, 0.75, 0.75));
-  KPTextWeight([NSString stringWithFormat:@"%d", slot + 1], CGRectMake(r.origin.x, CGRectGetMidY(r) - r.size.height * 0.36, r.size.width,
-               r.size.height * 0.75), r.size.height * 0.56, dim ? KPP->secondaryText : KPPlayerInk[slot], NSFontWeightHeavy);
+  KPCentredLabel(c, [NSString stringWithFormat:@"%d", slot + 1], r, r.size.height * 0.56, dim ? KPP->secondaryText : KPPlayerInk[slot],
+                 NSFontWeightHeavy);
 }
 
 static void KPDrawBattery(CGContextRef c, CGRect r, KPPadDevice *device) {

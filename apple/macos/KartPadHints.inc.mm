@@ -123,14 +123,12 @@ static void KPDrawHintBadge(CGContextRef c, NSString *label, CGRect r, CGFloat s
       CGContextClosePath(c);
       CGContextStrokePath(c);
     } else {
-      KPTextWeight(label, CGRectMake(r.origin.x, CGRectGetMidY(r) - size * 0.52, r.size.width, size * 1.1), size * 0.8, hole,
-                   NSFontWeightBold);
+      KPCentredLabel(c, label, r, size * 0.8, hole, NSFontWeightBold);
     }
     return;
   }
   KPStroke(c, r, ink, 1.5, size * 0.36);
-  KPTextWeight(label, CGRectMake(r.origin.x, CGRectGetMidY(r) - size * 0.5, r.size.width, size * 1.05), size * 0.78, ink,
-               NSFontWeightSemibold);
+  KPCentredLabel(c, label, r, size * 0.78, ink, NSFontWeightSemibold);
 }
 
 // Draws the hints in one line in r, from the side align says. Hints the device has no button for are
