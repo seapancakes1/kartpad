@@ -34,7 +34,7 @@
 :root {
   --bg: #f2f4f5; --stripe: #e8ecee; --panel: #fbfcfc; --panelStroke: #c9d1d6; --well: #e6ecef;
   --btnTop: #ffffff; --btnBottom: #dfe5e8; --btnStroke: #b3bdc3; --ledge: #b0bbc1;
-  --selTop: #ebf8fe; --selBottom: #bde8fa;
+  --tabTop: #fafbfc; --tabBottom: #d3dade; --selTop: #ebf8fe; --selBottom: #bde8fa;
   --accTop: #5ccbf3; --accBottom: #1b9ad5; --accStroke: #1784bc; --accLedge: #14709f;
   --text: #3a4348; --dim: #6a747a; --icon: #5a646a; --off: #c3cbd0; --gloss: .9; --shadow: .2;
   --live: #30b85c; --dead: #d0342c; --player: #6a747a;
@@ -44,7 +44,7 @@
   :root {
     --bg: #15181b; --stripe: #191d20; --panel: #22272b; --panelStroke: #363d43; --well: #191d21;
     --btnTop: #3c4349; --btnBottom: #2a3035; --btnStroke: #4c555c; --ledge: #0c0e10;
-    --selTop: #1f4b5f; --selBottom: #163748;
+    --tabTop: #3f464c; --tabBottom: #2b3136; --selTop: #1f4b5f; --selBottom: #163748;
     --accTop: #4cc6f2; --accBottom: #168ac4; --accStroke: #63d0f5; --accLedge: #0d5880;
     --text: #e6ebee; --dim: #9aa5ab; --icon: #c3cbd0; --off: #4a535a; --gloss: .13; --shadow: .55;
     --dead: #ff6b5e; --player: #9aa5ab;
@@ -66,12 +66,13 @@ html.turned.back { --stripeDir: to right; }
   background: repeating-linear-gradient(to bottom, var(--bg) 0, var(--bg) 2px, var(--stripe) 2px, var(--stripe) 4px); }
 .hidden { display: none !important; }
 
-/* Buttons: KartPad's Wii channel faces, a gradient on a ledge with a glossy inner rim. */
+/* Buttons: KartPad's Wii channel faces, a gradient on a ledge with a glossy inner rim (KPButtonFace).
+   Blue faces dim the rim; a pressed face loses it. */
 .key { position: absolute; display: flex; align-items: center; justify-content: center; flex-direction: column;
   border-radius: calc(var(--u) * 3.4); border: 1.25px solid var(--btnStroke);
   background: linear-gradient(var(--btnTop), var(--btnBottom)); box-shadow: 0 calc(var(--u) * .9) 0 var(--ledge);
   color: var(--text); font-size: calc(var(--u) * 5); font-weight: 700; letter-spacing: .01em; }
-.key::after { content: ""; position: absolute; inset: 3px; border-radius: inherit; border: 1px solid rgba(255, 255, 255, var(--gloss));
+.key::after, .btn::after, .seg button::after { content: ""; position: absolute; inset: 3px; border-radius: inherit; border: 1px solid rgba(255, 255, 255, var(--gloss));
   -webkit-mask-image: linear-gradient(#000 45%, transparent 90%); mask-image: linear-gradient(#000 45%, transparent 90%); pointer-events: none; }
 .key.round { border-radius: 50%; }
 .key.down { transform: translateY(calc(var(--u) * .7)); box-shadow: 0 calc(var(--u) * .2) 0 var(--ledge);
@@ -79,7 +80,7 @@ html.turned.back { --stripeDir: to right; }
 .key.down::after { opacity: 0; }
 .key.primary { background: linear-gradient(var(--accTop), var(--accBottom)); border-color: var(--accStroke);
   box-shadow: 0 calc(var(--u) * .9) 0 var(--accLedge); color: #fff; }
-.key.primary::after { border-color: rgba(255, 255, 255, .4); }
+.key.primary::after, .btn.primary::after, .seg button.on::after { border-color: rgba(255, 255, 255, calc(var(--gloss) * .45)); }
 .key.primary.down { background: linear-gradient(var(--accBottom), var(--accTop)); box-shadow: 0 calc(var(--u) * .2) 0 var(--accLedge); }
 .key small { font-size: calc(var(--u) * 2.8); color: var(--dim); font-weight: 600; }
 .key svg { width: calc(var(--u) * 5.6); height: calc(var(--u) * 5.6); fill: none; stroke: currentColor; stroke-width: 2.2;
@@ -103,7 +104,12 @@ html.turned.back { --stripeDir: to right; }
 .bar .key { position: relative; height: calc(var(--u) * 11); min-height: 36px; min-width: calc(var(--u) * 13);
   padding: 0 calc(var(--u) * 3); border-radius: 99px; font-size: calc(var(--u) * 3.6); flex-direction: row; gap: calc(var(--u) * 1.4); }
 .bar .key svg { width: calc(var(--u) * 5); height: calc(var(--u) * 5); }
-.bar .key.on { background: linear-gradient(var(--selTop), var(--selBottom)); border-color: var(--accStroke); }
+/* On: the selected face, a pale blue with a thick blue rim on a blue ledge. */
+.bar .key.on { background: linear-gradient(var(--selTop), var(--selBottom)); border-color: var(--accStroke);
+  box-shadow: inset 0 0 0 1.25px var(--accStroke), 0 calc(var(--u) * .9) 0 var(--accStroke); }
+.bar .key.on::after { inset: 3.25px; }
+.bar .key.on.down { background: linear-gradient(var(--selBottom), var(--selTop));
+  box-shadow: inset 0 0 0 1.25px var(--accStroke), 0 calc(var(--u) * .2) 0 var(--accStroke); }
 #home::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: inherit; background: rgba(27, 154, 213, .35); }
 #home.holding::before { width: 100%; transition: width .5s linear; }
 #badge { position: absolute; top: calc(var(--st) + var(--u) * 3); left: 50%; transform: translateX(-50%); z-index: 3;
@@ -222,8 +228,9 @@ html.turned.back { --stripeDir: to right; }
   padding: .55em 1.6em; border-radius: max(10px, calc(var(--u) * 2.8)); border: 1.25px solid var(--btnStroke);
   background: linear-gradient(var(--btnTop), var(--btnBottom)); box-shadow: 0 3px 0 var(--ledge); }
 .btn.primary { background: linear-gradient(var(--accTop), var(--accBottom)); border-color: var(--accStroke); box-shadow: 0 3px 0 var(--accLedge); color: #fff; }
-.btn:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--ledge); }
-.btn.primary:active { box-shadow: 0 1px 0 var(--accLedge); }
+.btn:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--ledge); background: linear-gradient(var(--btnBottom), var(--btnTop)); }
+.btn.primary:active { box-shadow: 0 1px 0 var(--accLedge); background: linear-gradient(var(--accBottom), var(--accTop)); }
+.btn:active::after, .seg button:active::after { opacity: 0; }
 .btn:disabled { opacity: .42; }
 #settings .card { max-width: 98%; padding: max(14px, calc(var(--u) * 4)) max(16px, calc(var(--u) * 5)); gap: max(8px, calc(var(--u) * 2.4)); }
 /* Settings: everyone's on the left, tilt's on the right (only with tilt), each a label and a row of
@@ -236,10 +243,13 @@ html.turned.back { --stripeDir: to right; }
 .setting { display: contents; }
 .setting > span { color: var(--dim); font-size: max(14px, calc(var(--u) * 3.6)); text-align: left; white-space: nowrap; }
 .seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px; }
-.seg button { font: inherit; font-size: max(14px, calc(var(--u) * 3.6)); font-weight: 700; color: var(--text); padding: .4em .8em;
-  border-radius: max(8px, calc(var(--u) * 2.2)); border: 1.25px solid var(--btnStroke); background: linear-gradient(var(--btnTop), var(--btnBottom));
+/* Choices are tabs, as in KartPad's Settings: the chosen one blue. */
+.seg button { position: relative; font: inherit; font-size: max(14px, calc(var(--u) * 3.6)); font-weight: 700; color: var(--text); padding: .4em .8em;
+  border-radius: max(8px, calc(var(--u) * 2.2)); border: 1.25px solid var(--btnStroke); background: linear-gradient(var(--tabTop), var(--tabBottom));
   box-shadow: 0 2px 0 var(--ledge); }
-.seg button.on { background: linear-gradient(var(--selTop), var(--selBottom)); border-color: var(--accStroke); box-shadow: 0 2px 0 var(--accStroke); }
+.seg button.on { background: linear-gradient(var(--accTop), var(--accBottom)); border-color: var(--accStroke); box-shadow: 0 2px 0 var(--accLedge); color: #fff; }
+.seg button:active { transform: translateY(1px); box-shadow: 0 1px 0 var(--ledge); background: linear-gradient(var(--tabBottom), var(--tabTop)); }
+.seg button.on:active { box-shadow: 0 1px 0 var(--accLedge); background: linear-gradient(var(--accBottom), var(--accTop)); }
 #delay { font-size: max(13px, calc(var(--u) * 3.3)); }
 </style>
 </head>
@@ -528,7 +538,6 @@ function applyLayout() {
   stage.classList.toggle("lefty", prefs.lefty);
   $("tiltKey").classList.toggle("hidden", !(canTilt && now === "race"));
   $("tiltKey").classList.toggle("on", tilt);
-  $("tiltKey").querySelector("span").textContent = tilt ? "Tilt" : "Stick";
   $("layoutKey").classList.toggle("hidden", view !== "unknown");
   $("layoutKey").textContent = manualRace ? "Menus" : "Race";
   // Fingers on controls that just went away let go.
