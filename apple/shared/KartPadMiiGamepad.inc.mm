@@ -578,4 +578,6 @@ void KartPadSettingsPadShowFocus(void){
     NSWindow *window=KPPadSettingsWindow();if(!window.isKeyWindow)return;
     if(NSControl *start=KPPadSettingsStart(KPPadSettingsControls(window))){KPPadHidePointer();KPPadSettingsShow(start);}
 }
+#else
+#include "../ios/KartPadMiiGamepadIOS.inc.mm"
 #endif

@@ -22,9 +22,9 @@ void KartPadPresentMiiEditor(id parent, NSUInteger slot);
 @end
 id<KartPadMiiBrowser> KartPadMakeMiiBrowser(void);
 
-#if TARGET_OS_OSX
 // Controller navigation for the Miis window and the Mii editor (KartPadMiiGamepad.inc.mm). The Mac
-// shell reads the pads and sends each press here; the game ignores the pads meanwhile.
+// shell (and on iPhone/iPad, KartPadScreens.mm) reads the pads and sends each press here; the game
+// ignores the pads meanwhile.
 typedef NS_ENUM(NSInteger, KartPadMiiPadButton) {
     KartPadMiiPadUp, KartPadMiiPadDown, KartPadMiiPadLeft, KartPadMiiPadRight,
     // A and B (the game's confirm and back buttons), X and Y, LB and RB, and Start.
@@ -41,21 +41,23 @@ void KartPadMiiPadPress(KartPadMiiPadButton button, BOOL down);
 void KartPadMiiPadTurn(float x, double seconds);
 // The Miis window has just opened from a controller: show the focus ring on the selected Mii.
 void KartPadMiiPadShowFocus(void);
+#if TARGET_OS_OSX
 // Settings takes the same presses while it is the key window. The Mac shell gives its window and
 // tabs once, and what B and Start do (close it).
 @class NSWindow, NSTabView;
 void KartPadMiiPadSetSettings(NSWindow *window, NSTabView *tabs, void (^close)(void));
 // Settings has just opened from a controller: show the focus ring.
 void KartPadSettingsPadShowFocus(void);
+#endif
 
 // The Mac shell's own screens (HOME, Controllers, Settings) share the Mii screens' menu sounds and
-// Mii portraits. sound is a kartpad::mii::EditorSound; prepare renders them from the game data once.
+// Mii portraits (on iPhone/iPad too). sound is a kartpad::mii::EditorSound; prepare renders them from
+// the game data once.
 void KartPadUIPrepareSounds(void);
 void KartPadUIPlaySound(NSInteger sound);
 BOOL KartPadUISoundsEnabled(void);
 void KartPadUISetSoundsEnabled(BOOL enabled);
-// The Mii's head portrait (an NSImage), or nil while it renders; ready runs on the main thread once
-// it is there (or failed).
+// The Mii's head portrait (an NSImage, a UIImage on iPhone/iPad), or nil while it renders; ready runs
+// on the main thread once it is there (or failed).
 id _Nullable KartPadMiiPortrait(NSData *mii, void (^ready)(void));
-#endif
 NS_ASSUME_NONNULL_END

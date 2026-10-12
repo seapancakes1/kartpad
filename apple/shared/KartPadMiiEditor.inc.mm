@@ -2240,7 +2240,6 @@ static void KPMiiPresentEditor(id parent,NSUInteger slot,NSData *data,BOOL dupli
 #endif
 }
 void KartPadPresentMiiEditor(id parent,NSUInteger slot){KPMiiPresentEditor(parent,slot,nil,NO);}
-#if TARGET_OS_OSX
 void KartPadUIPrepareSounds(void){[[KPMiiSounds shared] prepare:KPMiiSoundArchivePath()];}
 void KartPadUIPlaySound(NSInteger sound){if(sound>=0&&sound<NSInteger(KPSound::Count))KPPlay(KPSound(sound));}
 BOOL KartPadUISoundsEnabled(void){return [KPMiiSounds shared].enabled;}
@@ -2249,4 +2248,3 @@ id KartPadMiiPortrait(NSData *mii,void(^ready)(void)){
     if(KPMiiImage *image=[KPMiiPortraits() objectForKey:mii])return image;
     KPMiiRequestPortrait(mii,ready);return nil;
 }
-#endif
