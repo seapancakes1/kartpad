@@ -112,9 +112,11 @@ static void KPQARun(NSString *line) {
   else if ([command isEqualToString:@"shot"]) KPQAShot(argument);
   else if ([command isEqualToString:@"fullscreen"]) [Controller() toggleGameFullScreen:nil];
   else if ([command isEqualToString:@"toast"]) {
-    [KPOverlay() toast:@"Xbox controller connected" detail:@"Player 2" stripe:KPPlayerColors[1] icon:^(CGContextRef c, CGRect r) {
-      KPDrawGlyph(c, KPUIGlyph::Pad, r, KPP->accentBottom);
-    } image:nil seconds:6];
+    // The controller toasts: Player 1 with the first Mii, Player 2 without one, and one still without a player.
+    NSData *mii = KartPadReadMii(0, nil);
+    KPToastController(@"Wii Remote", KPFamilyWiiRemote, @"Wii Remote", 0, mii ? KartPadMiiPortrait(mii, ^{}) : nil);
+    KPToastController(@"Xbox controller", KPFamilyXbox, nil, 1, nil);
+    KPToastController(@"DualSense", KPFamilyPlayStation, nil, -1, nil);
     KPOverlayController *overlay = KPOverlay();
     KPQALog([NSString stringWithFormat:@"toast host=%@ hidden=%d frame=%@ superview=%@ last=%d toasts=%lu", overlay.host, overlay.host.hidden,
              NSStringFromRect(overlay.host.frame), overlay.host.superview, overlay.host.superview.subviews.lastObject == overlay.host,

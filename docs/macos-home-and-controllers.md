@@ -18,19 +18,21 @@ is kept; **Reset** in button setup goes back to this layout.
 ## For players
 
 **HOME.** Press HOME on a controller (the Xbox button, the PS button, HOME on a
-Pro Controller, Joy-Con or Wii Remote) or **esc** on the keyboard. Controllers
-without a HOME button hold **View + Menu** for a second. The game holds still
+Pro Controller, Joy-Con or Wii Remote) or **esc** on the keyboard, or hold
+**Menu** (Start, +) for a second on any controller, which is how a GameCube pad
+opens it. The game holds still
 underneath (online the race keeps going, and HOME says so). HOME has:
 
 - **Resume**, and HOME or B again closes it.
-- **Switch game**: Mario Kart Wii ⇄ Retro Rewind. KartPad restarts to switch,
-  but its window shows a "Starting Retro Rewind" card the whole time, so it
-  doesn't look like the app closed.
 - **Miis** and **Controllers**.
-- **Volume** on a row of its own: left and right change it, A mutes, and the pointer drags it along the track.
-- Along the top: **Full Screen** (or **Window**), the ⚙ button for
+- **Volume** on a row of its own: left and right change it, A mutes (the level stays, greyed), and the pointer drags it along the track.
+- Along the top: the other game to switch to (Mario Kart Wii ⇄ Retro Rewind),
+  **Full Screen** (or **Window**), the ⚙ button for
   **Settings**, **Quit**, and **Restart to apply** when a change needs one
-  (switching games, Mii changes, new game files, display settings).
+  (switching games, Mii changes, new game files, display settings). KartPad
+  restarts to switch games, but its window shows a "Starting Retro Rewind" card
+  the whole time, so it doesn't look like the app closed. Beside the HOME title
+  is the game that's playing.
 - **Players** along the bottom: each player's colour, Mii, controller and
   battery. X on a player makes their controller buzz and flash; A opens
   Controllers on them, and on an empty player goes straight to "Press Ⓐ on the
@@ -76,7 +78,8 @@ so you can tell which one is yours.
   player, its link delay and **Remove**.
 - **The keyboard** is a controller too: by default it plays as the first
   player without a controller, so a pad on Player 1 now works alongside it.
-  Settings → Controls → Keyboard plays as pins it to a player.
+  Controllers moves it to a player (Use Keyboard) or takes it out (Stop
+  playing).
 - Miis on controllers are labels that help players tell them apart. Racers
   and licenses are still picked in the game, and the game's Register
   Controllers screen works as before.
@@ -126,7 +129,8 @@ race!". It also comes back if the game files go missing.
 local auto-updater manages Retro Rewind), Settings → Game → Retro Rewind files
 and setup download the exact version, check its size and SHA-256, unpack it
 with macOS's own `ditto`, check it as the game does and install it in KartPad's
-data folder. It keeps going while you play.
+data folder. It keeps going while you play. Before it starts, **Use a Folder**
+picks a Retro Rewind already on the Mac instead (with the mouse).
 
 **Discord.** While the Discord app is open on the Mac, your Discord status shows
 what you're playing. In Mario Kart Wii that's the course, then the mode and

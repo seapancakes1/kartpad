@@ -75,7 +75,7 @@
       self.settingValues[key].stringValue=[NSString stringWithFormat:@"%.0f%%",control.doubleValue];
     } else [(NSButton *)control setState:[value boolValue]?NSControlStateValueOn:NSControlStateValueOff];
   }
-  [self refreshPadShortcuts];
+  [self refreshSettingsExtras];
 }
 // VSync and full-display fullscreen as KartPad started, read when Settings (this panel or the HOME
 // one) is first built; only Settings changes them.
@@ -84,27 +84,10 @@ static void KPReadLaunchDisplaySettings() {
   if(KPLaunchDisplayRead)return;
   KPLaunchDisplayRead=true;KPLaunchVsync=RuntimeConfigFile::LoadConfigFile().vsync.value_or(false);KPLaunchNotch=KPFullscreenAcrossNotch();
 }
-static NSArray<NSNumber *> *KPPadShortcutHolds() { return @[@0.5,@1,@2,@3]; }
-// "View for 1 second"
-static NSString *KPPadShortcutPhrase(int kind) {
-  const NSTimeInterval hold=KPPadShortcutHold(kind);
-  NSString *time=hold<1?@"½ second":hold==1?@"1 second":[NSString stringWithFormat:@"%g seconds",hold];
-  return [NSString stringWithFormat:@"%@ for %@",KPPadButtonNames(KPPadShortcutButtons(kind)),time];
-}
 // Off, then Light, Medium and Strong: the rumble strengths behind them.
 static NSArray<NSNumber *> *KPVibrationStrengths() { return @[@0,@0.25,@0.5,@1]; }
-- (void)refreshPadShortcuts {
-  const bool capturing=KPPadCapturing();
-  for(int kind=0;kind<KPPadShortcutCount;++kind) {
-    const bool on=KPPadShortcutEnabled(kind),choosing=capturing&&self.capturingShortcut==kind;
-    self.padShortcutSwitches[kind].state=on?NSControlStateValueOn:NSControlStateValueOff;
-    self.padShortcutButtons[kind].stringValue=choosing?@"Hold the new buttons…":[@"Hold " stringByAppendingString:KPPadButtonNames(KPPadShortcutButtons(kind))];
-    self.padShortcutButtons[kind].textColor=on?NSColor.labelColor:NSColor.disabledControlTextColor;
-    self.padShortcutChoose[kind].title=choosing?@"Cancel":@"Change Buttons…";
-    self.padShortcutChoose[kind].enabled=on&&(!capturing||choosing);self.padShortcutHolds[kind].enabled=on&&!choosing;
-    NSUInteger index=[KPPadShortcutHolds() indexOfObject:@(KPPadShortcutHold(kind))];
-    [self.padShortcutHolds[kind] selectItemAtIndex:index==NSNotFound?1:index];
-  }
+// What refreshSettings's table doesn't cover: vibration, the background pause and the restart button.
+- (void)refreshSettingsExtras {
   const auto c=RuntimeConfigFile::LoadConfigFile();
   NSInteger vibration=0;
   if(c.rumbleEnabled.value_or(true)) {
@@ -116,47 +99,13 @@ static NSArray<NSNumber *> *KPVibrationStrengths() { return @[@0,@0.25,@0.5,@1];
   self.backgroundPauseSwitch.state=KPBackgroundPauseEnabled()?NSControlStateValueOn:NSControlStateValueOff;
   self.settingsRestart.hidden=!self.restartPending;
 }
-- (NSString *)padShortcutSaved:(int)kind {
-  return KPPadShortcutEnabled(kind)?[NSString stringWithFormat:@"Saved. Hold %@ to open %@.",KPPadShortcutPhrase(kind),KPPadShortcuts[kind].opens]:
-      [NSString stringWithFormat:@"Saved. Controllers no longer open %@.",KPPadShortcuts[kind].opens];
-}
-- (void)padShortcutChanged:(NSControl *)sender {
-  const int kind=(int)sender.tag;NSUserDefaults *defaults=NSUserDefaults.standardUserDefaults;
-  if([sender isKindOfClass:NSPopUpButton.class]) {
-    [defaults setDouble:KPPadShortcutHolds()[((NSPopUpButton *)sender).indexOfSelectedItem].doubleValue forKey:KPPadShortcuts[kind].holdKey];
-  } else {
-    [defaults setBool:((NSButton *)sender).state==NSControlStateValueOn forKey:KPPadShortcuts[kind].enabledKey];
-    if(!KPPadShortcutEnabled(kind)&&self.capturingShortcut==kind)KPPadCancelCapture();
-  }
-  self.settingsStatus.stringValue=[self padShortcutSaved:kind];
-  [self refreshPadShortcuts];
-}
-// The buttons are whatever is held together on a controller before everything is let go.
-- (void)choosePadShortcutButtons:(NSButton *)sender {
-  const int kind=(int)sender.tag;
-  if(KPPadCapturing()) {
-    KPPadCancelCapture();
-    self.settingsStatus.stringValue=[NSString stringWithFormat:@"%@ still opens with %@.",KPPadShortcuts[kind].opens,KPPadButtonNames(KPPadShortcutButtons(kind))];
-    [self refreshPadShortcuts];return;
-  }
-  self.capturingShortcut=kind;
-  __weak KartPadMacShellController *weak=self;
-  KPPadBeginCapture(^(uint64_t buttons) {
-    KPPadShortcutSetButtons(kind,buttons);
-    NSString *saved=[weak padShortcutSaved:kind],*warning=KPPadButtonsWarning(buttons);
-    weak.settingsStatus.stringValue=warning?[NSString stringWithFormat:@"%@ %@",saved,warning]:saved;
-    [weak refreshPadShortcuts];
-  });
-  self.settingsStatus.stringValue=[NSString stringWithFormat:@"Hold the new buttons together on any controller, then let go. Cancel keeps %@.",KPPadButtonNames(KPPadShortcutButtons(kind))];
-  [self refreshPadShortcuts];
-}
 - (void)vibrationChanged:(NSPopUpButton *)sender {
   const NSInteger index=sender.indexOfSelectedItem;
   std::ostringstream strength;strength<<KPVibrationStrengths()[index].floatValue;
   if(!RuntimeConfigFile::WriteSetting("controller","rumble",index>0?"true":"false")||
      (index>0&&!RuntimeConfigFile::WriteSetting("controller","rumble_strength",strength.str()))) {
     self.settingsStatus.stringValue=@"Could not save this setting. Check that Config.toml is writable.";
-    [self refreshPadShortcuts];return;
+    [self refreshSettingsExtras];return;
   }
   self.settingsStatus.stringValue=index>0?[NSString stringWithFormat:@"Saved. Vibration is %@.",sender.titleOfSelectedItem.lowercaseString]:@"Saved. Controllers no longer vibrate.";
   KartPadRequestSettingsReload();
@@ -278,44 +227,25 @@ static NSArray<NSNumber *> *KPVibrationStrengths() { return @[@0,@0.25,@0.5,@1];
     [self setting:@"audio.mix_worker" checkbox:@"Mix audio on a worker thread" page:audio y:245];
     [self settingsLabel:@"Turn off only if sound crackles." page:audio y:180];
 
-    // Controllers: the mapping panel, then vibration and the controller shortcuts below it.
+    // Controllers: the mapping panel, then vibration below it.
     NSView *controllers=[self settingsPage:@"Controllers"];
-    [controllers setFrameSize:NSMakeSize(780,1160)];
+    [controllers setFrameSize:NSMakeSize(780,980)];
     [KPControllers() prepareInPanel:self.settingsPanel];
-    KPControllers().content.frame=NSMakeRect(0,420,760,740);
+    KPControllers().content.frame=NSMakeRect(0,240,760,740);
     KPControllers().content.autoresizingMask=NSViewWidthSizable;
     [controllers addSubview:KPControllers().content];
     // A controller starts on its player choice (it shows itself; see followPad:).
     [self.settingsTabs tabViewItemAtIndex:[self.settingsTabs indexOfTabViewItemWithIdentifier:@"Controllers"]].initialFirstResponder=KPControllers().player;
-    [self settingsHeading:@"Vibration" page:controllers y:372];
-    [self settingsLabel:@"Strength" page:controllers y:312];
-    self.vibrationChoice=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(180,336,190,28) pullsDown:NO];
+    [self settingsHeading:@"Vibration" page:controllers y:192];
+    [self settingsLabel:@"Strength" page:controllers y:132];
+    self.vibrationChoice=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(180,156,190,28) pullsDown:NO];
     [self.vibrationChoice addItemsWithTitles:@[@"Off",@"Light",@"Medium",@"Strong"]];
     self.vibrationChoice.target=self;self.vibrationChoice.action=@selector(vibrationChanged:);
     self.vibrationChoice.accessibilityLabel=@"Vibration strength";
     [controllers addSubview:self.vibrationChoice];
     NSButton *test=[NSButton buttonWithTitle:@"Test Vibration" target:self action:@selector(testVibration:)];
-    test.frame=NSMakeRect(384,334,160,32);[controllers addSubview:test];
-    [self settingsLabel:@"If nothing happens, turn on rumble in the game’s options." page:controllers y:280];
-    [self settingsHeading:@"Controller shortcuts" page:controllers y:256];
-    // One line for each shortcut: on or off, its buttons, how long to hold them, and changing them.
-    NSMutableArray *switches=[NSMutableArray array],*names=[NSMutableArray array],*choose=[NSMutableArray array],*holds=[NSMutableArray array];
-    for(int kind=0;kind<KPPadShortcutCount;++kind) {
-      const CGFloat y=220-kind*44;
-      NSButton *on=[NSButton checkboxWithTitle:[@"Open " stringByAppendingString:KPPadShortcuts[kind].opens] target:self action:@selector(padShortcutChanged:)];
-      on.frame=NSMakeRect(24,y,150,28);on.tag=kind;[controllers addSubview:on];[switches addObject:on];
-      NSTextField *buttons=[self label:@""];buttons.frame=NSMakeRect(180,y+2,200,20);
-      buttons.lineBreakMode=NSLineBreakByTruncatingTail;[controllers addSubview:buttons];[names addObject:buttons];
-      NSPopUpButton *hold=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(384,y,160,28) pullsDown:NO];
-      [hold addItemsWithTitles:@[@"for ½ second",@"for 1 second",@"for 2 seconds",@"for 3 seconds"]];
-      hold.target=self;hold.action=@selector(padShortcutChanged:);hold.tag=kind;
-      hold.accessibilityLabel=[NSString stringWithFormat:@"How long to hold the %@ buttons",KPPadShortcuts[kind].opens];
-      [controllers addSubview:hold];[holds addObject:hold];
-      NSButton *pick=[NSButton buttonWithTitle:@"Change Buttons…" target:self action:@selector(choosePadShortcutButtons:)];
-      pick.frame=NSMakeRect(554,y-2,170,32);pick.tag=kind;[controllers addSubview:pick];[choose addObject:pick];
-    }
-    self.padShortcutSwitches=switches;self.padShortcutButtons=names;self.padShortcutChoose=choose;self.padShortcutHolds=holds;
-    self.capturingShortcut=-1;
+    test.frame=NSMakeRect(384,154,160,32);[controllers addSubview:test];
+    [self settingsLabel:@"If nothing happens, turn on rumble in the game’s options." page:controllers y:100];
 
     NSView *data=[self settingsPage:@"Game & Data"];
     [self settingsLabel:@"Game, Player & Data" page:data y:680].font=[NSFont boldSystemFontOfSize:19];

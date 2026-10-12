@@ -30,8 +30,8 @@ KartPad downloads Retro Rewind for you: switch to it from **HOME**, or open
 **Settings → Game → Retro Rewind files**, and choose **Download**. It gets the
 exact pack this KartPad was built for (about 2 GB), checks it and installs it
 in KartPad's data folder while you keep playing. When it's ready, switch to it
-from **HOME**. To use a pack you already have, choose
-**Data → Choose Retro Rewind Data…** and select its `RetroRewind6` folder.
+from **HOME**. To use a pack you already have, choose **Use a Folder** there
+(or **Data → Choose Retro Rewind Data…**) and select its `RetroRewind6` folder.
 **Game → Original Mario Kart Wii** switches back.
 
 KartPad needs the exact Retro Rewind version it was built for. If it says the
@@ -45,8 +45,8 @@ Press **HOME** on a controller (the Xbox button, the PS button, or HOME on a
 Pro Controller, Joy-Con or Wii Remote) or **esc** on the keyboard for KartPad's
 menus over the game. The game holds still underneath (online it keeps going).
 From HOME: carry on, switch between Mario Kart Wii and Retro Rewind, Miis,
-Controllers, volume, window or full screen, Settings and Quit. Controllers
-without a HOME button hold **View + Menu** for a second. Everything works with
+Controllers, volume, window or full screen, Settings and Quit. Holding
+**Menu** (Start, +) for a second also opens HOME, on any controller. Everything works with
 a controller, the keyboard or the mouse. See
 [KartPad on Mac: HOME, Controllers and Settings](macos-home-and-controllers.md).
 
@@ -73,11 +73,9 @@ The first time KartPad opens it walks you through finding your game files.
   items, arrow keys for tricks, Space to pause and Tab for select.
 - The mouse works in KartPad's menus but doesn't drive; use the keyboard or a
   controller in races.
-- On a controller, hold **View + Menu** for a second to open HOME, or
-  **View** to open Miis. The D-pad moves around Settings, left and right change
-  a choice or slider, A presses, LB and RB change tab, and B closes it.
-  **Settings → Controllers → Controller shortcuts** changes the buttons or
-  turns the shortcuts off.
+- On a controller without a HOME button, hold **Menu** for a second to open
+  HOME. The D-pad moves around Settings, left and right change a choice or
+  slider, A presses, LB and RB change tab, and B closes it.
 - Controllers that can vibrate do when the game rumbles. **Settings →
   Controllers → Vibration** sets the strength (Off, Light, Medium or Strong)
   and **Test Vibration** checks a controller.

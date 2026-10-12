@@ -9,7 +9,7 @@ static int reloadCalls=0;
 static void KartPadRequestSettingsReload(){++reloadCalls;}
 static void KartPadRequestControllerCompatibility(){}
 static bool KPFullscreenAcrossNotch(){return false;}
-// The shell's game window, pad navigation, controller shortcuts and background pause, without
+// The shell's game window, pad navigation and background pause, without
 // devices or user defaults.
 static NSWindow *KPGameWindow(){return nil;}
 static NSInteger KPAuxiliaryWindowLevel(){return NSFloatingWindowLevel;}
@@ -17,18 +17,6 @@ static int settingsRegistered=0;
 static void KartPadMiiPadSetSettings(NSWindow *,NSTabView *,void (^)(void)){++settingsRegistered;}
 static NSString *const kKartPadBackgroundPauseDefaultsKey=@"KartPadPauseInBackground";
 static bool KPBackgroundPauseEnabled(){return true;}
-enum KPPadShortcutKind { KPPadShortcutMiis, KPPadShortcutSettings, KPPadShortcutCount };
-struct KPPadShortcut { __unsafe_unretained NSString *enabledKey,*buttonsKey,*holdKey,*opens; };
-static KPPadShortcut KPPadShortcuts[KPPadShortcutCount]={{@"",@"",@"",@"Miis"},{@"",@"",@"",@"Settings"}};
-static bool KPPadShortcutEnabled(int kind){return kind==KPPadShortcutSettings;}
-static uint64_t KPPadShortcutButtons(int kind){return kind;}
-static void KPPadShortcutSetButtons(int,uint64_t){}
-static NSTimeInterval KPPadShortcutHold(int kind){return kind==KPPadShortcutSettings?2:1;}
-static NSString *KPPadButtonNames(uint64_t buttons){return buttons?@"View + Menu":@"View";}
-static NSString *KPPadButtonsWarning(uint64_t){return nil;}
-static bool KPPadCapturing(){return false;}
-static void KPPadBeginCapture(void (^)(uint64_t)){}
-static void KPPadCancelCapture(){}
 @interface TestControllers : NSObject <NSWindowDelegate>
 @property(nonatomic,strong) NSView *content;
 // The Controllers tab starts the controller ring on the player choice.
@@ -48,11 +36,6 @@ static TestControllers *KPControllers(){static TestControllers *c=[TestControlle
 @property(nonatomic,strong) NSMutableDictionary<NSString *,NSArray *> *settingChoices;
 @property(nonatomic,strong) NSMutableDictionary<NSString *,NSTextField *> *settingValues;
 @property(nonatomic,strong) NSTextField *settingsStatus;
-@property(nonatomic,strong) NSArray<NSButton *> *padShortcutSwitches;
-@property(nonatomic,strong) NSArray<NSTextField *> *padShortcutButtons;
-@property(nonatomic,strong) NSArray<NSButton *> *padShortcutChoose;
-@property(nonatomic,strong) NSArray<NSPopUpButton *> *padShortcutHolds;
-@property(nonatomic) NSInteger capturingShortcut;
 @property(nonatomic,strong) NSButton *backgroundPauseSwitch;
 @property(nonatomic,strong) NSPopUpButton *vibrationChoice;
 @property(nonatomic,strong) NSButton *settingsRestart;
@@ -86,33 +69,29 @@ int main(int argc,char **argv){@autoreleasepool {
   [vsync performClick:nil];assert(RuntimeConfigFile::LoadConfigFile().vsync==false);
   assert(reloadCalls==0);[c.settingsPanel close];puts("PASS: native checkbox persisted across process restart");return 0;
  }
- // Controllers: vibration and a line for each controller shortcut, all below the mapping panel.
- // Game & Data: the background pause.
- assert(c.padShortcutSwitches.count==2);
- for(NSButton *row in c.padShortcutSwitches)assert(NSMaxY(row.frame)<=NSMinY(KPControllers().content.frame));
- assert(c.padShortcutSwitches[0].superview==KPControllers().content.superview);
- assert(c.padShortcutSwitches[0].state==NSControlStateValueOff&&c.padShortcutSwitches[1].state==NSControlStateValueOn);
- assert([c.padShortcutSwitches[1].title isEqual:@"Open Settings"]);
- assert([c.padShortcutButtons[1].stringValue isEqual:@"Hold View + Menu"]);
+ // Controllers: vibration below the mapping panel. Game & Data: the background pause.
+ assert(NSMaxY(c.vibrationChoice.frame)<=NSMinY(KPControllers().content.frame));
+ assert(c.vibrationChoice.superview==KPControllers().content.superview);
+ assert(NSMinY(c.vibrationChoice.frame)>=0);
  assert(c.vibrationChoice.indexOfSelectedItem==2);
- assert(!c.padShortcutChoose[0].enabled&&c.padShortcutChoose[1].enabled);
- assert(c.padShortcutHolds[0].indexOfSelectedItem==1&&c.padShortcutHolds[1].indexOfSelectedItem==2);
  assert(c.backgroundPauseSwitch.state==NSControlStateValueOn);
  // VSync waits for a restart, which Settings then offers.
  assert(vsync.state==NSControlStateValueOff);assert(c.settingsRestart.hidden);
  [vsync performClick:nil];assert(RuntimeConfigFile::LoadConfigFile().vsync==true);
- assert(reloadCalls==0);assert([c.settingsStatus.stringValue containsString:@"when KartPad restarts"]);
+ assert(reloadCalls==0);assert([c.settingsStatus.stringValue containsString:@"Applies after a restart"]);
  assert(!c.settingsRestart.hidden);[c.settingsRestart performClick:nil];assert(c.restarts==1);
  [c.settingsPanel close];[c showSettings:nil];assert(vsync.state==NSControlStateValueOn);
  select(c,@"video.display_mode",1);assert(RuntimeConfigFile::LoadConfigFile().displayMode=="borderless");
  select(c,@"video.frame_interpolation_fps",1);assert(RuntimeConfigFile::LoadConfigFile().frameInterpolationFps==120);
  NSSlider *volume=(NSSlider *)c.settingControls[@"audio.volume"];volume.doubleValue=35;[volume sendAction:volume.action to:volume.target];
  assert(std::abs(RuntimeConfigFile::LoadConfigFile().audioVolume.value_or(0)-0.35f)<0.001f);assert(reloadCalls==3);
- auto configPath=RuntimeConfigFile::ResolveConfigPath();
- const auto permissions=std::filesystem::status(configPath).permissions();
- std::filesystem::permissions(configPath,std::filesystem::perms::owner_read);
+ // Config.toml is replaced through a temporary file beside it, so a folder that can't be written is
+ // what makes a save fail.
+ const auto configFolder=RuntimeConfigFile::ResolveConfigPath().parent_path();
+ const auto permissions=std::filesystem::status(configFolder).permissions();
+ std::filesystem::permissions(configFolder,std::filesystem::perms::owner_read|std::filesystem::perms::owner_exec);
  [vsync performClick:nil];assert([c.settingsStatus.stringValue containsString:@"Could not save"]);assert(reloadCalls==3);
- std::filesystem::permissions(configPath,permissions);[c refreshSettings];
+ std::filesystem::permissions(configFolder,permissions);[c refreshSettings];
  [vsync performClick:nil];[vsync performClick:nil];assert(reloadCalls==3);
  [c.settingsPanel setContentSize:NSMakeSize(820,570)];[c.settingsTabs selectTabViewItemAtIndex:1];[c.settingsTabs selectTabViewItemAtIndex:0];
  NSScrollView *scroll=(NSScrollView *)c.settingsTabs.selectedTabViewItem.view;

@@ -189,7 +189,6 @@ static SDL_JoystickID KPPadLastPresser;
 static bool KPPadListening;
 static constexpr uint32_t KPMiiPadDirections =
     1u << KartPadMiiPadUp | 1u << KartPadMiiPadDown | 1u << KartPadMiiPadLeft | 1u << KartPadMiiPadRight;
-static bool KPPadCapturing();
 
 // The connected pads, read once per turn of the game loop (KartPadControllersTick) for the ticks that
 // look at every pad each frame (HOME's button, joining by pressing); read again by the next turn.
@@ -330,7 +329,7 @@ static void KPMiiPadPoll() {
   bool anyHeld = false;
   SDL_JoystickID pressedBy = 0;
   const uint32_t held = KPMiiPadRead(&anyHeld, &pressedBy);
-  if (KPControllers().capture >= 0 || KPPadCapturing() || KPPadListening) KPMiiPadQuiet = true;
+  if (KPControllers().capture >= 0 || KPPadListening) KPMiiPadQuiet = true;
   else if (!anyHeld) KPMiiPadQuiet = false;
   // Buttons already down when a window opens aren't presses for it, and don't repeat.
   const bool listening = KPMiiPadOwned && visible && !KPMiiPadQuiet;
@@ -376,167 +375,39 @@ static void KPMiiPadTick() {
   KPMiiPadPoll();
 }
 
-// Holding buttons on any controller opens the Miis window or HOME, so both work without a keyboard
-// or mouse, and HOME works on pads whose own HOME / Guide button macOS keeps or that have none (a
-// GameCube pad). Settings → Controllers chooses the buttons for each (any held together) and how
-// long to hold them. Miis default to View (Select, Share, −) for a second, which the game doesn't
-// use; HOME to View + Menu, whose Menu pauses a race on the way. When one shortcut's buttons include
-// the other's, holding them all opens the larger one (HOME on a tie). Neither opens while a window
-// the pads drive is open, KartPad is in the background, or Controllers is listening for a binding;
-// and after opening, not again until its buttons are let go. (The second kind keeps its old
-// "Settings" name and defaults keys, so a player's chosen buttons carry over.)
-enum KPPadShortcutKind { KPPadShortcutMiis, KPPadShortcutSettings, KPPadShortcutCount };
-struct KPPadShortcut {
-  __unsafe_unretained NSString *enabledKey, *buttonsKey, *holdKey, *opens;
-  uint64_t fallback;
-  NSTimeInterval since;
-  bool latched;
-};
-static KPPadShortcut KPPadShortcuts[KPPadShortcutCount] = {
-  {@"KartPadMiisControllerShortcut", @"KartPadMiisControllerButtons", @"KartPadMiisControllerHold", @"Miis",
-   1ull << SDL_GAMEPAD_BUTTON_BACK, 0, false},
-  {@"KartPadSettingsControllerShortcut", @"KartPadSettingsControllerButtons", @"KartPadSettingsControllerHold",
-   @"HOME", 1ull << SDL_GAMEPAD_BUTTON_BACK | 1ull << SDL_GAMEPAD_BUTTON_START, 0, false},
-};
-// Choosing the buttons in Settings: whatever is held together before everything is let go.
-static void (^KPPadCapture)(uint64_t buttons);
-static uint64_t KPPadCaptured;
-static bool KPPadCaptureArmed;
-static void KPOpenMiisFromController();  // KartPadMacShell.mm
+// Holding Menu (Start, +) for a second on any controller opens HOME, for pads whose HOME / Guide
+// button macOS keeps or that have none (a GameCube pad); Menu pauses a race on the way. Not while a
+// window the pads drive is open, KartPad is in the background or Controllers is listening for a
+// binding, and after opening, not again until Menu is let go.
+static constexpr NSTimeInterval KPHomeHoldSeconds = 1.0;
 static void KPOpenHomeFromController();  // KartPadHomeScreen.inc.mm
 
-static bool KPPadShortcutEnabled(int kind) {
-  id value = [NSUserDefaults.standardUserDefaults objectForKey:KPPadShortcuts[kind].enabledKey];
-  return [value isKindOfClass:NSNumber.class] ? [value boolValue] : true;
-}
-// SDL gamepad buttons as bits.
-static uint64_t KPPadShortcutButtons(int kind) {
-  uint64_t buttons = 0;
-  id saved = [NSUserDefaults.standardUserDefaults objectForKey:KPPadShortcuts[kind].buttonsKey];
-  if ([saved isKindOfClass:NSArray.class])
-    for (id button in saved)
-      if ([button isKindOfClass:NSNumber.class] && [button intValue] >= 0 && [button intValue] < SDL_GAMEPAD_BUTTON_COUNT)
-        buttons |= 1ull << [button intValue];
-  return buttons ? buttons : KPPadShortcuts[kind].fallback;
-}
-// The tick's copy of each shortcut's buttons, read again when the defaults change.
-static bool KPPadShortcutButtonsRead;
-static void KPPadShortcutSetButtons(int kind, uint64_t buttons) {
-  NSMutableArray *list = [NSMutableArray array];
-  for (int button = 0; button < SDL_GAMEPAD_BUTTON_COUNT; ++button)
-    if (buttons & (1ull << button)) [list addObject:@(button)];
-  [NSUserDefaults.standardUserDefaults setObject:list forKey:KPPadShortcuts[kind].buttonsKey];
-  KPPadShortcutButtonsRead = false;
-}
-static NSTimeInterval KPPadShortcutHold(int kind) {
-  const double seconds = [NSUserDefaults.standardUserDefaults doubleForKey:KPPadShortcuts[kind].holdKey];
-  return seconds > 0 ? std::clamp(seconds, 0.25, 5.0) : 1.0;
-}
-// Named as the first controller labels them ("View + Menu").
-static NSString *KPPadButtonNames(uint64_t buttons) {
-  SDL_Gamepad *pad = PADCount() ? PADGetSDLGamepadForIndex(0) : nullptr;
-  NSMutableArray *names = [NSMutableArray array];
-  for (int button = 0; button < SDL_GAMEPAD_BUTTON_COUNT; ++button)
-    if (buttons & (1ull << button)) [names addObject:KPButtonLabel(pad, button)];
-  return [names componentsJoinedByString:@" + "];
-}
-// Buttons the game reads still act there while they are held; macOS may answer the Guide button.
-static NSString *KPPadButtonsWarning(uint64_t buttons) {
-  uint64_t game = 0;
-  for (int port = 0; port < 4; ++port) {
-    unsigned count = 0, altCount = 0;
-    PADButtonMapping *mappings = PADGetButtonMappings(port, &count), *alternates = PADGetAltButtonMappings(port, &altCount);
-    for (unsigned i = 0; mappings && i < count; ++i)
-      if (mappings[i].nativeButton < SDL_GAMEPAD_BUTTON_COUNT) game |= 1ull << mappings[i].nativeButton;
-    for (unsigned i = 0; alternates && i < altCount; ++i)
-      if (alternates[i].nativeButton < SDL_GAMEPAD_BUTTON_COUNT) game |= 1ull << alternates[i].nativeButton;
-  }
-  if (buttons & game)
-    return [NSString stringWithFormat:@"The game also uses %@, so it reacts while you hold %@.",
-        [KPPadButtonNames(buttons & game) stringByReplacingOccurrencesOfString:@" + " withString:@" and "],
-        __builtin_popcountll(buttons & game) > 1 ? @"them" : @"it"];
-  if (buttons & (1ull << SDL_GAMEPAD_BUTTON_GUIDE)) return @"macOS may also react to the Guide button.";
-  return nil;
-}
-static bool KPPadCapturing() { return KPPadCapture != nil; }
-static void KPPadBeginCapture(void (^done)(uint64_t buttons)) {
-  KPPadCapture = [done copy];
-  KPPadCaptured = 0;
-  KPPadCaptureArmed = false;
-}
-static void KPPadCancelCapture() { KPPadCapture = nil; }
-
-static void KPPadShortcutsTick() {
-  // Every frame: the buttons come from the defaults only when those change, and only the buttons the
-  // shortcuts use are read (all of them while Settings is choosing new ones).
-  static uint64_t buttons[KPPadShortcutCount];
-  static dispatch_once_t once;
-  dispatch_once(&once, ^{
-    [NSNotificationCenter.defaultCenter addObserverForName:NSUserDefaultsDidChangeNotification object:nil queue:nil
-                                                usingBlock:^(NSNotification *note) {
-      (void)note;
-      KPPadShortcutButtonsRead = false;
-    }];
-  });
-  if (!KPPadShortcutButtonsRead) {
-    KPPadShortcutButtonsRead = true;
-    for (int kind = 0; kind < KPPadShortcutCount; ++kind) buttons[kind] = KPPadShortcutButtons(kind);
-  }
-  const uint64_t wanted = KPPadCapture ? ~0ull : buttons[KPPadShortcutMiis] | buttons[KPPadShortcutSettings];
-  uint64_t held = 0;
-  bool chord[KPPadShortcutCount] = {};
-  for (unsigned i = 0; i < PADCount(); ++i) {
+static void KPHomeHoldTick() {
+  static NSTimeInterval since;
+  static bool latched;
+  bool held = false;
+  for (unsigned i = 0; i < PADCount() && !held; ++i) {
     SDL_Gamepad *pad = PADGetSDLGamepadForIndex(i);
-    if (pad == nullptr) continue;
-    uint64_t down = 0;
-    for (int button = 0; button < SDL_GAMEPAD_BUTTON_COUNT; ++button)
-      if ((wanted & (1ull << button)) && SDL_GetGamepadButton(pad, (SDL_GamepadButton)button)) down |= 1ull << button;
-    held |= down;
-    for (int kind = 0; kind < KPPadShortcutCount; ++kind) chord[kind] |= (down & buttons[kind]) == buttons[kind];
+    held = pad && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_START);
   }
-  if (KPPadCapture) {
-    // Settings closed, or the buttons were let go after being held.
-    if (!KPControllers().panel.visible) { KPPadCapture = nil; return; }
-    for (KPPadShortcut &shortcut : KPPadShortcuts) shortcut.latched = true;
-    if (!KPPadCaptureArmed) { KPPadCaptureArmed = held == 0; return; }
-    KPPadCaptured |= held;
-    if (held == 0 && KPPadCaptured) {
-      void (^done)(uint64_t) = KPPadCapture;
-      const uint64_t captured = KPPadCaptured;
-      KPPadCapture = nil;
-      dispatch_async(dispatch_get_main_queue(), ^{ done(captured); });
-    }
+  if (!held) {
+    since = 0;
+    latched = false;
     return;
   }
-  for (int kind = 0; kind < KPPadShortcutCount; ++kind) {
-    KPPadShortcut &shortcut = KPPadShortcuts[kind];
-    if (!chord[kind]) { shortcut.since = 0; shortcut.latched = false; continue; }
-    if (shortcut.latched || !KPPadShortcutEnabled(kind)) continue;
-    if (KPPadWindowsVisible() || !NSApp.active || KPControllers().capture >= 0) { shortcut.latched = true; continue; }
-    // Held inside the other's buttons, which are held too: the other one is opening.
-    const int other = 1 - kind;
-    if (chord[other] && KPPadShortcutEnabled(other) && (buttons[other] & buttons[kind]) == buttons[kind] &&
-        (buttons[other] != buttons[kind] || kind == KPPadShortcutMiis)) {
-      shortcut.since = 0;
-      continue;
-    }
-    const NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
-    if (shortcut.since == 0) shortcut.since = now;
-    if (now - shortcut.since < KPPadShortcutHold(kind)) continue;
-    shortcut.latched = true;
-    shortcut.since = 0;
-    AppendSessionLine(kind == KPPadShortcutMiis ? @"miis=opened-from-controller" : @"home=opened-from-controller");
-    // The game loop can run inside a guest fiber; AppKit opens the window on the next turn.
-    dispatch_async(dispatch_get_main_queue(), ^{
-      if (kind == KPPadShortcutMiis) {
-        KPOpenMiisFromController();
-        KartPadMiiPadShowFocus();
-      } else {
-        KPOpenHomeFromController();
-      }
-    });
+  if (latched) return;
+  if (KPPadWindowsVisible() || !NSApp.active || KPControllers().capture >= 0) {
+    latched = true;
     return;
   }
+  const NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
+  if (since == 0) since = now;
+  if (now - since < KPHomeHoldSeconds) return;
+  latched = true;
+  since = 0;
+  AppendSessionLine(@"home=opened-from-controller");
+  // The game loop can run inside a guest fiber; AppKit opens HOME on the next turn.
+  dispatch_async(dispatch_get_main_queue(), ^{ KPOpenHomeFromController(); });
 }
 
 extern "C" void KartPadControllersTick() {
@@ -546,7 +417,7 @@ extern "C" void KartPadControllersTick() {
     KPFocusGameWindowAtLaunch();
     [KPControllers() tick];
     KPMiiPadTick();
-    KPPadShortcutsTick();
+    KPHomeHoldTick();
     KPHomeTick();
     KPOverlayGameTick();
     KPDiscordPresenceTick();

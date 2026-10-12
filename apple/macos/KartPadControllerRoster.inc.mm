@@ -114,7 +114,7 @@ static NSString *KPHomeButtonName(KPPadFamily family) {
     case KPFamilySwitch:
     case KPFamilyJoyCon:
     case KPFamilyWiiRemote: return @"HOME";
-    case KPFamilyGameCube: return @"View + Menu";
+    case KPFamilyGameCube: return @"Start";  // held
     case KPFamilyGeneric: return @"HOME";
   }
   return @"HOME";

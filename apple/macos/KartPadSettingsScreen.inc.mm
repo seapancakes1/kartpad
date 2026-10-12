@@ -58,6 +58,8 @@ static std::string KPFloatText(float value) {
 // A level row being dragged shows slidingLevel until it's saved (KPSaveSlideSoon).
 @property(nonatomic, strong) KPSettingRow *sliding;
 @property(nonatomic) float slidingLevel;
+@property(nonatomic) CGFloat scrolled;  // scrolling not yet a whole row
+@property(nonatomic) CGFloat gaugeGrab;  // where in the scroll gauge's thumb the pointer holds it, or -1
 @end
 
 // Where a level row draws its track (unpressed), for the drawing and the pointer alike.
@@ -119,6 +121,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
     KPDrawPill(c, r, state, KPStyle::Plain, KPUIGlyph::Check, @"Done");
   } action:^{ [KPOverlay() pop]; }];
   self.done.sound = KPUISound::Close;
+  self.gaugeGrab = -1;
 }
 
 - (KPSettingRow *)rowAt:(NSInteger)visible {
@@ -138,6 +141,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
     row.needsDisplay = YES;
   }
   [self place:self.done at:CGRectMake(CGRectGetMaxX(s) - 52 - 150, s.origin.y + 26, 150, 58)];
+  self.needsDisplay = YES;  // the scroll gauge follows first
 }
 
 - (KPUIButton *)initialFocus { return self.tabs.firstObject; }
@@ -226,10 +230,58 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
   return NO;
 }
 
+// A wheel's notch scrolls a row; a trackpad, a row for every 40 points it moves.
 - (void)scrollWheel:(NSEvent *)event {
   const NSInteger count = (NSInteger)self.rows[self.category].count;
-  if (count <= KPSettingsVisibleRows || fabs(event.scrollingDeltaY) < 0.5) return;
-  const NSInteger next = std::clamp<NSInteger>(self.first + (event.scrollingDeltaY > 0 ? -1 : 1), 0, count - KPSettingsVisibleRows);
+  if (count <= KPSettingsVisibleRows) return;
+  if (event.phase == NSEventPhaseBegan) self.scrolled = 0;
+  const CGFloat step = event.hasPreciseScrollingDeltas ? 40 : 1;
+  self.scrolled += event.scrollingDeltaY;
+  const NSInteger rows = (NSInteger)(self.scrolled / step);
+  if (rows == 0) return;
+  self.scrolled -= rows * step;
+  const NSInteger next = std::clamp<NSInteger>(self.first - rows, 0, count - KPSettingsVisibleRows);
+  if (next == self.first) return;
+  self.first = next;
+  [self layoutDesign];
+}
+
+// The scroll gauge for long categories, and the part of it the showing rows take.
+- (CGRect)gaugeTrack {
+  const CGRect s = self.safe;
+  return CGRectMake(CGRectGetMaxX(s) - 31, s.origin.y + 118, 8, KPSettingsVisibleRows * 78 - 14);
+}
+- (CGRect)gaugeThumb {
+  const CGRect track = self.gaugeTrack;
+  const CGFloat count = std::max<CGFloat>(1, self.rows[self.category].count);
+  return CGRectMake(track.origin.x, track.origin.y + track.size.height * self.first / count, track.size.width,
+                    track.size.height * std::min<CGFloat>(1, KPSettingsVisibleRows / count));
+}
+
+// The pointer drags the gauge's thumb, or takes it to where the track is clicked.
+- (void)mouseDown:(NSEvent *)event {
+  self.gaugeGrab = -1;
+  if ((NSInteger)self.rows[self.category].count <= KPSettingsVisibleRows) return;
+  const NSPoint local = [self convertPoint:event.locationInWindow fromView:nil];
+  const CGPoint point = CGPointMake(local.x / self.scale, local.y / self.scale);
+  if (!CGRectContainsPoint(CGRectInset(self.gaugeTrack, -14, -6), point)) return;
+  const CGRect thumb = self.gaugeThumb;
+  self.gaugeGrab = point.y >= thumb.origin.y && point.y <= CGRectGetMaxY(thumb) ? point.y - thumb.origin.y : thumb.size.height / 2;
+  [self dragGaugeTo:point.y];
+}
+- (void)mouseDragged:(NSEvent *)event {
+  if (self.gaugeGrab < 0) return;
+  [self dragGaugeTo:[self convertPoint:event.locationInWindow fromView:nil].y / self.scale];
+}
+- (void)mouseUp:(NSEvent *)event {
+  (void)event;
+  self.gaugeGrab = -1;
+}
+- (void)dragGaugeTo:(CGFloat)y {
+  const CGRect track = self.gaugeTrack;
+  const NSInteger count = (NSInteger)self.rows[self.category].count;
+  const NSInteger next = std::clamp<NSInteger>(std::lround((y - self.gaugeGrab - track.origin.y) / track.size.height * count), 0,
+                                               count - KPSettingsVisibleRows);
   if (next == self.first) return;
   self.first = next;
   [self layoutDesign];
@@ -369,11 +421,8 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
   KPTextWeight(@"Settings", CGRectMake(s.origin.x + 106, s.origin.y + 26, 400, 50), 36, KPP->text, NSFontWeightBold, NSTextAlignmentLeft);
   const NSInteger count = (NSInteger)self.rows[self.category].count;
   if (count > KPSettingsVisibleRows) {
-    // A little scroll gauge for long categories.
-    const CGRect gauge = CGRectMake(CGRectGetMaxX(s) - 30, s.origin.y + 118, 6, KPSettingsVisibleRows * 78 - 14);
-    KPFill(c, gauge, KPP->well, 3);
-    const CGFloat part = gauge.size.height * KPSettingsVisibleRows / count, at = gauge.size.height * self.first / count;
-    KPFill(c, CGRectMake(gauge.origin.x, gauge.origin.y + at, 6, part), KPP->accentBottom, 3);
+    KPFill(c, self.gaugeTrack, KPP->buttonStroke, 4, 0.45);
+    KPFill(c, self.gaugeThumb, KPP->accentBottom, 4);
   }
   KPDrawHints(c, CGRectMake(s.origin.x + 52, s.origin.y + 672, 1176, 26),
               {{KartPadMiiPadConfirm, @"Select"}, {KartPadMiiPadLeft, @"Adjust", KartPadMiiPadRight},
@@ -484,7 +533,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
   NSMutableArray *sound = [NSMutableArray array];
   [sound addObject:boolRow(@"Sound", nil, "audio", "muted", false,
                            ^bool(const RuntimeUserConfig &c) { return c.audioMuted.value_or(false); }, true, true)];
-  [sound addObject:levelRow(@"Overall volume", "volume", ^float(const RuntimeUserConfig &c) { return c.audioVolume.value_or(1); })];
+  [sound addObject:levelRow(@"Master volume", "volume", ^float(const RuntimeUserConfig &c) { return c.audioVolume.value_or(1); })];
   [sound addObject:levelRow(@"Music", "music_volume", ^float(const RuntimeUserConfig &c) { return c.audioMusicVolume.value_or(1); })];
   [sound addObject:levelRow(@"Sound effects", "sound_effects_volume",
                             ^float(const RuntimeUserConfig &c) { return c.audioSoundEffectsVolume.value_or(1); })];
@@ -542,35 +591,6 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
         [KPOverlay() toast:c.rumbleEnabled.value_or(true) ? @"No controller here can vibrate" : @"Vibration is off"
                     detail:nil stripe:0 icon:^(CGContextRef ctx, CGRect r) { KPDrawGlyph(ctx, KPUIGlyph::Pad, r, KPP->secondaryText); }
                      image:nil];
-    };
-    [controls addObject:row];
-  }
-  for (int kind : {KPPadShortcutSettings, KPPadShortcutMiis}) {
-    KPSettingRow *row = KPRow(kind == KPPadShortcutSettings ? @"Open HOME by holding buttons" : @"Open Miis by holding buttons",
-                              nil, KPRowSwitch);
-    row.detail = [NSString stringWithFormat:@"Hold %@.", KPPadShortcutPhrase(kind)];
-    row.on = ^BOOL { return KPPadShortcutEnabled(kind); };
-    row.setOn = ^(BOOL on) { [NSUserDefaults.standardUserDefaults setBool:on forKey:KPPadShortcuts[kind].enabledKey]; };
-    [controls addObject:row];
-  }
-  {
-    KPSettingRow *row = KPRow(@"Keyboard plays as", nil, KPRowChoice);
-    row.choices = @[@"Nobody", @"First free", @"Player 1", @"Player 2", @"Player 3", @"Player 4"];
-    row.index = ^NSInteger {
-      id pinned = [NSUserDefaults.standardUserDefaults objectForKey:KPKeyboardPlayerKey];
-      if (![pinned isKindOfClass:NSNumber.class]) return 1;
-      return [pinned intValue] < 0 ? 0 : [pinned intValue] + 2;
-    };
-    row.setIndex = ^(NSInteger index) {
-      NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
-      KPControllerRoster *roster = KPControllerRoster.shared;
-      KPPadDevice *keyboard = [roster deviceWithIdentifier:@"keyboard"];
-      if (index == 1) {
-        [defaults removeObjectForKey:KPKeyboardPlayerKey];
-        [roster refresh];
-      } else {
-        [roster move:keyboard toSlot:index == 0 ? -1 : (int)index - 2];
-      }
     };
     [controls addObject:row];
   }
@@ -700,9 +720,6 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
     };
     return row;
   };
-#if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)
-  [advanced addObject:legacy(@"Use a Retro Rewind folder", nil, @selector(chooseRetroRewindData:))];
-#endif
   [advanced addObject:legacy(@"Private Wii server", nil, @selector(showPrivateServer:))];
   [advanced addObject:legacy(@"Controller compatibility tools", nil, @selector(showControllerCompatibility:))];
   [advanced addObject:legacy(@"Save a diagnostics report", nil, @selector(saveDiagnostics:))];

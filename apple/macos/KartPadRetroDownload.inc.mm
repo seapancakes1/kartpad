@@ -374,9 +374,10 @@ static NSString *KPRetroFolder() {
 @end
 
 // Its progress, on a card. Before it starts (or after it failed) Download leads, with Not Now beside
-// it; while it runs, Keep Playing (it carries on) and Cancel.
+// it and Use a Folder (a Retro Rewind already on this Mac, chosen with the mouse) under them; while it
+// runs, Keep Playing (it carries on) and Cancel.
 @interface KPRetroDownloadScreen : KPScreen
-@property(nonatomic, strong) KPUIButton *keep, *cancel, *retry;
+@property(nonatomic, strong) KPUIButton *keep, *cancel, *retry, *folder;
 @end
 
 @implementation KPRetroDownloadScreen
@@ -403,6 +404,12 @@ static NSString *KPRetroFolder() {
     [KPRetroDownload.shared start];
     [weakSelf layoutDesign];
   }];
+  self.folder = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
+    KPDrawPill(c, r, state, KPStyle::Plain, KPUIGlyph::Disc, @"Use a Folder");
+  } action:^{
+    [KPOverlay() closeAll];
+    dispatch_async(dispatch_get_main_queue(), ^{ [Controller() chooseRetroRewindData:nil]; });
+  }];
 }
 - (void)layoutDesign {
   const CGRect s = self.safe;
@@ -411,11 +418,13 @@ static NSString *KPRetroFolder() {
   const BOOL changed = self.retry.hidden == waiting;
   self.cancel.hidden = !download.busy;
   self.retry.hidden = !waiting;
+  self.folder.hidden = !waiting;
   // The main choice on the left: Download (or Try Again) while waiting, otherwise Keep Playing.
   const CGRect left = CGRectMake(s.origin.x + 330, s.origin.y + 520, 290, 70), right = CGRectOffset(left, 330, 0);
   [self place:self.retry at:left];
   [self place:self.keep at:waiting ? right : left];
   [self place:self.cancel at:right];
+  [self place:self.folder at:CGRectMake(s.origin.x + 495, s.origin.y + 606, 290, 58)];
   if (changed && self.focus.hidden) [KPOverlay() focus:[self initialFocus] sound:NO];
 }
 - (KPUIButton *)initialFocus { return self.retry.hidden ? self.keep : self.retry; }

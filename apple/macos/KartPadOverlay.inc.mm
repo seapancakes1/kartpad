@@ -135,6 +135,9 @@ struct KPUIState {
 @property(nonatomic) unsigned stripe;
 @property(nonatomic, copy) void (^icon)(CGContextRef c, CGRect r);
 @property(nonatomic, strong) NSImage *image;
+// A controller's toast: its player (-1 while it has none) and a drawing of the controller.
+@property(nonatomic) int player;
+@property(nonatomic, copy) void (^art)(CGContextRef c, CGRect r);
 @end
 
 @interface KPOverlayController : NSObject
@@ -181,6 +184,8 @@ struct KPUIState {
          icon:(void (^)(CGContextRef c, CGRect r))icon image:(NSImage *)image;
 - (void)toast:(NSString *)heading detail:(NSString *)detail stripe:(unsigned)stripe
          icon:(void (^)(CGContextRef c, CGRect r))icon image:(NSImage *)image seconds:(NSTimeInterval)seconds;
+- (void)toastController:(NSString *)heading detail:(NSString *)detail player:(int)player image:(NSImage *)image
+                   icon:(void (^)(CGContextRef c, CGRect r))icon art:(void (^)(CGContextRef c, CGRect r))art;
 - (void)relayout;
 @end
 static KPOverlayController *KPOverlay() { return [KPOverlayController shared]; }
@@ -202,14 +207,15 @@ static bool KPSliderLevel(CGRect track, CGPoint point, BOOL began, float *level)
 }
 
 // A slider (HOME's volume, Settings' levels): the track on its ledge, filled in Wii blue up to the
-// level, and the knob at the end of the fill.
-static void KPDrawSlider(CGContextRef c, CGRect track, CGFloat level) {
+// level, and the knob at the end of the fill. Dimmed (muted), the fill is grey.
+static void KPDrawSlider(CGContextRef c, CGRect track, CGFloat level, BOOL dimmed = NO) {
   KPFill(c, CGRectOffset(track, 0, -1), KPP->ledge, 6);
   KPFill(c, track, KPP->well, 6);
   KPStroke(c, track, KPP->buttonStroke, 1, 6);
   const CGFloat fill = track.size.width * level;
-  if (fill > 2) KPGradientFill(c, CGRectMake(track.origin.x + 1, track.origin.y + 1, fill - 2, track.size.height - 2), 5,
-                               KPP->accentTop, KPP->accentBottom);
+  const CGRect filled = CGRectMake(track.origin.x + 1, track.origin.y + 1, fill - 2, track.size.height - 2);
+  if (fill > 2 && dimmed) KPFill(c, filled, KPP->secondaryText, 5, 0.45);
+  else if (fill > 2) KPGradientFill(c, filled, 5, KPP->accentTop, KPP->accentBottom);
   const CGRect knob = CGRectMake(track.origin.x + fill - 11, CGRectGetMidY(track) - 11, 22, 22);
   KPFill(c, CGRectOffset(knob, 0, 1.5), 0x000000, 11, 0.22);
   KPGradientFill(c, knob, 11, 0xffffff, 0xe3e8eb);
@@ -583,6 +589,9 @@ static void KPDrawScreenBackdrop(NSView *view, CGContextRef c, CGSize size) {
 - (void)keyDown:(NSEvent *)event { (void)event; }
 @end
 
+static void KPDrawMiiWell(CGContextRef c, CGRect well, NSImage *portrait, unsigned color, BOOL empty);  // KartPadHomeScreen.inc.mm
+static void KPDrawPlayerBadge(CGContextRef c, CGRect r, int slot, BOOL dim);
+
 @implementation KPToastView
 - (void)drawDesign:(CGContextRef)c size:(CGSize)size {
   const CGRect card = CGRectMake(6, 4, size.width - 12, size.height - 12);
@@ -590,6 +599,10 @@ static void KPDrawScreenBackdrop(NSView *view, CGContextRef c, CGSize size) {
   CGContextSetShadowWithColor(c, CGSizeMake(0, 4), 14, [NSColor colorWithWhite:0 alpha:0.28].CGColor);
   KPFill(c, card, KPP->panel, 18);
   CGContextRestoreGState(c);
+  if (self.art) {
+    [self drawController:c card:card];
+    return;
+  }
   KPStroke(c, card, KPP->panelStroke, 1, 18);
   // The player's colour runs down the leading edge.
   if (self.stripe) {
@@ -621,6 +634,46 @@ static void KPDrawScreenBackdrop(NSView *view, CGContextRef c, CGSize size) {
   } else {
     KPTextWeight(self.heading, CGRectMake(x, CGRectGetMidY(card) - 13, w, 26), 19, KPP->text, NSFontWeightSemibold, NSTextAlignmentLeft);
   }
+}
+// The player's colour fills the leading end, with their number on it (or their Mii, badged); a
+// controller still without a player gets a grey end and its icon. The controller itself sits at the
+// trailing end, its lights in the player's colour.
+- (void)drawController:(CGContextRef)c card:(CGRect)card {
+  const int player = self.player;
+  const CGRect band = CGRectMake(card.origin.x, card.origin.y, 84, card.size.height);
+  CGContextSaveGState(c);
+  CGPathRef clip = CGPathCreateWithRoundedRect(card, 18, 18, nullptr);
+  CGContextAddPath(c, clip);
+  CGContextClip(c);
+  CGPathRelease(clip);
+  if (player >= 0) {
+    KPGradientFill(c, band, 0, KPPlayerColors[player], KPPlayerDarkColors[player]);
+    KPFill(c, CGRectMake(band.origin.x, band.origin.y, band.size.width, 1.5), 0xffffff, 0, 0.35);
+  } else {
+    KPFill(c, band, KPP->well);
+  }
+  CGContextRestoreGState(c);
+  KPStroke(c, card, KPP->panelStroke, 1, 18);
+  if (player >= 0 && self.image) {
+    const CGRect well = CGRectMake(CGRectGetMidX(band) - 29, CGRectGetMidY(band) - 29, 52, 52);
+    KPFill(c, CGRectOffset(well, 0, 2), 0x000000, 52 * 0.22, 0.18);
+    KPDrawMiiWell(c, well, self.image, KPPlayerColors[player], NO);
+    // On the well's corner, ringed in white, as on the HOME player cards.
+    const CGRect badge = CGRectMake(CGRectGetMaxX(well) - 13, CGRectGetMaxY(well) - 13, 24, 24);
+    KPSetInk(c, 0xffffff);
+    CGContextFillEllipseInRect(c, CGRectInset(badge, -2.5, -2.5));
+    KPDrawPlayerBadge(c, badge, player, NO);
+  } else if (player >= 0) {
+    KPTextWeight([NSString stringWithFormat:@"%d", player + 1], CGRectMake(band.origin.x, CGRectGetMidY(band) - 31, band.size.width, 60),
+                 50, KPPlayerInk[player], NSFontWeightHeavy);
+  } else if (self.icon) {
+    self.icon(c, CGRectMake(CGRectGetMidX(band) - 18, CGRectGetMidY(band) - 18, 36, 36));
+  }
+  const CGRect art = CGRectMake(CGRectGetMaxX(card) - 18 - 88, card.origin.y + 10, 88, card.size.height - 20);
+  self.art(c, art);
+  const CGFloat x = CGRectGetMaxX(band) + 18, w = art.origin.x - 12 - x;
+  KPTextWeight(self.heading, CGRectMake(x, card.origin.y + 14, w, 30), 23, KPP->text, NSFontWeightBold, NSTextAlignmentLeft);
+  KPTextWeight(self.detail, CGRectMake(x, card.origin.y + 46, w, 22), 15, KPP->secondaryText, NSFontWeightMedium, NSTextAlignmentLeft);
 }
 @end
 
@@ -1032,13 +1085,27 @@ static KPUIButton *KPUINearest(NSArray<KPUIButton *> *candidates, KPUIButton *fr
 }
 - (void)toast:(NSString *)heading detail:(NSString *)detail stripe:(unsigned)stripe
          icon:(void (^)(CGContextRef c, CGRect r))icon image:(NSImage *)image seconds:(NSTimeInterval)seconds {
-  if (![self attach]) return;
   KPToastView *toast = [[KPToastView alloc] initWithFrame:NSZeroRect];
   toast.heading = heading;
   toast.detail = detail;
   toast.stripe = stripe;
   toast.icon = icon;
   toast.image = image;
+  [self show:toast seconds:seconds];
+}
+- (void)toastController:(NSString *)heading detail:(NSString *)detail player:(int)player image:(NSImage *)image
+                   icon:(void (^)(CGContextRef c, CGRect r))icon art:(void (^)(CGContextRef c, CGRect r))art {
+  KPToastView *toast = [[KPToastView alloc] initWithFrame:NSZeroRect];
+  toast.heading = heading;
+  toast.detail = detail;
+  toast.player = player;
+  toast.icon = icon;
+  toast.image = image;
+  toast.art = art;
+  [self show:toast seconds:3.4];
+}
+- (void)show:(KPToastView *)toast seconds:(NSTimeInterval)seconds {
+  if (![self attach]) return;
   [self.toasts addObject:toast];
   while (self.toasts.count > 3) {
     [self.toasts.firstObject removeFromSuperview];

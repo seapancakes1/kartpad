@@ -642,13 +642,6 @@ static bool KPShowScreen(NSString *which);
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSTextField *> *settingValues;
 @property(nonatomic, strong) NSTextField *settingsStatus;
 @property(nonatomic, strong) KPMiisWindow *miisWindow;
-// Settings → Controllers: holding controller buttons opens Miis or Settings, a row for each
-// (KPPadShortcutKind), and the shortcut whose buttons are being chosen (or -1).
-@property(nonatomic, strong) NSArray<NSButton *> *padShortcutSwitches;
-@property(nonatomic, strong) NSArray<NSTextField *> *padShortcutButtons;
-@property(nonatomic, strong) NSArray<NSButton *> *padShortcutChoose;
-@property(nonatomic, strong) NSArray<NSPopUpButton *> *padShortcutHolds;
-@property(nonatomic) NSInteger capturingShortcut;
 @property(nonatomic, strong) NSButton *backgroundPauseSwitch;
 // Settings → Controllers: Off, Light, Medium or Strong.
 @property(nonatomic, strong) NSPopUpButton *vibrationChoice;
@@ -684,6 +677,14 @@ static NSString *KPGameTitle(NSString *profile);                       // KartPa
 
 - (void)quitKartPad:(id)sender {
   if ([self closeWindows:sender]) [self finishQuitting:sender];
+}
+
+// macOS asking KartPad to quit (the Dock's Quit, logging out) goes the way ⌘Q does. AppKit's own
+// handler would exit() under the running game, through C++ teardown that isn't meant to run then.
+- (void)handleQuitEvent:(NSAppleEventDescriptor *)event withReplyEvent:(NSAppleEventDescriptor *)reply {
+  (void)event;
+  (void)reply;
+  [self quitKartPad:nil];
 }
 
 // Only the game starts again, as far as the player can tell: the window stays, with a card over it,
@@ -1045,7 +1046,6 @@ static NSString *KPGameTitle(NSString *profile);                       // KartPa
               reason:@"online-service"];
 }
 
-// Rebuilt each time it opens, so the controller shortcuts show their current buttons.
 - (void)showControls:(id)sender {
   (void)sender;
   if (self.controlsPanel == nil) {
@@ -1058,7 +1058,7 @@ static NSString *KPGameTitle(NSString *profile);                       // KartPa
     self.controlsPanel.releasedWhenClosed = NO;
   }
   {
-    NSMutableArray<NSArray<NSString *> *> *bindings = [@[
+    NSArray<NSArray<NSString *> *> *bindings = @[
       @[@"Steer", @"W A S D"],
       @[@"Accelerate / confirm", @"U or Return"],
       @[@"Brake / reverse / back", @"M or Delete"],
@@ -1071,12 +1071,8 @@ static NSString *KPGameTitle(NSString *profile);                       // KartPa
       @[@"Classic ZL / ZR", @"Z / V"],
       @[@"Settings (also in fullscreen)", @"⌘, or F10 / Fn–F10"],
       @[@"Full screen", @"⌃⌘F or ⌥Return"],
-    ] mutableCopy];
-    for (int kind = 0; kind < KPPadShortcutCount; ++kind) {
-      if (!KPPadShortcutEnabled(kind)) continue;
-      [bindings addObject:@[[NSString stringWithFormat:@"%@ from a controller", KPPadShortcuts[kind].opens],
-          [NSString stringWithFormat:@"Hold %@", KPPadButtonNames(KPPadShortcutButtons(kind))]]];
-    }
+      @[@"HOME from a controller", @"HOME, or hold Menu"],
+    ];
     NSMutableArray<NSView *> *rows = [NSMutableArray array];
     for (NSArray<NSString *> *binding in bindings) {
       NSTextField *action = [self label:binding[0]];
@@ -1715,6 +1711,11 @@ bool KartPadMacShellPrepareGameData(void) {
   NSApplication *launching = NSApplication.sharedApplication;
   [launching setActivationPolicy:NSApplicationActivationPolicyRegular];
   [launching finishLaunching];
+  // After finishLaunching, which installs AppKit's quit handler (SDL doesn't run it again).
+  [NSAppleEventManager.sharedAppleEventManager setEventHandler:Controller()
+                                                   andSelector:@selector(handleQuitEvent:withReplyEvent:)
+                                                 forEventClass:kCoreEventClass
+                                                    andEventID:kAEQuitApplication];
   if (!KPUIBackgroundAutomation()) [launching activate];
 #if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)
   // Activation completes before any game files are opened. The helper relaunches

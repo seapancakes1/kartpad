@@ -1,8 +1,8 @@
 // HOME: what the HOME / Guide / PS button (or Esc) opens over the game, in the spirit of the Wii's
 // HOME Menu. The game holds still underneath (dimmed), a bar slides down from the top and the
 // players' strip up from the bottom, and the big tiles in between do the everyday things: carry on,
-// switch games, Miis, controllers. The volume has a row of its own (left and right only ever change
-// it); full screen, Settings and Quit sit in the top bar, with a pending restart beside them.
+// Miis, controllers. The volume has a row of its own (left and right only ever change it); the other
+// game, full screen, Settings and Quit sit in the top bar, with a pending restart beside them.
 // Included by KartPadMacShell.mm after the overlay.
 
 extern "C" bool Network_HLE_HasOpenSockets();
@@ -100,9 +100,10 @@ static void KPDrawPill(CGContextRef c, CGRect r, KPUIState state, KPStyle style,
                  NSFontWeightSemibold, NSTextAlignmentLeft);
 }
 
-// A Mii face in a well, or a silhouette in the player's colour while there's none.
+// A Mii face in a well, or a silhouette in the player's colour while there's none (faint, on the
+// theme's well, for a player without a controller).
 static void KPDrawMiiWell(CGContextRef c, CGRect well, NSImage *portrait, unsigned color, BOOL empty) {
-  KPFill(c, well, KPLightPalette.well, well.size.width * 0.22);
+  KPFill(c, well, empty ? KPP->well : KPLightPalette.well, well.size.width * 0.22);
   if (portrait) {
     NSGraphicsContext *previous = NSGraphicsContext.currentContext;
     [portrait drawInRect:CGRectInset(well, well.size.width * 0.06, well.size.height * 0.06) fromRect:NSZeroRect
@@ -177,6 +178,7 @@ static KPScreen *KPMakeMiisScreen();
 @property(nonatomic, copy) NSArray<NSDictionary *> *miiFaces;
 @property(nonatomic) float shownVolume;
 @property(nonatomic) BOOL shownMute, canPause;
+@property(nonatomic) CGFloat barButtonsLeft;
 @end
 
 @implementation KPHomeScreen
@@ -197,14 +199,10 @@ static KPScreen *KPMakeMiisScreen();
   self.resume.label = @"Resume";
   self.resume.sound = KPUISound::Confirm;
 
+  // The other game, in the top bar: switching is rare, so it isn't a tile. The pill names the game A
+  // switches to, as Full Screen does.
   self.switchGame = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
-    const BOOL ready = KPRetroRewindReady() || [KPOtherProfile() isEqualToString:kKartPadBaseProfile];
-#if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)
-    NSString *detail = ready ? @"Switch game" : KPRetroDownloadOffered() ? @"Download first" : @"Set up first";
-#else
-    NSString *detail = ready ? @"Switch game" : @"Set up first";
-#endif
-    KPDrawTile(c, r, state, NO, KPUIGlyph::Disc, KPGameTitle(KPOtherProfile()), detail);
+    KPDrawPill(c, r, state, KPStyle::Plain, KPUIGlyph::Disc, KPGameTitle(KPOtherProfile()));
   } action:^{ [weakSelf askToSwitch]; }];
   self.switchGame.label = [NSString stringWithFormat:@"Switch to %@", KPGameTitle(KPOtherProfile())];
   self.switchGame.hidden = !KPCanSwitchGames();
@@ -246,7 +244,7 @@ static KPScreen *KPMakeMiisScreen();
     const float volume = home.shownVolume;
     KPDrawGlyph(c, muted ? KPUIGlyph::SpeakerOff : KPUIGlyph::Speaker, CGRectMake(r.origin.x + 20, CGRectGetMidY(r) - 17, 34, 34),
                 muted ? KPP->secondaryText : KPP->accentBottom, volume);
-    KPDrawSlider(c, KPHomeVolumeTrack(r), muted ? 0 : volume);
+    KPDrawSlider(c, KPHomeVolumeTrack(r), volume, muted);  // muted keeps its level, greyed, for unmuting
     KPTextWeight(muted ? @"Off" : [NSString stringWithFormat:@"%d%%", (int)std::lround(volume * 100)],
                  CGRectMake(CGRectGetMaxX(r) - 80, CGRectGetMidY(r) - 14, 64, 28), 20, KPP->text, NSFontWeightSemibold,
                  NSTextAlignmentRight);
@@ -338,7 +336,7 @@ static KPScreen *KPMakeMiisScreen();
   [self place:self.topBar at:CGRectMake(0, 0, stage.width, topHeight + 14)];
   [self place:self.bottomBar at:CGRectMake(0, bottomTop - 14, stage.width, stage.height - bottomTop + 14)];
 
-  // The top bar, from the right: Quit, Settings, full screen, and a waiting restart.
+  // The top bar, from the right: Quit, Settings, full screen, the other game, and a waiting restart.
   const BOOL restart = KPRestartWaiting();
   self.restart.hidden = !restart;
   CGFloat right = CGRectGetMaxX(s) - 52;
@@ -348,19 +346,22 @@ static KPScreen *KPMakeMiisScreen();
   right -= 62 + 14;
   [self place:self.displayToggle at:CGRectMake(right - 210, s.origin.y + 22, 210, 58)];
   right -= 210 + 14;
+  if (KPCanSwitchGames()) {
+    // Sized to the game's name, with the same margins as the other pills' words.
+    const CGFloat width =
+        std::ceil(30 + 10 + KPTextSize(KPGameTitle(KPOtherProfile()), 21, NSFontWeightSemibold).width + 64);
+    [self place:self.switchGame at:CGRectMake(right - width, s.origin.y + 22, width, 58)];
+    right -= width + 14;
+  }
   [self place:self.restart at:CGRectMake(right - 236, s.origin.y + 22, 236, 58)];
+  if (restart) right -= 236 + 14;
+  self.barButtonsLeft = right + 14;
+  self.topBar.needsDisplay = YES;
 
-  const BOOL canSwitch = KPCanSwitchGames();
-  const CGFloat gap = 22, top = s.origin.y + 140, height = 230;
-  const CGFloat wide = canSwitch ? 340 : 420, narrow = canSwitch ? 272 : 360;
-  const CGFloat total = wide + narrow * (canSwitch ? 3 : 2) + gap * (canSwitch ? 3 : 2);
-  CGFloat x = std::round(s.origin.x + (s.size.width - total) / 2);
+  const CGFloat gap = 22, top = s.origin.y + 140, height = 230, wide = 420, narrow = 360;
+  CGFloat x = std::round(s.origin.x + (s.size.width - wide - narrow * 2 - gap * 2) / 2);
   [self place:self.resume at:CGRectMake(x, top, wide, height)];
   x += wide + gap;
-  if (canSwitch) {
-    [self place:self.switchGame at:CGRectMake(x, top, narrow, height)];
-    x += narrow + gap;
-  }
   [self place:self.miis at:CGRectMake(x, top, narrow, height)];
   x += narrow + gap;
   [self place:self.controllers at:CGRectMake(x, top, narrow, height)];
@@ -368,7 +369,7 @@ static KPScreen *KPMakeMiisScreen();
   // The volume, alone on its row.
   [self place:self.volume at:CGRectMake(std::round(s.origin.x + (s.size.width - 820) / 2), s.origin.y + 396, 820, 74)];
 
-  const CGFloat slotWidth = 266, slotGap = 16, slotTop = s.origin.y + 584;
+  const CGFloat slotWidth = 282, slotGap = 16, slotTop = s.origin.y + 584;
   for (KPUIButton *button in self.slots)
     [self place:button at:CGRectMake(s.origin.x + 52 + button.tag2 * (slotWidth + slotGap), slotTop, slotWidth, 104)];
 }
@@ -409,8 +410,9 @@ static KPScreen *KPMakeMiisScreen();
   slide(self.topBar, up * top, 0);
   slide(self.bottomBar, -up * bottom, 0);
   for (KPUIButton *button in self.slots) slide(button, -up * bottom, 0.02);
-  for (KPUIButton *button in @[self.quit, self.settings, self.displayToggle, self.restart]) slide(button, up * top, 0);
-  NSArray *tiles = @[self.resume, self.switchGame, self.miis, self.controllers];
+  for (KPUIButton *button in @[self.switchGame, self.quit, self.settings, self.displayToggle, self.restart])
+    slide(button, up * top, 0);
+  NSArray *tiles = @[self.resume, self.miis, self.controllers];
   CFTimeInterval delay = 0.04;
   for (KPUIButton *tile in tiles) {
     if (tile.hidden) continue;
@@ -493,19 +495,14 @@ static KPScreen *KPMakeMiisScreen();
   KPFill(c, CGRectMake(0, height - 4, size.width, 1.5), KPP->accentTop, 0, 0.8);
   KPDrawGlyph(c, KPUIGlyph::Home, CGRectMake(s.origin.x + 52, s.origin.y + 26, 46, 46), KPP->accentBottom);
   KPTextWeight(@"HOME", CGRectMake(s.origin.x + 110, s.origin.y + 24, 200, 50), 38, KPP->text, NSFontWeightHeavy, NSTextAlignmentLeft);
-  // What's playing, beside the title.
-  NSString *playing = KPGameTitle(KPRunningProfile());
-  KPTextWeight(playing, CGRectMake(s.origin.x + 260, s.origin.y + 38, 460, 28), 20, KPP->secondaryText, NSFontWeightMedium,
-               NSTextAlignmentLeft);
-  if (!self.canPause) {
-    NSString *note = @"Online: the race carries on";
-    const CGSize text = KPTextSize(note, 17, NSFontWeightSemibold);
-    const CGRect pill = CGRectMake(s.origin.x + 260 + KPTextSize(playing, 20, NSFontWeightMedium).width + 18, s.origin.y + 36,
-                                   text.width + 34, 32);
-    KPFill(c, pill, 0xf0a030, 16, 0.22);
-    KPStroke(c, pill, 0xd98a1c, 1, 16, 0.6);
-    KPTextWeight(note, CGRectMake(pill.origin.x + 17, pill.origin.y + 6, text.width + 4, 22), 17, dark ? 0xffd28a : 0x8a4b00,
-                 NSFontWeightSemibold, NSTextAlignmentLeft);
+  // Beside the title, what's playing. It gives way to the bar's buttons when they reach it (a waiting
+  // restart, with the other game's pill).
+  const CGFloat room = self.barButtonsLeft - 18;
+  if (self.canPause) {
+    NSString *playing = KPGameTitle(KPRunningProfile());
+    if (s.origin.x + 260 + KPTextSize(playing, 20, NSFontWeightMedium).width <= room)
+      KPTextWeight(playing, CGRectMake(s.origin.x + 260, s.origin.y + 38, 460, 28), 20, KPP->secondaryText, NSFontWeightMedium,
+                   NSTextAlignmentLeft);
   }
 }
 
@@ -530,45 +527,49 @@ static KPScreen *KPMakeMiisScreen();
               NSTextAlignmentRight);
 }
 
+// A player: their Mii in a ring of their colour with their number on it, the Mii's name (or the
+// player's) with the battery, and the controller. A player without one keeps the layout, faded.
 - (void)drawSlot:(int)slot context:(CGContextRef)c in:(CGRect)r state:(KPUIState)state {
   KPPadDevice *device = [KPControllerRoster.shared deviceInSlot:slot];
   const BOOL empty = device == nil;
+  const unsigned color = KPPlayerColors[slot];
+  const CGFloat dy = state.pressed && !empty ? 2 : 0;
   if (empty) {
-    KPFill(c, r, KPP->panel, 16, 0.55);
+    KPFill(c, r, KPP->panel, 16, 0.4);
     CGContextSaveGState(c);
-    const CGFloat dash[] = {7, 6};
+    const CGFloat dash[] = {6, 5};
     CGContextSetLineDash(c, 0, dash, 2);
-    KPStroke(c, CGRectInset(r, 1, 1), KPP->buttonStroke, 2, 15);
+    KPStroke(c, CGRectInset(r, 1, 1), KPP->buttonStroke, 1.5, 15);
     CGContextRestoreGState(c);
     if (state.focused) KPStroke(c, r, KPP->accentTop, 2.5, 16);
-    KPDrawPlayerBadge(c, CGRectMake(r.origin.x + 18, CGRectGetMidY(r) - 16, 32, 32), slot, YES);
-    KPTextWeight(@"No controller", CGRectMake(r.origin.x + 62, CGRectGetMidY(r) - 13, r.size.width - 74, 26), 19, KPP->secondaryText,
-                 NSFontWeightSemibold, NSTextAlignmentLeft);
+  } else {
+    KPButtonFace(c, r, KPStyle::Card, NO, YES, state.pressed, state.focused);
+  }
+  const CGRect well = CGRectMake(r.origin.x + 18, r.origin.y + 15 + dy, 70, 70);
+  KPStroke(c, CGRectInset(well, -4, -4), color, 2.5, well.size.width * 0.22 + 4, empty ? 0.3 : 1);
+  KPDrawMiiWell(c, well, empty ? nil : KPPortraitFor(device, self.slots[slot]), color, empty);
+  // The number sits on the ring's corner, outlined so it stands off the Mii.
+  const CGRect badge = CGRectMake(CGRectGetMaxX(well) - 16, CGRectGetMaxY(well) - 16, 26, 26);
+  if (!empty) {
+    KPSetInk(c, KPP->buttonTop);
+    CGContextFillEllipseInRect(c, CGRectInset(badge, -2.5, -2.5));
+  }
+  KPDrawPlayerBadge(c, badge, slot, empty);
+  const CGFloat x = CGRectGetMaxX(well) + 20, width = CGRectGetMaxX(r) - 16 - x;
+  if (empty) {
+    KPTextWeight(@"No controller", CGRectMake(x, CGRectGetMidY(r) - 13, width, 26), 18, KPP->secondaryText, NSFontWeightSemibold,
+                 NSTextAlignmentLeft);
     return;
   }
-  KPButtonFace(c, r, KPStyle::Card, NO, YES, state.pressed, state.focused);
-  const CGFloat dy = state.pressed ? 2 : 0;
-  // The player's colour down the leading edge.
-  CGContextSaveGState(c);
-  CGPathRef clip = CGPathCreateWithRoundedRect(CGRectMake(r.origin.x, r.origin.y + dy, r.size.width, r.size.height - 3), 14, 14, nullptr);
-  CGContextAddPath(c, clip);
-  CGContextClip(c);
-  CGPathRelease(clip);
-  KPFill(c, CGRectMake(r.origin.x, r.origin.y, 9, r.size.height), KPPlayerColors[slot]);
-  CGContextRestoreGState(c);
   NSDictionary *mii = [KPControllerRoster.shared miiRecordFor:device];
-  NSImage *portrait = KPPortraitFor(device, self.slots[slot]);
-  const CGRect well = CGRectMake(r.origin.x + 20, r.origin.y + 14 + dy, 74, 74);
-  KPDrawMiiWell(c, well, portrait, KPPlayerColors[slot], NO);
-  KPDrawPlayerBadge(c, CGRectMake(well.origin.x - 6, well.origin.y - 6, 28, 28), slot, NO);
-  // The Mii's name (or the player), then the controller.
-  KPTextWeight(mii[@"name"] ?: KPPlayerName(slot), CGRectMake(r.origin.x + 106, r.origin.y + 16 + dy, r.size.width - 118, 28), 20,
-               KPP->text, NSFontWeightSemibold, NSTextAlignmentLeft);
+  const BOOL battery = !device.isKeyboard && (device.battery >= 0 || device.wired);
+  KPTextWeight(mii[@"name"] ?: KPPlayerName(slot), CGRectMake(x, r.origin.y + 20 + dy, width - (battery ? 40 : 0), 28), 20, KPP->text,
+               NSFontWeightSemibold, NSTextAlignmentLeft);
+  if (battery) KPDrawBattery(c, CGRectMake(CGRectGetMaxX(r) - 16 - 32, r.origin.y + 22 + dy, 32, 24), device);
   KPDrawGlyph(c, device.isKeyboard ? KPUIGlyph::Keyboard : device.family == KPFamilyWiiRemote ? KPUIGlyph::WiiRemote : KPUIGlyph::Pad,
-              CGRectMake(r.origin.x + 106, r.origin.y + 50 + dy, 24, 24), KPP->secondaryText);
-  KPTextWeight(device.name, CGRectMake(r.origin.x + 136, r.origin.y + 52 + dy, r.size.width - 190, 22), 15,
-               KPP->secondaryText, NSFontWeightMedium, NSTextAlignmentLeft);
-  KPDrawBattery(c, CGRectMake(CGRectGetMaxX(r) - 48, r.origin.y + 50 + dy, 30, 24), device);
+              CGRectMake(x, r.origin.y + 54 + dy, 22, 22), KPP->secondaryText);
+  KPTextWeight(device.name, CGRectMake(x + 28, r.origin.y + 56 + dy, width - 28, 22), 15, KPP->secondaryText, NSFontWeightMedium,
+               NSTextAlignmentLeft);
 }
 
 #pragma mark Actions
@@ -743,6 +744,17 @@ static BOOL KPReconnectShowing();
 static void KPReconnectPhonesTick();
 static void KPGhostsTick();  // KartPadGhostsScreen.inc.mm
 
+// A controller connecting or joining: which player it is (or, without one, how to join) and the
+// controller, drawn with its lights in the player's colour.
+static void KPToastController(NSString *name, KPPadFamily family, NSString *systemName, int slot, NSImage *portrait) {
+  KPArtState art;
+  if (slot >= 0) art.accent = KPPlayerColors[slot];
+  [KPOverlay() toastController:slot >= 0 ? KPPlayerName(slot) : name detail:slot >= 0 ? name : @"Press any button to join"
+                        player:slot image:portrait icon:^(CGContextRef c, CGRect r) {
+    KPDrawGlyph(c, family == KPFamilyWiiRemote ? KPUIGlyph::WiiRemote : KPUIGlyph::Pad, r, KPP->secondaryText);
+  } art:^(CGContextRef c, CGRect r) { KPDrawControllerArt(c, r, family, art, systemName); }];
+}
+
 // A controller that isn't playing joins by pressing any button during the game, as on a console:
 // it takes the first free player (or the keyboard's, while the keyboard just follows free players)
 // once the button is let go, so the press that joined doesn't also act in the game. Not while one
@@ -806,11 +818,7 @@ static void KPAutoJoinTick() {
     AppendSessionLine([NSString stringWithFormat:@"controllerJoined=%@; player=%d", device.name, slot + 1]);
     NSImage *portrait = nil;
     if (NSData *mii = [roster miiFor:device]) portrait = KartPadMiiPortrait(mii, ^{});
-    const KPPadFamily family = device.family;
-    [KPOverlay() toast:[NSString stringWithFormat:@"%@ joined", device.name] detail:KPPlayerName(slot) stripe:KPPlayerColors[slot]
-                  icon:^(CGContextRef c, CGRect r) {
-      KPDrawGlyph(c, family == KPFamilyWiiRemote ? KPUIGlyph::WiiRemote : KPUIGlyph::Pad, r, KPP->accentBottom);
-    } image:portrait];
+    KPToastController(device.name, device.family, device.systemName, slot, portrait);
     KPUIPlay(KPUISound::Saved);
   }
 }
@@ -855,9 +863,12 @@ static void KPShowHomeHint() {
   if (pad == nil)
     for (KPPadDevice *device in roster.devices)
       if (!device.isKeyboard && device.slot >= 0) { pad = device; break; }
-  NSString *button = KPHomeButtonName(pad ? pad.family : KPFamilyKeyboard);
+  const KPPadFamily family = pad ? pad.family : KPFamilyKeyboard;
   NSString *detail = pad && !pad.isKeyboard ? @"On the keyboard: esc" : @"On a controller: HOME";
-  [KPOverlay() toast:[NSString stringWithFormat:@"Press %@ for menus", button] detail:detail stripe:0 icon:^(CGContextRef c, CGRect r) {
+  // A GameCube pad has no HOME button: holding Start opens it (KPHomeHoldTick).
+  NSString *title = [NSString stringWithFormat:family == KPFamilyGameCube ? @"Hold %@ for menus" : @"Press %@ for menus",
+                                               KPHomeButtonName(family)];
+  [KPOverlay() toast:title detail:detail stripe:0 icon:^(CGContextRef c, CGRect r) {
     KPDrawGlyph(c, KPUIGlyph::Home, r, KPP->accentBottom);
   } image:nil seconds:7];
   AppendSessionLine(@"homeHint=shown");
@@ -869,15 +880,9 @@ static void KPShowHomeHint() {
 - (void)announceConnected:(KPPadDevice *)device {
   // The disconnected card shows who's back itself.
   if (KPReconnectShowing()) return;
-  const int slot = device.slot;
-  NSString *detail = slot >= 0 ? [NSString stringWithFormat:@"Player %d", slot + 1] : @"Press any button to join";
   NSImage *portrait = nil;
   if (NSData *mii = [self miiFor:device]) portrait = KartPadMiiPortrait(mii, ^{});
-  const KPPadFamily family = device.family;
-  [KPOverlay() toast:[NSString stringWithFormat:@"%@ connected", device.name] detail:detail
-              stripe:slot >= 0 ? KPPlayerColors[slot] : 0 icon:^(CGContextRef c, CGRect r) {
-    KPDrawGlyph(c, family == KPFamilyWiiRemote ? KPUIGlyph::WiiRemote : KPUIGlyph::Pad, r, KPP->accentBottom);
-  } image:portrait];
+  KPToastController(device.name, device.family, device.systemName, device.slot, portrait);
   KPUIPlay(KPUISound::Confirm);
 }
 - (void)announceGone:(KPPadDevice *)device {
