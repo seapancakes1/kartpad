@@ -25,8 +25,8 @@
   are those of runtime/include/kartpad/network/phone_pad.h, and VERSION is its ProtocolVersion: publish
   this page again when that changes. KartPad also says what the
   player is doing (the menus, the start of a race, the race, a fall), and the page shows the controls
-  for it: a D-pad in the menus; in a race, Drift under the right thumb and Item on the left, with a
-  stick or tilt steering. In a race it accelerates by itself from GO; the start and a fall are the
+  for it: a D-pad in the menus; in a race, Drift under the right thumb, with a stick on the left and
+  Item beside Drift, or tilt steering and Item on the left. In a race it accelerates by itself from GO; the start and a fall are the
   player's, for a rocket start or Lakitu's boost. The look follows KartPad's
   (apple/shared/KartPadStyle.h).
 -->
@@ -136,9 +136,10 @@ html.turned.back { --stripeDir: to right; }
   width: calc(var(--u) * 20); height: calc(var(--u) * 20); }
 
 /* A race, with the stick or tilt: Drift under the right thumb, B beside it with A+B above (hold it
-   stopped to charge a mini-turbo), Trick over Drift; Item on the left. With Auto, A only shows for the
-   start and after a fall, in Drift's place, since accelerating is then the player's. With Hold, A sits
-   beside Drift all race, and the seams press two buttons. */
+   stopped to charge a mini-turbo), Trick over Drift. With the stick, Item sits between Drift and B;
+   with tilt, it's on the left. With Auto, A only shows for the start and after a fall, in Drift's
+   place, since accelerating is then the player's. With Hold, A sits beside Drift all race, and the
+   seams press two buttons. */
 .race .k-drift { inset-inline-end: calc(var(--ie) + var(--u) * 5); bottom: calc(var(--sb) + var(--u) * 7);
   width: calc(var(--u) * 36); height: calc(var(--u) * 30); }
 .race .k-a { inset-inline-end: calc(var(--ie) + var(--u) * 8); bottom: calc(var(--sb) + var(--u) * 7);
@@ -147,8 +148,8 @@ html.turned.back { --stripeDir: to right; }
   width: calc(var(--u) * 20); height: calc(var(--u) * 20); }
 .race .k-ab { inset-inline-end: calc(var(--ie) + var(--u) * 47); bottom: calc(var(--sb) + var(--u) * 32);
   width: calc(var(--u) * 16); height: calc(var(--u) * 16); font-size: calc(var(--u) * 4); }
-.race .k-trick { inset-inline-end: calc(var(--ie) + var(--u) * 5); bottom: calc(var(--sb) + var(--u) * 42);
-  width: calc(var(--u) * 36); height: calc(var(--u) * 15); }
+.race .k-trick { inset-inline-end: calc(var(--ie) + var(--u) * 5); bottom: calc(var(--sb) + var(--u) * 41);
+  width: calc(var(--u) * 36); height: calc(var(--u) * 22); }
 .race .k-a, .race .seam { display: none; }
 #stage.amoment .race .k-a { display: flex; }
 #stage.amoment .race .k-drift, #stage.amoment .race .k-ab { display: none; }
@@ -157,14 +158,15 @@ html.turned.back { --stripeDir: to right; }
   width: calc(var(--u) * 26); height: calc(var(--u) * 26); font-size: calc(var(--u) * 9); }
 #stage.hold .race .k-b { inset-inline-end: calc(var(--ie) + var(--u) * 44.5); bottom: calc(var(--sb) + var(--u) * 37);
   width: calc(var(--u) * 18); height: calc(var(--u) * 18); }
-#stage.hold .race .k-trick { bottom: calc(var(--sb) + var(--u) * 37); width: calc(var(--u) * 32); height: calc(var(--u) * 14); }
+#stage.hold .race .k-trick { bottom: calc(var(--sb) + var(--u) * 37); width: calc(var(--u) * 32); height: calc(var(--u) * 20); }
 #stage.hold .race .k-ab { display: none; }
 #stage.hold .race .seam { display: block; }
 .race .s-drift-a { inset-inline-end: calc(var(--ie) + var(--u) * 36.5); bottom: calc(var(--sb) + var(--u) * 10);
   width: calc(var(--u) * 5); height: calc(var(--u) * 20); }
 .race .s-a-b { inset-inline-end: calc(var(--ie) + var(--u) * 45.5); bottom: calc(var(--sb) + var(--u) * 32);
   width: calc(var(--u) * 16); height: calc(var(--u) * 5); }
-/* Item: the top throws it forward and the bottom back, as up or down on the stick does. */
+/* Item: the top, or a flick up, throws it forward; the bottom, or a flick down, back; as up or down
+   on the stick does. */
 .k-item { justify-content: space-between; padding: calc(var(--u) * 2.2) 0;
   --rule: linear-gradient(var(--btnStroke), var(--btnStroke)) center 32% / 46% 1px no-repeat,
           linear-gradient(var(--btnStroke), var(--btnStroke)) center 68% / 46% 1px no-repeat;
@@ -176,17 +178,22 @@ html.turned.back { --stripeDir: to right; }
 .k-item.aim-down::before { bottom: 0; opacity: 1; border-radius: inherit; border-top-left-radius: 0; border-top-right-radius: 0; }
 .k-item.aim-up .up, .k-item.aim-down .down { color: var(--accBottom); }
 
-/* The stick: anywhere on the left, under Item. */
+/* The stick: anywhere on the left. */
 #stickzone { position: absolute; inset-inline-start: 0; top: calc(var(--u) * 16); bottom: 0;
-  width: calc(var(--W) - var(--u) * 75 - var(--ie)); }
+  width: calc(var(--W) - var(--u) * 100 - var(--ie)); }
 #base, #knob { position: absolute; border-radius: 50%; pointer-events: none; transform: translate(-50%, -50%); direction: ltr; }
 #base { width: calc(var(--u) * 36); height: calc(var(--u) * 36); background: var(--well); border: 1.25px solid var(--panelStroke);
   box-shadow: inset 0 2px 6px rgba(0, 0, 0, var(--shadow)); }
 #knob { width: calc(var(--u) * 17); height: calc(var(--u) * 17); border: 1.25px solid var(--btnStroke);
   background: linear-gradient(var(--btnTop), var(--btnBottom)); box-shadow: 0 calc(var(--u) * .9) 0 var(--ledge); }
 #base.idle, #knob.idle { opacity: .45; }
-#raceStick .k-item { inset-inline-start: calc(var(--is) + var(--u) * 5); top: calc(var(--st) + var(--u) * 18);
-  width: calc(var(--u) * 40); height: calc(var(--u) * 30); }
+/* Item between Drift and B, tall for flicking; with Hold, past A. */
+#raceStick .k-item { inset-inline-end: calc(var(--ie) + var(--u) * 45); bottom: calc(var(--sb) + var(--u) * 7);
+  width: calc(var(--u) * 26); height: calc(var(--u) * 50); }
+#raceStick .k-b { inset-inline-end: calc(var(--ie) + var(--u) * 75); }
+#raceStick .k-ab { inset-inline-end: calc(var(--ie) + var(--u) * 77); }
+#stage.hold #raceStick .k-item { inset-inline-end: calc(var(--ie) + var(--u) * 70); height: calc(var(--u) * 48); }
+#stage.hold #raceStick .k-b { inset-inline-end: calc(var(--ie) + var(--u) * 44.5); }
 
 /* Tilt: Item alone under the left thumb, the wheel in the middle. */
 #raceTilt .k-item { inset-inline-start: calc(var(--is) + var(--u) * 5); bottom: calc(var(--sb) + var(--u) * 7);
@@ -793,7 +800,7 @@ setInterval(() => { if (repeats > 0) { --repeats; send(true); } }, 20);
 function letGo() {
   fingers.clear();
   stick = null; stickX = stickY = 0;
-  aimUntil = 0;
+  aimUntil = itemUntil = 0;
   for (const item of document.querySelectorAll(".k-item")) showAim(item, 0);
   aLocked = false;
   clearTimeout(aLockTimer);
@@ -977,7 +984,7 @@ const keys = Array.from(document.querySelectorAll(".key[data-bit]"));
 const fingers = new Map();  // pointerId → {kind: "key" | "unlock" | "item" | "stick" | "dpad" | "home" | "bar", bits, el, aim}
 let stick = null, stickX = 0, stickY = 0;  // stick: where it was touched, on the stage
 let aLocked = false, aLockTimer = 0, homeTimer = 0, homeUntil = 0;
-let aimHeld = 0, aimUntil = 0;
+let aimHeld = 0, aimUntil = 0, itemUntil = 0;
 
 function keyAt(x, y) {
   const el = document.elementFromPoint(x, y);
@@ -992,6 +999,7 @@ function render() {
   let pressed = 0;
   for (const finger of fingers.values()) pressed |= finger.bits;
   if (performance.now() < shakeUntil) pressed |= 256;
+  if (performance.now() < itemUntil) pressed |= 16;
   if (performance.now() < homeUntil) pressed |= 4096;
   let held = pressed;
   const racing = layout() === "race";
@@ -1026,7 +1034,7 @@ function pressKey(id, k, x, y) {
   if (bits !== 1 && (bits & 1) && !aLocked) pressA();
   if (k.classList.contains("k-item")) {
     const aim = aimAt(k, x, y);
-    fingers.set(id, {kind: "item", bits, el: k, aim});
+    fingers.set(id, {kind: "item", bits, el: k, aim, startAim: aim, startY: toStage(x, y).y, at: performance.now()});
     showAim(k, aim);
   } else {
     fingers.set(id, {kind: "key", bits, el: k});
@@ -1034,11 +1042,19 @@ function pressKey(id, k, x, y) {
   buzz(8);
 }
 
-// Item, aimed like up or down on the stick: pressed or slid to its top it throws forward, to its
-// bottom it throws back. A held item goes when it's let go, so the aim stays a moment after.
+// Item, aimed like up or down on the stick: pressed at its top it throws forward, at its bottom back,
+// and flicked or slid up or down from where it was pressed it throws that way. A held item goes when
+// it's let go, so the aim stays a moment after; and Item stays pressed long enough for the game to
+// see a quick flick.
+const FLICK = 5, ITEM_MIN_MS = 80;  // --u, ms
 function aimAt(el, x, y) {
   const share = (toStage(x, y).y - el.offsetTop) / el.offsetHeight;
   return share < 0.32 ? -127 : share > 0.68 ? 127 : 0;
+}
+function flickAim(finger, x, y) {
+  const dy = toStage(x, y).y - finger.startY;
+  if (Math.abs(dy) < Math.min(W, H) / 100 * FLICK) return finger.startAim;
+  return dy < 0 ? -127 : 127;
 }
 function showAim(el, aim) {
   el.classList.toggle("aim-up", aim < 0);
@@ -1050,10 +1066,13 @@ function itemAim() {
 }
 function letGoOfItem(finger) {
   showAim(finger.el, 0);
+  const now = performance.now();
+  itemUntil = Math.max(itemUntil, finger.at + ITEM_MIN_MS);
+  if (itemUntil > now) setTimeout(() => { render(); send(); }, itemUntil - now + 10);
   if (!finger.aim) return;
   aimHeld = finger.aim;
-  aimUntil = performance.now() + 150;
-  setTimeout(() => { render(); send(); }, 160);
+  aimUntil = Math.max(now, itemUntil) + 150;
+  setTimeout(() => { render(); send(); }, aimUntil - now + 10);
 }
 function dpadBits(x, y) {
   const r = $("dpad").getBoundingClientRect();
@@ -1133,7 +1152,7 @@ document.addEventListener("pointermove", (e) => {
     if (!inside(finger.el, e.clientX, e.clientY)) { cancelHome(); fingers.delete(e.pointerId); }
   } else if (finger.kind === "item") {
     // Held until let go, wherever the finger slides; sliding only aims it.
-    const aim = aimAt(finger.el, e.clientX, e.clientY);
+    const aim = flickAim(finger, e.clientX, e.clientY);
     if (aim !== finger.aim) { finger.aim = aim; showAim(finger.el, aim); buzz(6); }
   } else {
     const k = keyAt(e.clientX, e.clientY);
@@ -1155,7 +1174,11 @@ function lift(e) {
   }
   if (finger.kind === "stick") { stick = null; stickX = 0; stickY = 0; restStick(); }
   else if (finger.kind === "home") cancelHome();
-  else if (finger.kind === "item") letGoOfItem(finger);
+  else if (finger.kind === "item") {
+    // A quick flick may end without a move.
+    if (e.type === "pointerup") finger.aim = flickAim(finger, e.clientX, e.clientY);
+    letGoOfItem(finger);
+  }
   else if (finger.kind === "key" && (finger.bits & 1)) releaseA();
   render(); send();
 }
