@@ -5,7 +5,7 @@
 //   home | close | screen settings|controllers|miis|ghosts|pair-wii|pair-phone | pad up|down|left|right|a|b|x|y|lb|rb|start
 //   shot NAME | resize W H | fullscreen | appearance light|dark|system | restart | quit | wait SECONDS
 //   focus LABEL | click LABEL | drag FROM TO LABEL | where | navmap | roster | vpad add|press|release|remove | key NAME
-//   move IDENTIFIER|vpadN SLOT | phone start|status|background-input|remove N
+//   move IDENTIFIER|vpadN SLOT | phone start|stop|status|background-input|remove N
 //   dropfile PATH (as if dropped on the game window) | droptypes (what the game window takes in a drag)
 // Included by KartPadMacShell.mm at the end.
 
@@ -259,11 +259,13 @@ static void KPQARun(NSString *line) {
     }
   } else if ([command isEqualToString:@"phone"]) {
     // Phone controllers without a camera: phone start (the server, as Connect a Controller → Phone
-    // starts it) | phone status (the link, which a test script opens as a phone would, and the phones)
+    // starts it) | phone stop (as closing that page does: not while a phone is on) | phone status
+    // (the link, which a test script opens as a phone would, and the phones)
     // | phone background-input (SDL keeps controller input while KartPad is in the background, so a
     // hidden run sees what the phones press; Aurora refuses to start with the environment variable)
     // | phone remove N (as the Connect screen's Remove does to phone N).
     if ([argument isEqualToString:@"start"]) [KPPhoneServer.shared start];
+    if ([argument isEqualToString:@"stop"]) [KPPhoneServer.shared stopIfUnused];
     if (words.count >= 3 && [words[1] isEqualToString:@"remove"] && words[2].intValue >= 1)
       [KPPhoneServer.shared sendAway:words[2].intValue - 1];
     if ([argument isEqualToString:@"background-input"])

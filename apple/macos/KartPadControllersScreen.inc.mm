@@ -1502,7 +1502,12 @@ static constexpr CGFloat KPPhoneListTop = 300, KPPhoneRowHeight = 58;
   self.shownLook = look;
   self.needsDisplay = YES;
 }
+- (void)willAppear {
+  [super willAppear];
+  if (self.kind == KPPairKind::Phone && !self.choosing) [KPPhoneServer.shared start];
+}
 - (void)willDisappear {
+  if (self.kind == KPPairKind::Phone && !self.choosing) [KPPhoneServer.shared stopIfUnused];
   KartPadCancelWiimotePairing();
   KartPadCancelGamepadPairing();
   [KPControllerRoster.shared.listeners removeObject:self];
@@ -1516,6 +1521,7 @@ static constexpr CGFloat KPPhoneListTop = 300, KPPhoneRowHeight = 58;
   if (!self.choosing && !self.arrived) {
     KartPadCancelWiimotePairing();
     KartPadCancelGamepadPairing();
+    if (self.kind == KPPairKind::Phone) [KPPhoneServer.shared stopIfUnused];
     self.choosing = YES;
     self.busy = NO;
     [self layoutDesign];

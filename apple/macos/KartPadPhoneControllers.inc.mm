@@ -1,8 +1,9 @@
 // Phones as controllers, with nothing to install. Connect a Controller → Phone starts a small web
 // server on the local network and shows a QR code; the phone plays as an SDL virtual gamepad named
 // "Phone 1"–"Phone 4", which players, joining, toasts and the Controllers screen treat like any other
-// controller. The server runs from the first time it's wanted until KartPad quits, with a new link
-// each launch. A phone connects one of two ways:
+// controller. The server runs while the Phone page is open, and after it closes for as long as a
+// phone is connected, joining or holding its player; the link is new each launch. A phone connects
+// one of two ways:
 // - With tilt, when the build says where web/phone is published over HTTPS (KARTPAD_PHONE_PAGE_URL,
 //   cmake/KartPadPhoneLink.cmake): the code opens that page, where the browser lets it read the
 //   phone's motion. It can't reach this Mac's plain-HTTP address, so it opens this server's helper
@@ -107,7 +108,9 @@ struct KPPhoneLink {
 using KPPhoneLinkRef = std::shared_ptr<KPPhoneLink>;
 
 // Everything below is used on KPPhoneQueue() only, except where noted.
+static bool KPPhoneListening = false;
 static nw_listener_t KPPhoneListener;
+static uint64_t KPPhoneListenerRun = 0;  // which listener is the current one
 static dispatch_source_t KPPhoneTimer;
 static std::string KPPhoneKey;
 static kpp::Sessions KPPhoneSessions;
@@ -240,6 +243,9 @@ struct KPPhoneEntry {
 @interface KPPhoneServer : NSObject <KPRosterListener>
 + (instancetype)shared;
 - (void)start;
+// The Phone page closed: stop listening unless a phone is connected, joining or holding its player.
+// start listens again.
+- (void)stopIfUnused;
 // The phone's links, nil until the server is listening and this Mac is on a network: the HTTPS
 // controller page with tilt (nil too when no page is set), and the touch-only page served here.
 - (NSString *)tiltURL;
@@ -566,9 +572,11 @@ static void KPPhoneListen(const char *port) {
     return;
   }
   KPPhoneListener = listener;
+  const uint64_t run = ++KPPhoneListenerRun;
   const bool preferred = strcmp(port, "0") != 0;
   nw_listener_set_queue(listener, KPPhoneQueue());
   nw_listener_set_state_changed_handler(listener, ^(nw_listener_state_t state, nw_error_t error) {
+    if (run != KPPhoneListenerRun) return;  // stopped or replaced since
     if (state == nw_listener_state_ready) {
       KPPhonePort = nw_listener_get_port(KPPhoneListener);
       NSLog(@"[KartPad] Phone controllers on port %u", (unsigned)KPPhonePort.load());
@@ -584,6 +592,38 @@ static void KPPhoneListen(const char *port) {
   });
   nw_listener_set_new_connection_handler(listener, ^(nw_connection_t connection) { KPPhoneAccept(connection); });
   nw_listener_start(listener);
+}
+
+static void KPPhoneStartListening() {
+  if (KPPhoneListening) return;
+  KPPhoneListening = true;
+  KPPhoneFailed = false;
+  KPPhoneListen(KPPhonePreferredPort);
+  KPPhoneTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, KPPhoneQueue());
+  dispatch_source_set_timer(KPPhoneTimer, dispatch_time(DISPATCH_TIME_NOW, 100 * NSEC_PER_MSEC), 100 * NSEC_PER_MSEC,
+                            20 * NSEC_PER_MSEC);
+  dispatch_source_set_event_handler(KPPhoneTimer, ^{ KPPhoneTick(); });
+  dispatch_resume(KPPhoneTimer);
+}
+
+// Stops listening unless a phone is connected, joining or holding its player, and closes what's
+// left (page loads, helper tabs that haven't signalled). Returns whether it stopped.
+static bool KPPhoneStopListening() {
+  if (!KPPhoneListening) return false;
+  for (int phone = 0; phone < kpp::MaxPhones; ++phone)
+    if (KPPhoneSessions[phone].used) return false;
+  for (const KPPhoneLinkRef &link : KPPhoneLinks)
+    if (link->proven || link->peer) return false;
+  KPPhoneListening = false;
+  ++KPPhoneListenerRun;
+  if (KPPhoneListener) nw_listener_cancel(KPPhoneListener);
+  KPPhoneListener = nil;
+  KPPhonePort = 0;
+  dispatch_source_cancel(KPPhoneTimer);
+  KPPhoneTimer = nil;
+  const std::vector<KPPhoneLinkRef> links = KPPhoneLinks;
+  for (const KPPhoneLinkRef &link : links) KPPhoneClose(link);
+  return true;
 }
 
 #pragma mark WebRTC links
@@ -933,7 +973,10 @@ static std::vector<bool> KPPhoneQRModules(NSString *text, int &size) {
 }
 
 - (void)start {
-  if (_started) return;
+  if (_started) {
+    [self listen];
+    return;
+  }
   _started = YES;
   const std::string key = KPPhoneRandomHex(16);
   _key = @(key.c_str());
@@ -958,14 +1001,25 @@ static std::vector<bool> KPPhoneQRModules(NSString *text, int &size) {
   dispatch_async(KPPhoneQueue(), ^{
     KPPhoneKey = key;
     KPPhoneControllerOrigin = origin;
-    KPPhoneListen(KPPhonePreferredPort);
-    KPPhoneTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, KPPhoneQueue());
-    dispatch_source_set_timer(KPPhoneTimer, dispatch_time(DISPATCH_TIME_NOW, 100 * NSEC_PER_MSEC), 100 * NSEC_PER_MSEC,
-                              20 * NSEC_PER_MSEC);
-    dispatch_source_set_event_handler(KPPhoneTimer, ^{ KPPhoneTick(); });
-    dispatch_resume(KPPhoneTimer);
   });
-  AppendSessionLine(@"phoneControllers=started");
+  [self listen];
+}
+
+// Listening again after stopIfUnused: the same key, so the same link unless the usual port was taken.
+- (void)listen {
+  dispatch_async(KPPhoneQueue(), ^{
+    if (KPPhoneListening) return;
+    KPPhoneStartListening();
+    dispatch_async(dispatch_get_main_queue(), ^{ AppendSessionLine(@"phoneControllers=started"); });
+  });
+}
+
+- (void)stopIfUnused {
+  if (!_started) return;
+  dispatch_async(KPPhoneQueue(), ^{
+    if (KPPhoneStopListening())
+      dispatch_async(dispatch_get_main_queue(), ^{ AppendSessionLine(@"phoneControllers=stopped"); });
+  });
 }
 
 - (NSString *)address {
