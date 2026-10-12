@@ -384,12 +384,10 @@ static KPScreen *KPMakeMiisScreen();
 
 - (KPUIButton *)initialFocus { return self.resume; }
 
-// Between the volume and the players: the middle, then either side.
+// Between the volume and the players, in the middle.
 - (NSArray<NSValue *> *)toastSpots {
   const CGRect s = self.safe;
-  const CGFloat y = s.origin.y + 462, mid = std::round(CGRectGetMidX(s) - KPToastWidth / 2);
-  return @[[NSValue valueWithPoint:NSMakePoint(mid, y)], [NSValue valueWithPoint:NSMakePoint(mid + KPToastWidth, y)],
-           [NSValue valueWithPoint:NSMakePoint(mid - KPToastWidth, y)]];
+  return @[[NSValue valueWithPoint:NSMakePoint(std::round(CGRectGetMidX(s) - KPToastWidth / 2), s.origin.y + 462)]];
 }
 
 - (void)willAppear {

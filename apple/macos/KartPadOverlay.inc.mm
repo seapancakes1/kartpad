@@ -148,6 +148,8 @@ struct KPUIState {
 @property(nonatomic, weak) KPScreen *owner;
 @property(nonatomic) BOOL owned, started, leaving;
 @property(nonatomic) NSTimeInterval seconds;
+// Counts restarts of its time, so an earlier timer doesn't take it away.
+@property(nonatomic) NSUInteger showing;
 @end
 
 @interface KPOverlayController : NSObject
@@ -1114,11 +1116,12 @@ static KPUIButton *KPUINearest(NSArray<KPUIButton *> *candidates, KPUIButton *fr
   [NSRunLoop.mainRunLoop addTimer:self.ticker forMode:NSRunLoopCommonModes];
 }
 
-// Toasts come in front of the game and any screen, and never take the focus or a click. Over the
-// game they stack down from the top right. Over a screen they go where no control is: the screen's
-// own places first (toastSpots), then the top centre, the bottom centre above the hints, and down the
-// right below the header. One with nowhere free waits for room, its time starting once it shows. A
-// toast raised on a screen goes when that screen goes (or, for Settings, changes category).
+// Toasts come in front of the game and any screen, and never take the focus or a click. They make one
+// stack, oldest at its start: over the game, down from the top right; over a screen, at the first place
+// with room for the whole stack where no control is: the screen's own places (toastSpots), the top
+// centre, the bottom centre above the hints (stacking up), then down the right below the header. With
+// room nowhere, the stack starts at the first free place and runs over the controls. A toast raised on
+// a screen goes when that screen goes (or, for Settings, changes category).
 static constexpr CGFloat KPToastWidth = 420, KPToastHeight = 92;
 - (void)toast:(NSString *)heading detail:(NSString *)detail stripe:(unsigned)stripe
          icon:(void (^)(CGContextRef c, CGRect r))icon image:(NSImage *)image {
@@ -1150,6 +1153,21 @@ static constexpr CGFloat KPToastWidth = 420, KPToastHeight = 92;
 - (void)show:(KPToastView *)toast seconds:(NSTimeInterval)seconds {
   if (![self attach]) return;
   toast.seconds = seconds;
+  // The same toast again (a row pressed over and over, a controller reconnecting) renews the one
+  // already up rather than stacking a copy.
+  for (KPToastView *shown in self.toasts) {
+    if (shown.leaving || shown.player != toast.player || shown.owner != toast.owner || shown.owned != toast.owned ||
+        ![shown.heading ?: @"" isEqualToString:toast.heading ?: @""] || ![shown.detail ?: @"" isEqualToString:toast.detail ?: @""])
+      continue;
+    shown.stripe = toast.stripe;
+    shown.icon = toast.icon;
+    shown.image = toast.image;
+    shown.art = toast.art;
+    shown.seconds = seconds;
+    shown.needsDisplay = YES;
+    if (shown.started) [self time:shown];
+    return;
+  }
   [self.toasts addObject:toast];
   while (self.toasts.count > 4) {
     [self.toasts.firstObject removeFromSuperview];
@@ -1174,10 +1192,15 @@ static constexpr CGFloat KPToastWidth = 420, KPToastHeight = 92;
     toast.animator.alphaValue = 1;
     toast.animator.frame = end;
   }];
+  [self time:toast];
+}
+// Starts (or restarts) a showing toast's time.
+- (void)time:(KPToastView *)toast {
+  const NSUInteger showing = ++toast.showing;
   __weak KPToastView *weakToast = toast;
   __weak KPOverlayController *weakSelf = self;
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(toast.seconds * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-    if (KPToastView *gone = weakToast) [weakSelf dismissToast:gone];
+    if (KPToastView *gone = weakToast; gone && gone.showing == showing) [weakSelf dismissToast:gone];
   });
 }
 - (void)dismissToast:(KPToastView *)toast {
@@ -1218,53 +1241,52 @@ static void KPCollectControls(NSView *view, NSView *screen, CGFloat scale, std::
 - (void)layoutToasts:(BOOL)animated {
   const CGFloat s = self.scale, width = KPToastWidth, height = KPToastHeight;
   KPScreen *screen = self.top;
-  std::vector<CGPoint> spots;
+  // Where a stack can start, and which way it grows (1 down, -1 up).
+  std::vector<std::pair<CGPoint, int>> starts;
   std::vector<CGRect> controls;
   if (screen == nil) {
-    for (int i = 0; i < 3; ++i) spots.push_back(CGPointMake(self.stage.width - width - 18, 18 + i * (height - 4)));
+    starts.push_back({CGPointMake(self.stage.width - width - 18, 18), 1});
   } else {
     const CGRect safe = CGRectMake(std::round((self.stage.width - KPUIDesignWidth) / 2),
                                    std::round((self.stage.height - KPUIDesignHeight) / 2), KPUIDesignWidth, KPUIDesignHeight);
-    for (NSValue *spot in screen.toastSpots) spots.push_back(spot.pointValue);
+    for (NSValue *spot in screen.toastSpots)
+      starts.push_back({spot.pointValue, spot.pointValue.y + height / 2 > CGRectGetMidY(safe) ? -1 : 1});
     const CGFloat mid = std::round(CGRectGetMidX(safe) - width / 2);
-    spots.push_back(CGPointMake(mid, safe.origin.y + 6));
-    spots.push_back(CGPointMake(mid, safe.origin.y + 588));
-    for (int i = 0; i < 3; ++i) spots.push_back(CGPointMake(CGRectGetMaxX(safe) - width - 18, safe.origin.y + 112 + i * (height - 4)));
+    starts.push_back({CGPointMake(mid, safe.origin.y + 6), 1});
+    starts.push_back({CGPointMake(mid, safe.origin.y + 588), -1});
+    starts.push_back({CGPointMake(CGRectGetMaxX(safe) - width - 18, safe.origin.y + 112), 1});
     KPCollectControls(screen, screen, s, controls);
   }
   // The card a toast draws, inside its frame (KPToastView), is what mustn't cover a control.
   auto card = [&](CGPoint p) { return CGRectMake(p.x + 6, p.y + 4, width - 12, height - 12); };
-  std::vector<CGRect> taken;
-  auto isFree = [&](CGPoint p) {
-    const CGRect r = card(p);
-    for (const CGRect &control : controls)
-      if (CGRectIntersectsRect(r, control)) return false;
-    for (const CGRect &other : taken)
-      if (CGRectIntersectsRect(r, CGRectInset(other, 2, 2))) return false;
+  auto place = [&](const std::pair<CGPoint, int> &start, size_t i) {
+    return CGPointMake(start.first.x, start.first.y + start.second * (CGFloat)i * (height - 4));
+  };
+  auto fits = [&](const std::pair<CGPoint, int> &start, size_t count) {
+    for (size_t i = 0; i < count; ++i) {
+      const CGRect r = card(place(start, i));
+      if (r.origin.y < 0 || CGRectGetMaxY(r) > self.stage.height) return false;
+      for (const CGRect &control : controls)
+        if (CGRectIntersectsRect(r, control)) return false;
+    }
     return true;
   };
-  // Oldest first, so a toast keeps its place as more come.
-  for (KPToastView *toast in self.toasts.copy) {
-    if (toast.leaving) continue;
-    bool placed = false;
-    CGPoint at = CGPointZero;
-    for (const CGPoint &spot : spots)
-      if (isFree(spot)) {
-        at = spot;
-        placed = true;
-        break;
-      }
-    // Nowhere free on this screen at all: the first place rather than never.
-    if (!placed && taken.empty() && !spots.empty()) {
-      at = spots.front();
-      placed = true;
+  NSMutableArray<KPToastView *> *stack = [NSMutableArray array];
+  for (KPToastView *toast in self.toasts)
+    if (!toast.leaving) [stack addObject:toast];
+  if (stack.count == 0 || starts.empty()) return;
+  const std::pair<CGPoint, int> *start = nullptr;
+  for (const auto &candidate : starts)
+    if (fits(candidate, stack.count)) {
+      start = &candidate;
+      break;
     }
-    if (!placed) {
-      if (!toast.started) toast.hidden = YES;
-      else [self dismissToast:toast];  // a screen's control came up under it
-      continue;
-    }
-    taken.push_back(card(at));
+  for (const auto &candidate : starts)
+    if (!start && fits(candidate, 1)) start = &candidate;
+  if (!start) start = &starts.front();
+  for (NSUInteger i = 0; i < stack.count; ++i) {
+    KPToastView *toast = stack[i];
+    const CGPoint at = place(*start, i);
     const NSRect frame = NSMakeRect(std::round(at.x * s), std::round(at.y * s), std::round(width * s), std::round(height * s));
     toast.scale = s;
     if (!toast.started) {
@@ -1405,6 +1427,10 @@ struct KPMenuItem {
 
 @interface KPMenuScreen : KPScreen
 @property(nonatomic, copy) NSString *heading, *message;
+// The choice in effect, focused first and marked with chosenGlyph (KPUIGlyph::Check, as glyphs are
+// declared after this file); -1 for none.
+@property(nonatomic) NSInteger chosen;
+@property(nonatomic) int chosenGlyph;
 - (void)add:(NSString *)title detail:(NSString *)detail glyph:(int)glyph enabled:(BOOL)enabled run:(void (^)(void))run;
 @end
 
@@ -1412,6 +1438,10 @@ static void KPDrawGlyphIndex(CGContextRef c, int glyph, CGRect rect, unsigned in
 
 @implementation KPMenuScreen {
   std::vector<KPMenuItem> _items;
+}
+- (instancetype)initWithFrame:(NSRect)frame {
+  if ((self = [super initWithFrame:frame])) _chosen = _chosenGlyph = -1;
+  return self;
 }
 - (void)add:(NSString *)title detail:(NSString *)detail glyph:(int)glyph enabled:(BOOL)enabled run:(void (^)(void))run {
   _items.push_back({title, detail, glyph, enabled, [run copy]});
@@ -1441,6 +1471,9 @@ static void KPDrawGlyphIndex(CGContextRef c, int glyph, CGRect rect, unsigned in
         KPTextWeight(item.title, CGRectMake(x, CGRectGetMidY(r) - 15 + dy, r.size.width - x + r.origin.x - 16, 30), 21,
                      KPP->text, NSFontWeightSemibold, NSTextAlignmentLeft);
       }
+      if ((NSInteger)i == menu.chosen && menu.chosenGlyph >= 0)
+        KPDrawGlyphIndex(c, menu.chosenGlyph, CGRectMake(CGRectGetMaxX(r) - 50, CGRectGetMidY(r) - 15 + dy, 30, 30),
+                         KPP->accentBottom);
     } action:^{
       KPMenuScreen *menu = weakSelf;
       if (menu == nil || i >= menu->_items.size()) return;
@@ -1453,6 +1486,11 @@ static void KPDrawGlyphIndex(CGContextRef c, int glyph, CGRect rect, unsigned in
     button.label = _items[i].title;
     button.sound = KPUISound::Confirm;
   }
+}
+- (KPUIButton *)initialFocus {
+  for (KPUIButton *button in self.focusables)
+    if (button.tag2 == self.chosen && button.enabled) return button;
+  return [super initialFocus];
 }
 - (void)layoutDesign {
   const CGRect card = self.card;

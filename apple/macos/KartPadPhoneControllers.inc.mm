@@ -251,6 +251,7 @@ struct KPPhoneEntry {
 - (NSString *)tiltURL;
 - (NSString *)touchURL;
 - (BOOL)hasTiltPage;
+- (NSString *)joinURL;  // the one the Connect screen shows: touch only when offline is chosen or there's no page
 - (NSString *)problem;  // why there's no link, for the Connect screen
 - (void)drawCode:(NSString *)url in:(CGContextRef)c rect:(CGRect)rect;
 - (void)seatPhone:(int)phone then:(void (^)(int slot))done;
@@ -864,12 +865,14 @@ extern "C" bool KartPadControllersVisible();       // KartPadMacMiis.inc.mm
 // Where the HTTPS controller page (web/phone in this repository) is published: the build's
 // KARTPAD_PHONE_PAGE_URL (cmake/KartPadPhoneLink.cmake, empty unless a build sets it), overridable with
 // `defaults write dev.kartpad.app KartPadPhonePageURL <https URL>`. With neither, or an empty value,
-// phones get the touch-only page this Mac serves, and tilt isn't offered.
+// phones get the touch-only page this Mac serves, and tilt isn't offered. Settings → Advanced →
+// Offline phones (KPPhoneOfflineKey) chooses that page anyway: it needs no internet on the phone.
 #ifndef KARTPAD_PHONE_PAGE_URL
 #define KARTPAD_PHONE_PAGE_URL ""
 #endif
 static NSString *const KPPhonePageURLKey = @"KartPadPhonePageURL";
 static NSString *const KPPhoneDefaultPageURL = @KARTPAD_PHONE_PAGE_URL;
+static NSString *const KPPhoneOfflineKey = @"KartPadPhoneOffline";
 
 static NSURL *KPPhonePageURL() {
   id value = [NSUserDefaults.standardUserDefaults objectForKey:KPPhonePageURLKey];
@@ -1039,6 +1042,10 @@ static std::vector<bool> KPPhoneQRModules(NSString *text, int &size) {
 }
 
 - (BOOL)hasTiltPage { return _page != nil; }
+
+- (NSString *)joinURL {
+  return _page && ![NSUserDefaults.standardUserDefaults boolForKey:KPPhoneOfflineKey] ? self.tiltURL : self.touchURL;
+}
 
 // The page, with where to find this Mac and this launch's key after the # (which browsers never
 // send to the page's host).

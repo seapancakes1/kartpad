@@ -92,6 +92,73 @@ static NSString *KPProfileKey(SDL_Gamepad *pad) {
   return key;
 }
 
+// Off, then Light, Medium and Strong: the rumble strengths behind them.
+static NSArray<NSNumber *> *KPVibrationStrengths() { return @[@0,@0.25,@0.5,@1]; }
+static NSArray<NSString *> *KPVibrationNames() { return @[@"Off",@"Light",@"Medium",@"Strong"]; }
+// The nearest of those to a strength: 0 for off.
+static NSInteger KPVibrationIndex(float strength) {
+  if (strength <= 0) return 0;
+  return strength < 0.375f ? 1 : strength < 0.75f ? 2 : 3;
+}
+// Settings' vibration: what a controller without its own choice gets.
+static NSInteger KPDefaultVibration(const RuntimeUserConfig &c) {
+  return c.rumbleEnabled.value_or(true) ? KPVibrationIndex(std::clamp(c.rumbleStrength.value_or(0.5f), 0.0f, 1.0f)) : 0;
+}
+static NSInteger KPDefaultVibration() { return KPDefaultVibration(RuntimeConfigFile::LoadConfigFile()); }
+
+// Each controller's own vibration, by profile key (KPProfileKey), so a controller keeps it when it
+// disconnects and comes back: KPVibrationStrengths' index.
+static NSString *const KPControllerVibrationKey = @"KartPadControllerVibration";
+extern "C" void PAD_HLE_SetPortRumbleStrength(uint32_t chan, float strength);  // runtime hle/input/pad.cpp
+static NSDictionary *KPControllerVibrations;  // read once, kept up to date by KPSetControllerVibration
+static NSNumber *KPOwnVibration(NSString *profileKey) {
+  if (KPControllerVibrations == nil)
+    KPControllerVibrations = [NSUserDefaults.standardUserDefaults dictionaryForKey:KPControllerVibrationKey] ?: @{};
+  NSNumber *index = profileKey ? KPControllerVibrations[profileKey] : nil;
+  return [index isKindOfClass:NSNumber.class] && index.integerValue >= 0 && index.integerValue < 4 ? index : nil;
+}
+static NSInteger KPVibrationFor(NSString *profileKey, NSInteger fallback) {
+  NSNumber *own = KPOwnVibration(profileKey);
+  return own ? own.integerValue : fallback;
+}
+static NSInteger KPVibrationFor(NSString *profileKey) { return KPVibrationFor(profileKey, KPDefaultVibration()); }
+static void KPSetControllerVibration(NSString *profileKey, NSInteger index) {
+  if (profileKey == nil) return;
+  NSMutableDictionary *map = [KPControllerVibrations ?: @{} mutableCopy];
+  map[profileKey] = @(std::clamp<NSInteger>(index, 0, 3));
+  KPControllerVibrations = map.copy;
+  [NSUserDefaults.standardUserDefaults setObject:KPControllerVibrations forKey:KPControllerVibrationKey];
+}
+// Tells the runtime the vibration of the controller on each player (KPControllerSettings tick).
+static void KPApplyPortVibration(int port, SDL_Gamepad *pad) {
+  static float sent[4] = {-2, -2, -2, -2};
+  if (port < 0 || port >= 4) return;
+  NSNumber *own = pad ? KPOwnVibration(KPProfileKey(pad)) : nil;
+  const float strength = own ? KPVibrationStrengths()[own.integerValue].floatValue : -1;
+  if (sent[port] == strength) return;
+  sent[port] = strength;
+  PAD_HLE_SetPortRumbleStrength((uint32_t)port, strength);
+}
+// A short buzz on every connected controller that can vibrate, at its own strength. Returns how
+// many buzzed; silenced counts the ones that could but have vibration off.
+static int KPTestVibration(int *silenced) {
+  int tested = 0, off = 0, count = 0;
+  const NSInteger fallback = KPDefaultVibration();
+  SDL_JoystickID *ids = SDL_GetGamepads(&count);
+  for (int i = 0; i < count; ++i) {
+    SDL_Gamepad *pad = SDL_GetGamepadFromID(ids[i]);
+    if (pad == nullptr || !SDL_GetBooleanProperty(SDL_GetGamepadProperties(pad), SDL_PROP_GAMEPAD_CAP_RUMBLE_BOOLEAN, false))
+      continue;
+    const float strength = KPVibrationStrengths()[KPVibrationFor(KPProfileKey(pad), fallback)].floatValue;
+    if (strength <= 0) { ++off; continue; }
+    const auto level = static_cast<Uint16>(std::lround(strength * 65535.0f));
+    if (SDL_RumbleGamepad(pad, level, level, 500)) ++tested;
+  }
+  SDL_free(ids);
+  if (silenced) *silenced = off;
+  return tested;
+}
+
 @interface KPControllerSettings : NSObject <NSWindowDelegate>
 @property NSPanel *panel;
 @property NSView *content;
@@ -504,8 +571,10 @@ static NSString *KPProfileKey(SDL_Gamepad *pad) {
   for(int i=0;i<rawCount;++i) [ids addObject:@(raw[i])]; SDL_free(raw);
   for (NSNumber *idNumber in self.applied.allKeys) if(![ids containsObject:idNumber]) [self.applied removeObjectForKey:idNumber];
   for(int port=0;port<4;++port) {
-    int index=PADGetIndexForPort(port); if(index<0)continue;
-    SDL_Gamepad *pad=PADGetSDLGamepadForIndex(index); if(!pad)continue;
+    int index=PADGetIndexForPort(port);
+    SDL_Gamepad *pad=index<0?nullptr:PADGetSDLGamepadForIndex(index);
+    KPApplyPortVibration(port,pad);
+    if(!pad)continue;
     NSNumber *identifier=@(SDL_GetGamepadID(pad));
     NSString *stamp=[NSString stringWithFormat:@"%@:%d",KPProfileKey(pad),port];
     if(![self.applied[identifier] isEqual:stamp]) {

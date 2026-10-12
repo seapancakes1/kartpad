@@ -69,6 +69,11 @@ static CGRect KPSettingsSliderTrack(CGRect r) {
   const CGFloat controlWidth = 300, right = CGRectGetMaxX(r) - 20, mid = CGRectGetMidY(r) - 1.5;
   return CGRectMake(right - controlWidth, mid - 6, controlWidth - 70, 12);
 }
+// Where a choice row draws its box of arrows and value (unpressed).
+static CGRect KPSettingsChoiceBox(CGRect r) {
+  const CGFloat controlWidth = 300, right = CGRectGetMaxX(r) - 20, mid = CGRectGetMidY(r) - 1.5;
+  return CGRectMake(right - controlWidth, mid - 20, controlWidth, 40);
+}
 
 @implementation KPSettingsScreen
 static constexpr NSInteger KPSettingsVisibleRows = 7;
@@ -302,10 +307,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
     case KPRowSwitch: return NO;  // only A flips a switch
     case KPRowChoice: {
       const NSInteger next = row.index() + direction;
-      if (next < 0 || next >= (NSInteger)row.choices.count) {
-        KPUIPlay(KPUISound::Reject);
-        return YES;
-      }
+      if (next < 0 || next >= (NSInteger)row.choices.count) return YES;
       row.setIndex(next);
       KPUIPlay(direction < 0 ? KPUISound::Left : KPUISound::Right);
       break;
@@ -329,6 +331,15 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
 // A level row's track follows the pointer; the level is saved once the drag rests or ends.
 - (BOOL)slide:(NSInteger)visible to:(CGPoint)point face:(CGRect)r began:(BOOL)began {
   KPSettingRow *row = [self rowAt:visible];
+  // A click on a choice's arrow steps it; anywhere else on the row is a click as before.
+  if (row.kind == KPRowChoice) {
+    if (!began) return YES;
+    const CGRect box = CGRectInset(KPSettingsChoiceBox(r), -8, -10);
+    if (!CGRectContainsPoint(box, point)) return NO;
+    if (point.x < box.origin.x + 60) return [self adjust:visible by:-1];
+    if (point.x > CGRectGetMaxX(box) - 60) return [self adjust:visible by:1];
+    return NO;
+  }
   float next;
   if (row.kind != KPRowSlider || !KPSliderLevel(KPSettingsSliderTrack(r), point, began, &next)) return NO;
   const float now = [self levelOf:row];
@@ -393,7 +404,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
       break;
     case KPRowChoice: {
       const NSInteger index = row.index();
-      const CGRect box = CGRectMake(right - controlWidth, mid - 20, controlWidth, 40);
+      const CGRect box = CGRectOffset(KPSettingsChoiceBox(r), 0, dy);
       KPFill(c, box, KPP->well, 20);
       KPStroke(c, box, KPP->buttonStroke, 1, 20);
       const BOOL canLeft = index > 0, canRight = index + 1 < (NSInteger)row.choices.count;
@@ -509,7 +520,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
   [picture addObject:boolRow(@"Show frame rate", nil, "video", "show_fps", false,
                              ^bool(const RuntimeUserConfig &c) { return c.showFps.value_or(false); }, false, true)];
   {
-    KPSettingRow *row = KPRow(@"Smoother motion", @"Caps picture quality at 4×.", KPRowChoice);
+    KPSettingRow *row = KPRow(@"Smoother motion (Experimental)", @"Uses frame interpolation. Caps picture quality at 4×.", KPRowChoice);
     NSArray<NSNumber *> *values = @[@0, @120, @180];
     row.choices = @[@"Off · 60 fps", @"120 fps", @"180 fps"];
     row.index = ^NSInteger {
@@ -576,14 +587,10 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
     [controls addObject:row];
   }
   {
-    KPSettingRow *row = KPRow(@"Vibration", nil, KPRowChoice);
-    row.choices = @[@"Off", @"Light", @"Medium", @"Strong"];
-    row.index = ^NSInteger {
-      const RuntimeUserConfig c = config();
-      if (!c.rumbleEnabled.value_or(true)) return 0;
-      const float strength = std::clamp(c.rumbleStrength.value_or(0.5f), 0.0f, 1.0f);
-      return strength < 0.375f ? 1 : strength < 0.75f ? 2 : 3;
-    };
+    // For controllers without their own (Controllers, a player's card).
+    KPSettingRow *row = KPRow(@"Default vibration", nil, KPRowChoice);
+    row.choices = KPVibrationNames();
+    row.index = ^NSInteger { return KPDefaultVibration(config()); };
     row.setIndex = ^(NSInteger index) {
       KPWriteConfig("controller", "rumble", index > 0 ? "true" : "false", index == 0);
       if (index > 0) KPWriteConfig("controller", "rumble_strength", KPFloatText(KPVibrationStrengths()[index].floatValue));
@@ -594,14 +601,9 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
     KPSettingRow *row = KPRow(@"Test vibration", nil, KPRowAction);
     row.inPlace = YES;
     row.run = ^{
-      const RuntimeUserConfig c = config();
-      const auto level = static_cast<Uint16>(std::lround(std::clamp(c.rumbleStrength.value_or(0.5f), 0.0f, 1.0f) * 65535.0f));
-      int tested = 0;
-      if (c.rumbleEnabled.value_or(true))
-        for (KPPadDevice *device in KPControllerRoster.shared.devices)
-          if (device.canRumble && device.gamepad && SDL_RumbleGamepad(device.gamepad, level, level, 500)) ++tested;
-      if (tested == 0)
-        [KPOverlay() toast:c.rumbleEnabled.value_or(true) ? @"No controller that can vibrate" : @"Vibration is off"
+      int silenced = 0;
+      if (KPTestVibration(&silenced) == 0)
+        [KPOverlay() toast:silenced == 0 ? @"No controller that can vibrate" : @"Vibration is off"
                     detail:nil stripe:0 icon:^(CGContextRef ctx, CGRect r) { KPDrawGlyph(ctx, KPUIGlyph::Pad, r, KPP->secondaryText); }
                      image:nil];
     };
@@ -610,13 +612,20 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
 
   {
     KPSettingRow *row = KPRow(@"Hide the mouse pointer", nil, KPRowChoice);
-    NSArray<NSNumber *> *values = @[@0, @3, @5, @10];
-    row.choices = @[@"Never", @"After 3 s", @"After 5 s", @"After 10 s"];
+    // -1: on controller input (video.cursor_hide_on_controller), with no idle time.
+    NSArray<NSNumber *> *values = @[@0, @-1, @3, @5, @10];
+    row.choices = @[@"Never", @"On controller input", @"After 3 s", @"After 5 s", @"After 10 s"];
     row.index = ^NSInteger {
-      const NSUInteger index = [values indexOfObject:@(config().cursorAutoHideSeconds.value_or(3))];
-      return index == NSNotFound ? 1 : (NSInteger)index;
+      const RuntimeUserConfig c = config();
+      if (c.cursorHideOnController.value_or(false)) return 1;
+      const NSUInteger index = [values indexOfObject:@(c.cursorAutoHideSeconds.value_or(3))];
+      return index == NSNotFound ? 2 : (NSInteger)index;
     };
-    row.setIndex = ^(NSInteger index) { KPWriteConfig("video", "cursor_auto_hide_seconds", std::to_string(values[index].intValue)); };
+    row.setIndex = ^(NSInteger index) {
+      const int value = values[index].intValue;
+      if (KPWriteConfig("video", "cursor_hide_on_controller", value < 0 ? "true" : "false", false))
+        KPWriteConfig("video", "cursor_auto_hide_seconds", std::to_string(std::max(value, 0)));
+    };
     [controls addObject:row];
   }
 
@@ -719,6 +728,13 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
       [Controller() setRestartNeeded:on != KPLaunchNotch for:@"notch"];
     };
     row.restart = ^BOOL { return [Controller().restartReasons containsObject:@"notch"]; };
+    [advanced addObject:row];
+  }
+  if (KPPhonePageURL()) {
+    // The touch-only page this Mac serves, in place of the one with tilt (KPPhoneServer joinURL).
+    KPSettingRow *row = KPRow(@"Offline phones", @"Touch only, no tilt.", KPRowSwitch);
+    row.on = ^BOOL { return [NSUserDefaults.standardUserDefaults boolForKey:KPPhoneOfflineKey]; };
+    row.setOn = ^(BOOL on) { [NSUserDefaults.standardUserDefaults setBool:on forKey:KPPhoneOfflineKey]; };
     [advanced addObject:row];
   }
   [advanced addObject:boolRow(@"Mix audio on its own thread", @"Turn off only if sound crackles.", "audio", "mix_worker", true,

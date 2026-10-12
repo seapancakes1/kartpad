@@ -241,6 +241,11 @@ static void KPQARun(NSString *line) {
       desc.naxes = SDL_GAMEPAD_AXIS_COUNT;
       desc.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
       desc.name = "KartPad QA Pad";
+      // Logs each vibration it's sent (KartPad's tests, the game's motor), from whichever thread.
+      desc.Rumble = [](void *, Uint16 low, Uint16 high) -> bool {
+        dispatch_async(dispatch_get_main_queue(), ^{ KPQALog([NSString stringWithFormat:@"vpad rumble low=%u high=%u", low, high]); });
+        return true;
+      };
       const SDL_JoystickID id = SDL_AttachVirtualJoystick(&desc);
       if (id) {
         [pads addObject:@(id)];

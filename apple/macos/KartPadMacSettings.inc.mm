@@ -53,7 +53,8 @@
     @"video.frame_interpolation_fps":@(c.frameInterpolationFps.value_or(0)),
     @"video.vsync":@(c.vsync.value_or(false)),
     @"video.show_fps":@(c.showFps.value_or(false)),
-    @"video.cursor_auto_hide_seconds":@(c.cursorAutoHideSeconds.value_or(3)),
+    // -1 stands for hiding it on controller input (video.cursor_hide_on_controller).
+    @"video.cursor_auto_hide_seconds":c.cursorHideOnController.value_or(false)?@-1:@(c.cursorAutoHideSeconds.value_or(3)),
     @"video.disable_copy_filter":@(c.disableCopyFilter.value_or(true)),
     @"video.skip_unready_pipelines":@(c.skipUnreadyPipelines.value_or(true)),
     // Bloom and Sound are ticked when on: the opposite of the settings they write.
@@ -85,19 +86,10 @@ static void KPReadLaunchDisplaySettings() {
   if(KPLaunchDisplayRead)return;
   KPLaunchDisplayRead=true;KPLaunchVsync=RuntimeConfigFile::LoadConfigFile().vsync.value_or(false);KPLaunchNotch=KPFullscreenAcrossNotch();
 }
-// Off, then Light, Medium and Strong: the rumble strengths behind them.
-static NSArray<NSNumber *> *KPVibrationStrengths() { return @[@0,@0.25,@0.5,@1]; }
 // What refreshSettings's table doesn't cover: vibration, the background pause, Wii Remote support and
 // the restart button.
 - (void)refreshSettingsExtras {
-  const auto c=RuntimeConfigFile::LoadConfigFile();
-  NSInteger vibration=0;
-  if(c.rumbleEnabled.value_or(true)) {
-    // The nearest of Light, Medium and Strong.
-    const float strength=std::clamp(c.rumbleStrength.value_or(0.5f),0.0f,1.0f);
-    vibration=strength<0.375f?1:strength<0.75f?2:3;
-  }
-  [self.vibrationChoice selectItemAtIndex:vibration];
+  [self.vibrationChoice selectItemAtIndex:KPDefaultVibration()];
   self.backgroundPauseSwitch.state=KPBackgroundPauseEnabled()?NSControlStateValueOn:NSControlStateValueOff;
   self.wiimoteSwitch.state=[NSUserDefaults.standardUserDefaults boolForKey:KartPadExperimentalWiimoteDefaultsKey]?NSControlStateValueOn:NSControlStateValueOff;
   self.settingsRestart.hidden=!self.restartPending;
@@ -143,6 +135,15 @@ static NSArray<NSNumber *> *KPVibrationStrengths() { return @[@0,@0.25,@0.5,@1];
     uint32_t mask=RuntimeConfigFile::LoadConfigFile().disabledPostProcessingPaths.value_or(0);
     mask=((NSButton *)sender).state==NSControlStateValueOn ? mask&~0x10u : mask|0x10u;
     value=std::to_string(mask);
+  }
+  // On controller input has no idle time of its own.
+  if([key isEqual:@"video.cursor_auto_hide_seconds"]) {
+    const bool onController=value=="-1";
+    if(onController)value="0";
+    if(!RuntimeConfigFile::WriteSetting("video","cursor_hide_on_controller",onController?"true":"false")) {
+      self.settingsStatus.stringValue=@"Couldn’t save this setting. Check that Config.toml is writable.";
+      [self refreshSettings];return;
+    }
   }
   if(!RuntimeConfigFile::WriteSetting([parts[0] UTF8String],[parts[1] UTF8String],value)) {
     self.settingsStatus.stringValue=@"Couldn’t save this setting. Check that Config.toml is writable.";
@@ -214,10 +215,10 @@ static NSArray<NSNumber *> *KPVibrationStrengths() { return @[@0,@0.25,@0.5,@1];
     NSView *graphics=[self settingsPage:@"Graphics"];
     [graphics setFrameSize:NSMakeSize(780,850)];
     [self settingsLabel:@"Graphics & Display" page:graphics y:790].font=[NSFont boldSystemFontOfSize:19];
-    [self setting:@"video.cursor_auto_hide_seconds" label:@"Hide the mouse pointer" choices:@[@"Never",@"After 3 seconds idle",@"After 5 seconds idle",@"After 10 seconds idle"] values:@[@0,@3,@5,@10] page:graphics y:730];
+    [self setting:@"video.cursor_auto_hide_seconds" label:@"Hide the mouse pointer" choices:@[@"Never",@"On controller input",@"After 3 seconds idle",@"After 5 seconds idle",@"After 10 seconds idle"] values:@[@0,@-1,@3,@5,@10] page:graphics y:730];
     [self setting:@"video.resolution_multiplier" label:@"Picture quality" choices:@[@"Auto (window size)",@"Native (1×)",@"1.5×",@"2×",@"3×",@"4×",@"6×",@"8×"] values:@[@0,@1,@1.5,@2,@3,@4,@6,@8] page:graphics y:675];
     [self setting:@"video.display_mode" label:@"Display mode" choices:@[@"Windowed",@"Standard full screen",@"Exclusive full screen"] values:@[@"windowed",@"borderless",@"exclusive"] page:graphics y:620];
-    [self setting:@"video.frame_interpolation_fps" label:@"Smoother motion" choices:@[@"Off · 60 fps",@"120 fps",@"180 fps"] values:@[@0,@120,@180] page:graphics y:565];
+    [self setting:@"video.frame_interpolation_fps" label:@"Smoother motion (Experimental)" choices:@[@"Off · 60 fps",@"120 fps",@"180 fps"] values:@[@0,@120,@180] page:graphics y:565];
     [self setting:@"video.show_fps" checkbox:@"Show frame rate" page:graphics y:505];
     [self setting:@"video.disable_copy_filter" checkbox:@"Sharper picture" page:graphics y:455];
     [self setting:@"video.disabled_post_processing_paths" checkbox:@"Bloom" page:graphics y:405];

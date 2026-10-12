@@ -951,29 +951,16 @@ static NSString *KPGameTitle(NSString *profile);                       // KartPa
   if (self.settingsPanel.visible) [self refreshSettings];
 }
 
-// A short buzz at the chosen strength on every connected controller that says it can vibrate.
+// A short buzz on every connected controller that says it can vibrate, at its own strength.
 - (void)testVibration:(id)sender {
   (void)sender;
-  const RuntimeUserConfig config = RuntimeConfigFile::LoadConfigFile();
-  if (!config.rumbleEnabled.value_or(true)) {
-    self.settingsStatus.stringValue = @"Vibration is off. Choose Light, Medium or Strong to test it.";
-    return;
-  }
-  const auto level = static_cast<Uint16>(
-      std::lround(std::clamp(config.rumbleStrength.value_or(0.5f), 0.0f, 1.0f) * 65535.0f));
-  int tested = 0;
-  for (unsigned i = 0; i < PADCount(); ++i) {
-    SDL_Gamepad *pad = PADGetSDLGamepadForIndex(i);
-    if (pad == nullptr ||
-        !SDL_GetBooleanProperty(SDL_GetGamepadProperties(pad), SDL_PROP_GAMEPAD_CAP_RUMBLE_BOOLEAN, false)) {
-      continue;
-    }
-    if (SDL_RumbleGamepad(pad, level, level, 500)) ++tested;
-  }
+  int silenced = 0;
+  const int tested = KPTestVibration(&silenced);
   AppendSessionLine([NSString stringWithFormat:@"vibrationTest=%d", tested]);
   self.settingsStatus.stringValue = tested > 0
       ? (tested == 1 ? @"Your controller should vibrate now. If it doesn’t, it may not support vibration on this Mac."
                      : @"Your controllers should vibrate now. One that doesn’t may not support vibration on this Mac.")
+      : silenced > 0 ? @"Vibration is off. Choose Light, Medium or Strong to test it."
       : (PADCount() > 0 ? @"No connected controller can vibrate on this Mac."
                         : @"Connect a controller to test vibration.");
 }

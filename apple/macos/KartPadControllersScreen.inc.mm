@@ -12,6 +12,7 @@
 
 static void KPSetUpButtons(KPPadDevice *device);
 static void KPChooseMii(KPPadDevice *device);
+static void KPChooseVibration(KPPadDevice *device);
 static KPScreen *KPMakeConnectScreen();
 
 // Which controller made the latest press: a pad (by joystick), or the keyboard.
@@ -495,6 +496,9 @@ enum : unsigned { KPPressConfirm = 1, KPPressBack = 2, KPPressStart = 4 };
   [menu add:@"Change controller" detail:nil glyph:(int)KPUIGlyph::Swap enabled:YES run:^{ [weakSelf beginAssigning:slot]; }];
   [menu add:@"Set up buttons" detail:nil glyph:(int)KPUIGlyph::Buttons enabled:YES run:^{ KPSetUpButtons(device); }];
   [menu add:mii ? @"Change Mii" : @"Choose a Mii" detail:nil glyph:(int)KPUIGlyph::Mii enabled:YES run:^{ KPChooseMii(device); }];
+  if (device.canRumble)
+    [menu add:@"Vibration" detail:KPVibrationNames()[KPVibrationFor(device.profileKey)] glyph:(int)KPUIGlyph::Pad enabled:YES
+          run:^{ KPChooseVibration(device); }];
   if (!device.isKeyboard)
     [menu add:@"Find" detail:nil glyph:(int)KPUIGlyph::Find enabled:YES run:^{
       [roster identify:device];
@@ -1102,6 +1106,29 @@ static const SDL_Scancode KPDefaultKeys[12] = {
 }
 @end
 
+// A controller's own vibration, kept for it by profile key (KPSetControllerVibration). The new
+// strength buzzes the controller once.
+static void KPChooseVibration(KPPadDevice *device) {
+  KPMenuScreen *menu = [[KPMenuScreen alloc] initWithFrame:NSZeroRect];
+  menu.heading = [NSString stringWithFormat:@"Vibration · %@", device.name];
+  menu.chosen = KPVibrationFor(device.profileKey);
+  menu.chosenGlyph = (int)KPUIGlyph::Check;
+  NSString *profileKey = device.profileKey;
+  const SDL_JoystickID joystick = device.joystick;
+  [KPVibrationNames() enumerateObjectsUsingBlock:^(NSString *name, NSUInteger index, BOOL *) {
+    [menu add:name detail:nil glyph:-1 enabled:YES run:^{
+      KPSetControllerVibration(profileKey, (NSInteger)index);
+      AppendSessionLine([NSString stringWithFormat:@"controllerVibration=%@; level=%lu", device.name, (unsigned long)index]);
+      const float strength = KPVibrationStrengths()[index].floatValue;
+      if (SDL_Gamepad *pad = SDL_GetGamepadFromID(joystick); pad && strength > 0) {
+        const auto level = static_cast<Uint16>(std::lround(strength * 65535.0f));
+        SDL_RumbleGamepad(pad, level, level, 400);
+      }
+    }];
+  }];
+  [KPOverlay() present:menu];
+}
+
 static void KPSetUpButtons(KPPadDevice *device) {
   if (device == nil) return;
   KPRemapScreen *screen = [[KPRemapScreen alloc] initWithFrame:NSZeroRect];
@@ -1492,7 +1519,7 @@ static constexpr CGFloat KPPhoneListTop = 300, KPPhoneRowHeight = 58;
   uint64_t look = KPDeviceLook(self.arrived);
   if (self.kind == KPPairKind::Phone && !self.choosing) {
     KPPhoneServer *server = KPPhoneServer.shared;
-    look ^= (uint64_t)(server.hasTiltPage ? server.tiltURL : server.touchURL).hash * 31 + server.problem.hash;
+    look ^= (uint64_t)server.joinURL.hash * 31 + server.problem.hash;
     for (const KPPhoneEntry &phone : server.entries)
       look = look * 0x100000001b3ull ^ ((uint64_t)phone.phone << 40 | (uint64_t)(phone.player & 0xff) << 32 |
                                         (uint64_t)phone.linked << 31 | (uint32_t)phone.delayMs);
@@ -1579,11 +1606,11 @@ static constexpr CGFloat KPPhoneListTop = 300, KPPhoneRowHeight = 58;
 // The link as a QR code where the controller would be, the steps beside it, and the phones that have
 // joined, each with its player, how quick its link is, and Remove. There's no address to type: the
 // link carries this launch's key. It opens the page with tilt, or the touch-only one the Mac serves
-// when no tilt page is set.
+// when no tilt page is set or Offline phones is on.
 - (void)drawPhoneJoin:(CGContextRef)c {
   const CGRect s = self.safe;
   KPPhoneServer *server = KPPhoneServer.shared;
-  NSString *url = server.hasTiltPage ? server.tiltURL : server.touchURL;
+  NSString *url = server.joinURL;
   const CGRect code = CGRectMake(s.origin.x + 56 + (580 - 340) / 2, s.origin.y + 150, 340, 340);
   if (url) {
     [server drawCode:url in:c rect:code];
