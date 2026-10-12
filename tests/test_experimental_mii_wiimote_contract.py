@@ -17,9 +17,9 @@ class ExperimentalMiiWiimoteContractTests(unittest.TestCase):
         self.assertIn('[weakSelf showMiiManager]', source)
         manager = source.split('- (void)showMiiManager {', 1)[1].split('\n}\n', 1)[0]
         self.assertIn('KartPadMakeMiiBrowser()', manager)
-        for title in ('@"Rename License…"', '@"Choose Mii…"', '@"Change Mii…"', '@"Delete License…"',
-                      '@"Use for a License…"', '@"Edit Mii"', '@"Rename…"', '@"Remove…"',
-                      '@"Import .mii…"'):
+        for title in ('@"Rename License…"', '@"Choose Mii…"', '@"Change Mii…"', '@"Delete License"',
+                      '@"Use for a License…"', '@"Edit Mii"', '@"Rename…"', '@"Remove"',
+                      '@"Import…"'):
             self.assertIn(title, browser)
         self.assertIn('menuWithTitle:@"Controls"', source)
         self.assertIn('actionWithTitle:@"Experimental Wii Remote + Nunchuk…"', source)

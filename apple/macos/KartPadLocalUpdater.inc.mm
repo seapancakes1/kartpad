@@ -159,7 +159,7 @@ static void KPUpdateNotice(NSString *title, NSString *detail, BOOL working) {
   kpUpdatePanel.title = title;
   kpUpdateHeading.stringValue = title;
   kpUpdateLabel.stringValue = detail;
-  kpUpdateFootnote.stringValue = @"You can keep playing";
+  kpUpdateFootnote.stringValue = @"";
   kpUpdateProgress.hidden = !working;
   kpUpdateIcon.hidden = working;
   kpDownloadProgress.hidden = YES;
@@ -186,7 +186,7 @@ static void KPFinishUpdateNotice(NSString *title, NSString *detail) {
   KPUpdateNotice(title, detail, NO);
   KPUpdateNoticeIcon(@"checkmark.circle.fill", NSColor.systemGreenColor, @"Update ready");
   kpUpdateFootnote.stringValue = @"Installs on next launch";
-  kpUpdateAction.title = @"Restart game";
+  kpUpdateAction.title = @"Restart";
   kpUpdateAction.hidden = NO;
   KPHideUpdateNoticeAfter(5.0);
 }
@@ -207,7 +207,7 @@ static void KPRenderUpdateStatus(NSDictionary *status) {
   if ([phase isEqualToString:@"building"]) {
     NSString *step = status[@"step"];
     NSString *title = @"Preparing update";
-    NSString *detail = [NSString stringWithFormat:@"Retro Rewind %@ is being prepared. This can take a few minutes.", version];
+    NSString *detail = [NSString stringWithFormat:@"Retro Rewind %@ is being prepared.", version];
     if ([step isEqualToString:@"downloading"]) {
       title = @"Downloading update";
       detail = [NSString stringWithFormat:@"Getting Retro Rewind %@ in the background.", version];
@@ -236,16 +236,17 @@ static void KPRenderUpdateStatus(NSDictionary *status) {
         [message isEqualToString:[defaults stringForKey:@"KartPadLocalUpdateLastError"]])) return;
     [defaults setObject:message forKey:@"KartPadLocalUpdateLastError"];
     NSString *title = @"Update couldn’t be prepared";
-    NSString *detail = @"The new app couldn’t be prepared for this Mac.";
+    NSString *detail = version.length ? [NSString stringWithFormat:@"Retro Rewind %@ couldn’t be added to KartPad.", version]
+                                      : @"Retro Rewind couldn’t be added to KartPad.";
     NSString *footnote = @"Paused until you try again";
     if ([kind isEqualToString:@"network"]) {
       title = @"Couldn’t reach the update server";
       detail = @"Check your internet connection and try again.";
-      footnote = @"We’ll check again later";
+      footnote = @"Checks again later";
     } else if ([kind isEqualToString:@"storage"]) {
       title = @"More space needed";
       detail = @"Free at least 8 GB of disk space, then try again.";
-      footnote = @"We’ll retry next launch";
+      footnote = @"Tries again next launch";
     } else if ([kind isEqualToString:@"verification"]) {
       title = @"Update wasn’t installed";
       detail = @"The new files didn’t pass validation.";
@@ -253,7 +254,7 @@ static void KPRenderUpdateStatus(NSDictionary *status) {
     KPUpdateNotice(title, detail, NO);
     KPUpdateNoticeIcon(@"exclamationmark.circle", NSColor.systemOrangeColor, @"Update failed");
     kpUpdateFootnote.stringValue = footnote;
-    kpUpdateAction.title = @"Try again"; kpUpdateAction.hidden = NO;
+    kpUpdateAction.title = @"Try Again"; kpUpdateAction.hidden = NO;
   } else if ([phase isEqualToString:@"current"]) {
     if (!kpUpdateInteractive) return;
     KPUpdateNotice(@"You’re up to date", [NSString stringWithFormat:@"Retro Rewind %@ is the latest version.", version], NO);
@@ -270,13 +271,13 @@ static void KPRenderUpdateStatus(NSDictionary *status) {
         mismatch ? @"Its files don’t match the ones KartPad checked." : @"It installs by itself once KartPad has checked it.", NO);
     KPUpdateNoticeIcon(@"exclamationmark.shield", NSColor.systemOrangeColor, @"Update not reviewed");
     kpUpdateFootnote.stringValue = @"Your current version stays installed";
-    kpUpdateAction.title = @"Install anyway"; kpUpdateAction.hidden = NO;
+    kpUpdateAction.title = @"Install Anyway"; kpUpdateAction.hidden = NO;
   } else if ([phase isEqualToString:@"declined"]) {
     KPUpdateNotice([NSString stringWithFormat:@"Retro Rewind %@ is skipped", version],
         @"Automatic updates skip versions you went back from.", NO);
     KPUpdateNoticeIcon(@"arrow.uturn.backward.circle", NSColor.secondaryLabelColor, @"Version skipped");
     kpUpdateFootnote.stringValue = @"Your current version stays installed";
-    kpUpdateAction.title = @"Install anyway"; kpUpdateAction.hidden = NO;
+    kpUpdateAction.title = @"Install Anyway"; kpUpdateAction.hidden = NO;
   } else if ([phase isEqualToString:@"rolledBack"]) {
     NSString *from = [status[@"from"] isKindOfClass:NSString.class] ? status[@"from"] : @"";
     NSString *detail = [status[@"reason"] isEqualToString:@"unstable"]
@@ -284,7 +285,7 @@ static void KPRenderUpdateStatus(NSDictionary *status) {
         : [NSString stringWithFormat:@"Retro Rewind %@ was removed. Automatic updates will skip it.", from];
     KPUpdateNotice([NSString stringWithFormat:@"Back on Retro Rewind %@", version], detail, NO);
     KPUpdateNoticeIcon(@"arrow.uturn.backward.circle.fill", NSColor.systemBlueColor, @"Previous version restored");
-    kpUpdateFootnote.stringValue = @"Retro Rewind Updates… can install it later";
+    kpUpdateFootnote.stringValue = @"Install it later from Game › Retro Rewind Updates…";
     KPHideUpdateNoticeAfter(10.0);
   } else return;
   KPShowUpdateNotice();
@@ -329,7 +330,7 @@ static BOOL KPActivateLocalUpdate() {
   if (installing) {
     kpUpdateDismissed = NO;
     KPUpdateNotice(@"Installing update", @"", YES);
-    kpUpdateFootnote.stringValue = @"Just a moment…";
+    kpUpdateFootnote.stringValue = @"";
     KPShowUpdateNotice();
   }
   while (task.running) [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
@@ -439,7 +440,7 @@ static void KPFinishLocalUpdateAndQuit(NSString *then, id sender) {
     NSString *version = kpUpdateVersion;
     [kpUpdateDismissTimer invalidate]; kpUpdateDismissTimer = nil;
     NSAlert *alert = [NSAlert new];
-    alert.messageText = [NSString stringWithFormat:@"Install Retro Rewind %@ without a review?", version];
+    alert.messageText = [NSString stringWithFormat:@"Install Retro Rewind %@ Without a Review?", version];
     alert.informativeText = @"KartPad rebuilds itself from files its maintainers haven’t checked.";
     [alert addButtonWithTitle:@"Install Anyway"];
     [alert addButtonWithTitle:@"Cancel"];
@@ -449,10 +450,10 @@ static void KPFinishLocalUpdateAndQuit(NSString *then, id sender) {
   if (![kpUpdatePhase isEqualToString:@"ready"]) return;
   [kpUpdateDismissTimer invalidate]; kpUpdateDismissTimer = nil;
   NSAlert *alert = [NSAlert new];
-  alert.messageText = @"Restart to install the update?";
+  alert.messageText = @"Restart to Install the Update?";
   alert.informativeText = @"Unsaved progress will be lost.";
   [alert addButtonWithTitle:@"Restart"];
-  [alert addButtonWithTitle:@"Keep playing"];
+  [alert addButtonWithTitle:@"Keep Playing"];
   if ([alert runModal] != NSAlertFirstButtonReturn) return;
   KPFinishLocalUpdateAndQuit(@"activate", self);
 }
@@ -491,12 +492,12 @@ static void KPRevertLocalUpdate(id sender) {
   if (![rollback[@"version"] isKindOfClass:NSString.class]) return;
   NSAlert *alert = [NSAlert new];
   if (KPLocalUpdateHelperRunning(KPLocalUpdateRead(@"status.json"))) {
-    alert.messageText = @"An update is being prepared";
+    alert.messageText = @"An Update Is Being Prepared";
     alert.informativeText = @"Try again when it has finished.";
     [alert runModal];
     return;
   }
-  alert.messageText = [NSString stringWithFormat:@"Go back to Retro Rewind %@?", rollback[@"version"]];
+  alert.messageText = [NSString stringWithFormat:@"Go Back to Retro Rewind %@?", rollback[@"version"]];
   alert.informativeText = [NSString stringWithFormat:
       @"Unsaved progress will be lost. Automatic updates will skip Retro Rewind %@.",
       rollback[@"replaces"]];

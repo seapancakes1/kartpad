@@ -71,7 +71,11 @@ enum : unsigned { KPPressConfirm = 1, KPPressBack = 2, KPPressStart = 4 };
   self.seenInput = [NSMutableDictionary dictionary];
   __weak KPControllersScreen *weakSelf = self;
   self.order = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
-    KPDrawPill(c, r, state, KPStyle::Plain, KPUIGlyph::Order, @"Player Order");
+    // Disabled (no pads): the whole pill fades, its word and icon too.
+    CGContextSaveGState(c);
+    if (!state.enabled) CGContextSetAlpha(c, 0.42);
+    KPDrawPill(c, r, {state.focused, state.pressed, YES}, KPStyle::Plain, KPUIGlyph::Order, @"Player Order");
+    CGContextRestoreGState(c);
   } action:^{ [weakSelf beginOrdering]; }];
   self.order.label = @"Player Order";
   self.connect = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
@@ -94,7 +98,7 @@ enum : unsigned { KPPressConfirm = 1, KPPressBack = 2, KPPressStart = 4 };
   self.finish = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
     KPDrawPill(c, r, state, KPStyle::Primary, KPUIGlyph::Check, @"Done");
   } action:^{ [weakSelf endOrdering:YES]; }];
-  self.finish.label = @"Finish";
+  self.finish.label = @"Done";
   self.finish.sound = KPUISound::Count;
   self.cancel = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
     KPDrawPill(c, r, state, KPStyle::Plain, KPUIGlyph::Close, @"Cancel");
@@ -492,7 +496,7 @@ enum : unsigned { KPPressConfirm = 1, KPPressBack = 2, KPPressStart = 4 };
   [menu add:@"Set up buttons" detail:nil glyph:(int)KPUIGlyph::Buttons enabled:YES run:^{ KPSetUpButtons(device); }];
   [menu add:mii ? @"Change Mii" : @"Choose a Mii" detail:nil glyph:(int)KPUIGlyph::Mii enabled:YES run:^{ KPChooseMii(device); }];
   if (!device.isKeyboard)
-    [menu add:@"Find it" detail:nil glyph:(int)KPUIGlyph::Find enabled:YES run:^{
+    [menu add:@"Find" detail:nil glyph:(int)KPUIGlyph::Find enabled:YES run:^{
       [roster identify:device];
       KPUIWobble([weakSelf viewFor:device]);
     }];
@@ -523,7 +527,7 @@ enum : unsigned { KPPressConfirm = 1, KPPressBack = 2, KPPressStart = 4 };
     }];
   }
   if (!device.isKeyboard)
-    [menu add:@"Find it" detail:nil glyph:(int)KPUIGlyph::Find enabled:YES
+    [menu add:@"Find" detail:nil glyph:(int)KPUIGlyph::Find enabled:YES
           run:^{ [roster identify:device]; }];
   [KPOverlay() present:menu];
 }
@@ -543,7 +547,7 @@ enum : unsigned { KPPressConfirm = 1, KPPressBack = 2, KPPressStart = 4 };
   const CGRect s = self.safe;
   KPTextWeight(@"Controllers", CGRectMake(s.origin.x + 56, s.origin.y + 26, 600, 50), 38, KPP->text, NSFontWeightBold,
                NSTextAlignmentLeft);
-  NSString *subtitle = @"Press any button to see which card is yours.";
+  NSString *subtitle = @"Press a button to find your card.";
   NSString *const press = KPButtonWord(KPJoinDevice(), KartPadMiiPadConfirm);
   std::vector<KPHint> hints = {{KartPadMiiPadConfirm, @"Options"}, {KartPadMiiPadUndo, @"Find"}, {KartPadMiiPadBack, @"Back"}};
   unsigned ink = KPP->secondaryText;
@@ -555,8 +559,8 @@ enum : unsigned { KPPressConfirm = 1, KPPressBack = 2, KPPressStart = 4 };
     const NSUInteger next = self.ordered.count;
     subtitle = next == 0 ? [NSString stringWithFormat:@"Everyone press %@ in turn. The first is Player 1.", press]
              : next < (NSUInteger)KPPlayerCount && self.finishAt == 0 ? [NSString stringWithFormat:@"Next: %@", KPPlayerName((int)next)]
-                                                                   : @"Everyone's in!";
-    hints = {{KPNoButton, @"Start when everyone's in"}, {KartPadMiiPadBack, @"Cancel"}};
+                                                                   : @"Everyone\u2019s in";
+    hints = {{KartPadMiiPadStart, @"Done"}, {KartPadMiiPadBack, @"Cancel"}};
     ink = KPP->accentBottom;
   }
   KPTextWeight(subtitle, CGRectMake(s.origin.x + 58, s.origin.y + 78, 640, 26), 18, ink, NSFontWeightMedium, NSTextAlignmentLeft);
@@ -605,10 +609,9 @@ enum : unsigned { KPPressConfirm = 1, KPPressBack = 2, KPPressStart = 4 };
     KPTextWeight(label, CGRectMake(button.origin.x, CGRectGetMidY(button) - type * 0.66, size, type * 1.32), type, KPPlayerInk[slot],
                  NSFontWeightHeavy);
   }
+  // Which controller is in the subtitle above.
   KPTextWeight([@"Press " stringByAppendingString:KPButtonWord(KPJoinDevice(), KartPadMiiPadConfirm)],
                CGRectMake(r.origin.x + 10, r.origin.y + 236, r.size.width - 20, 32), 24, KPP->text, NSFontWeightBold);
-  KPTextWeight(@"on the controller for this player", CGRectMake(r.origin.x + 26, r.origin.y + 272, r.size.width - 52, 50), 16,
-               KPP->secondaryText, NSFontWeightRegular);
 }
 
 - (void)drawCard:(int)slot context:(CGContextRef)c in:(CGRect)r state:(KPUIState)state {
@@ -658,7 +661,8 @@ enum : unsigned { KPPressConfirm = 1, KPPressBack = 2, KPPressStart = 4 };
                NSTextAlignmentLeft);
   for (int pip = 0; pip < 4; ++pip) {
     const CGRect light = CGRectMake(CGRectGetMaxX(r) - 22 - (4 - pip) * 17 + 4, r.origin.y + 23 + dy, 12, 12);
-    KPFill(c, light, pip == slot ? (device ? 0x8fe9ff : KPP->secondaryText) : 0x000000, 3, pip == slot ? 1 : 0.2);
+    // The player's own light: lit with a controller, dim without one.
+    KPFill(c, light, pip == slot ? 0x8fe9ff : 0x000000, 3, pip == slot ? (device ? 1 : 0.4) : 0.2);
   }
   if (device == nil) {
     KPDrawGlyph(c, KPUIGlyph::Plus, CGRectMake(CGRectGetMidX(r) - 34, r.origin.y + 112 + dy, 68, 68), KPP->buttonStroke);
@@ -720,11 +724,51 @@ static KPScreen *KPMakeControllersScreenFor(int slot) {
 
 #pragma mark Button setup
 
-// The twelve things a controller does in the game, in the game's words, as the GameCube buttons
-// Mario Kart Wii reads.
+// The twelve things a controller does in the game, in Control Reference's words (KartPadMacShell.mm),
+// as the GameCube buttons Mario Kart Wii reads (KPButtons).
 static NSArray<NSString *> *KPActionTitles() {
-  return @[@"Accelerate · OK", @"Brake · Back", @"X", @"Y", @"Pause", @"Look behind", @"Use item", @"Drift · Hop",
-           @"Trick · D-pad up", @"D-pad down", @"D-pad left", @"D-pad right"];
+  return @[@"Accelerate · confirm", @"Brake · reverse · back", @"X button", @"Y button", @"Start · pause", @"Look behind",
+           @"Use item", @"Drift · manual hop", @"Trick · D-pad up", @"D-pad down", @"D-pad left", @"D-pad right"];
+}
+// The keyboard as Player 1 is a Classic Controller instead (runtime kpad.cpp): its fourteen buttons
+// (kpad.cpp's kClassicButton bits), with the keys the runtime gives each.
+static constexpr uint32_t KPClassicButtons[14] = {0x0010, 0x0040, 0x0200, 0x2000, 0x0008, 0x0020, 0x0400,
+                                                 0x1000, 0x0080, 0x0004, 0x0001, 0x4000, 0x0002, 0x8000};
+static NSArray<NSString *> *KPClassicActionTitles() {
+  return @[@"Accelerate · confirm", @"Brake · reverse · back", @"Drift · manual hop", @"Use item", @"Look behind",
+           @"Y button", @"Start · pause", @"Select · minus", @"ZL button", @"ZR button", @"Trick · D-pad up", @"D-pad down",
+           @"D-pad left", @"D-pad right"];
+}
+// The keys bound to a Classic button, the named keys (return, delete) before letters.
+static std::vector<int> KPClassicKeys(uint32_t button) {
+  std::vector<int> keys, letters;
+  for (int code = 0; code < SDL_SCANCODE_COUNT; ++code)
+    if (KartPadKeyboardClassicButtons(code) & button)
+      (code >= SDL_SCANCODE_A && code <= SDL_SCANCODE_Z ? letters : keys).push_back(code);
+  keys.insert(keys.end(), letters.begin(), letters.end());
+  return keys;
+}
+// A key as a Mac keyboard labels it.
+static NSString *KPKeyName(int code) {
+  switch (code) {
+    case SDL_SCANCODE_RETURN: return @"Return";
+    case SDL_SCANCODE_BACKSPACE: return @"Delete";
+    case SDL_SCANCODE_ESCAPE: return @"esc";
+    case SDL_SCANCODE_LCTRL: return @"Left Control";
+    case SDL_SCANCODE_RCTRL: return @"Right Control";
+    case SDL_SCANCODE_LALT: return @"Left Option";
+    case SDL_SCANCODE_RALT: return @"Right Option";
+    case SDL_SCANCODE_LGUI: return @"Left Command";
+    case SDL_SCANCODE_RGUI: return @"Right Command";
+    case SDL_SCANCODE_UP: return @"Up Arrow";
+    case SDL_SCANCODE_DOWN: return @"Down Arrow";
+    case SDL_SCANCODE_LEFT: return @"Left Arrow";
+    case SDL_SCANCODE_RIGHT: return @"Right Arrow";
+    default: {
+      const char *name = SDL_GetScancodeName((SDL_Scancode)code);
+      return name && *name ? @(name) : @"Key";
+    }
+  }
 }
 // The keyboard as the game starts it (runtime pad.cpp ConfigureDefaultKeyboardPort).
 static const SDL_Scancode KPDefaultKeys[12] = {
@@ -745,6 +789,10 @@ static const SDL_Scancode KPDefaultKeys[12] = {
 @implementation KPRemapScreen
 
 - (int)port { return self.device.slot; }
+// The keyboard as Player 1 is the game's Classic Controller, with its own keys; anywhere else a
+// controller is a GameCube controller.
+- (BOOL)classic { return self.device.isKeyboard && self.device.slot == 0; }
+- (NSArray<NSString *> *)titles { return self.classic ? KPClassicActionTitles() : KPActionTitles(); }
 
 - (uint32_t)binding:(NSInteger)action alternate:(BOOL)alternate {
   const int port = self.port;
@@ -766,12 +814,15 @@ static const SDL_Scancode KPDefaultKeys[12] = {
 }
 
 - (NSString *)label:(NSInteger)action alternate:(BOOL)alternate {
+  if (self.classic) {
+    const std::vector<int> keys = KPClassicKeys(KPClassicButtons[action]);
+    if (alternate) return keys.size() > 1 ? KPKeyName(keys[1]) : nil;
+    return keys.empty() ? @"—" : KPKeyName(keys[0]);
+  }
   if (self.device.isKeyboard) {
     if (alternate) return nil;
     const int key = [self keyBinding:action];
-    if (key < 0) return @"—";
-    const char *name = SDL_GetScancodeName((SDL_Scancode)key);
-    return name && *name ? @(name) : @"Key";
+    return key < 0 ? @"—" : KPKeyName(key);
   }
   const uint32_t native = [self binding:action alternate:alternate];
   if (native == PAD_NATIVE_BUTTON_INVALID) {
@@ -786,10 +837,12 @@ static const SDL_Scancode KPDefaultKeys[12] = {
   self.capturing = -1;
   __weak KPRemapScreen *weakSelf = self;
   self.rows = [NSMutableArray array];
-  NSArray *titles = KPActionTitles();
-  for (NSInteger i = 0; i < 12; ++i) {
+  // As many rows as the Classic Controller has buttons; a GameCube controller uses the first twelve.
+  for (NSInteger i = 0; i < (NSInteger)std::size(KPClassicButtons); ++i) {
     KPUIButton *row = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
       KPRemapScreen *screen = weakSelf;
+      NSArray<NSString *> *titles = screen.titles;
+      if (i >= (NSInteger)titles.count) return;
       const BOOL listening = screen.capturing == i;
       KPButtonFace(c, r, KPStyle::Plain, listening, state.enabled, state.pressed, state.focused);
       const CGFloat dy = state.pressed ? 2 : 0;
@@ -797,8 +850,14 @@ static const SDL_Scancode KPDefaultKeys[12] = {
                    NSTextAlignmentLeft);
       NSString *primary = listening && !screen.alternate ? @"Press…" : [screen label:i alternate:NO];
       NSString *second = listening && screen.alternate ? @"Press…" : [screen label:i alternate:YES];
+      // The Classic Controller's keys past the first two (B has three to start with).
+      NSString *third = nil;
+      if (screen.classic) {
+        const std::vector<int> keys = KPClassicKeys(KPClassicButtons[i]);
+        if (keys.size() > 2) third = KPKeyName(keys[2]);
+      }
       CGFloat x = CGRectGetMaxX(r) - 14;
-      for (NSString *chip in @[second ?: @"", primary ?: @""]) {
+      for (NSString *chip in @[third ?: @"", second ?: @"", primary ?: @""]) {
         if (!chip.length) continue;
         const CGFloat w = std::max<CGFloat>(64, KPTextSize(chip, 16, NSFontWeightBold).width + 26);
         x -= w;
@@ -814,15 +873,16 @@ static const SDL_Scancode KPDefaultKeys[12] = {
     row.radius = 10;
     row.margin = 5;
     row.focusScale = 1.01;
-    row.label = titles[i];
     [self.rows addObject:row];
   }
   self.reset = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
     KPDrawPill(c, r, state, KPStyle::Plain, KPUIGlyph::Restart, @"Reset");
   } action:^{ [weakSelf askToReset]; }];
+  self.reset.label = @"Reset";
   self.done = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
     KPDrawPill(c, r, state, KPStyle::Primary, KPUIGlyph::Check, @"Done");
   } action:^{ [KPOverlay() pop]; }];
+  self.done.label = @"Done";
   self.done.sound = KPUISound::Saved;
   self.art = [[KPUIView alloc] initWithFrame:NSZeroRect];
   self.art.paint = ^(CGContextRef c, CGSize size) {
@@ -846,8 +906,15 @@ static const SDL_Scancode KPDefaultKeys[12] = {
 
 - (void)layoutDesign {
   const CGRect s = self.safe;
-  for (KPUIButton *row in self.rows)
-    [self place:row at:CGRectMake(s.origin.x + 52, s.origin.y + 118 + row.tag2 * 46, 600, 42)];
+  // Fourteen Classic Controller rows sit closer than twelve GameCube ones.
+  NSArray<NSString *> *titles = self.titles;
+  const CGFloat pitch = titles.count > 12 ? 40 : 46;
+  for (KPUIButton *row in self.rows) {
+    row.hidden = row.tag2 >= (NSInteger)titles.count;
+    if (row.hidden) continue;
+    row.label = titles[row.tag2];
+    [self place:row at:CGRectMake(s.origin.x + 52, s.origin.y + 118 + row.tag2 * pitch, 600, pitch - 4)];
+  }
   [self place:self.art at:CGRectMake(s.origin.x + 690, s.origin.y + 150, 540, 330)];
   [self place:self.reset at:CGRectMake(s.origin.x + 690, s.origin.y + 590, 290, 60)];
   [self place:self.done at:CGRectMake(CGRectGetMaxX(s) - 52 - 170, s.origin.y + 590, 170, 60)];
@@ -922,7 +989,7 @@ static const SDL_Scancode KPDefaultKeys[12] = {
   KPControllers().captureAlternate = self.alternate;
   [KPControllers() bind:(uint32_t)pressed];
   [KPControllers() save:nil];
-  NSString *title = KPActionTitles()[self.capturing];
+  NSString *title = self.titles[self.capturing];
   [self stopListening:[NSString stringWithFormat:@"%@ is now %@.", title, KPButtonLabel(pad, pressed)] sound:KPUISound::Saved];
 }
 
@@ -935,10 +1002,20 @@ static const SDL_Scancode KPDefaultKeys[12] = {
   }
   const SDL_Scancode code = KPMacPhysicalScancode(event.keyCode, KBGetLayoutType(LMGetKbdType()) == kKeyboardISO);
   if (code <= SDL_SCANCODE_UNKNOWN || self.port < 0) return YES;
-  PADSetKeyButtonBinding(self.port, {code, KPButtons[self.capturing]});
-  PADSetKeyboardActive(self.port, TRUE);
-  const char *name = SDL_GetScancodeName(code);
-  [self stopListening:[NSString stringWithFormat:@"%@ is now %s.", KPActionTitles()[self.capturing], name ?: "that key"]
+  if (self.classic) {
+    // The key takes the button's first (or, with X, second) key's place; the others keep it.
+    const uint32_t button = KPClassicButtons[self.capturing];
+    const std::vector<int> keys = KPClassicKeys(button);
+    const size_t replaced = self.alternate ? 1 : 0;
+    if (replaced < keys.size() && keys[replaced] != (int)code)
+      KartPadSetKeyboardClassicButtons(keys[replaced], KartPadKeyboardClassicButtons(keys[replaced]) & ~button);
+    KartPadSetKeyboardClassicButtons(code, KartPadKeyboardClassicButtons(code) | button);
+    KPSaveKeyboardClassicKeys();
+  } else {
+    PADSetKeyButtonBinding(self.port, {code, KPButtons[self.capturing]});
+    PADSetKeyboardActive(self.port, TRUE);
+  }
+  [self stopListening:[NSString stringWithFormat:@"%@ is now %@.", self.titles[self.capturing], KPKeyName(code)]
                 sound:KPUISound::Saved];
   return YES;
 }
@@ -950,7 +1027,7 @@ static const SDL_Scancode KPDefaultKeys[12] = {
       [self stopListening:@"Nothing changed." sound:KPUISound::Close];
     return YES;
   }
-  if (button == KartPadMiiPadUndo && [self.rows containsObject:self.focus] && !self.device.isKeyboard) {
+  if (button == KartPadMiiPadUndo && [self.rows containsObject:self.focus] && (!self.device.isKeyboard || self.classic)) {
     [self listen:self.focus.tag2 alternate:YES];
     return YES;
   }
@@ -959,10 +1036,15 @@ static const SDL_Scancode KPDefaultKeys[12] = {
 
 - (void)askToReset {
   KPPadDevice *device = self.device;
-  KPAsk(@"Reset the buttons?", [NSString stringWithFormat:@"%@ goes back to its standard buttons.", device.name],
+  const BOOL classic = self.classic;
+  KPAsk(@"Reset the Buttons?", [NSString stringWithFormat:@"%@ goes back to its standard buttons.", device.name],
         @[@"Reset", @"Cancel"], 1, 0, ^(NSInteger choice) {
           if (choice != 0 || device.slot < 0) return;
-          if (device.isKeyboard) {
+          if (classic) {
+            for (int code = 0; code < SDL_SCANCODE_COUNT; ++code)
+              KartPadSetKeyboardClassicButtons(code, KartPadDefaultKeyboardClassicButtons(code));
+            KPSaveKeyboardClassicKeys();
+          } else if (device.isKeyboard) {
             for (int i = 0; i < 12; ++i) PADSetKeyButtonBinding(device.slot, {KPDefaultKeys[i], KPButtons[i]});
             PADSetKeyboardActive(device.slot, TRUE);
           } else {
@@ -996,14 +1078,17 @@ static const SDL_Scancode KPDefaultKeys[12] = {
   const CGRect s = self.safe;
   KPPadDevice *device = self.device;
   NSString *who = device.slot >= 0 ? [NSString stringWithFormat:@"%@ · %@", KPPlayerName(device.slot), device.name] : device.name;
+  // The keyboard's keys differ by player: say which controller it is.
+  if (device.isKeyboard && device.slot >= 0)
+    who = [who stringByAppendingString:self.classic ? @" (Classic Controller)" : @" (GameCube controller)"];
   if (device.slot >= 0) KPFill(c, CGRectMake(s.origin.x + 52, s.origin.y + 34, 8, 40), KPPlayerColors[device.slot], 4);
   KPTextWeight(@"Buttons", CGRectMake(s.origin.x + 72, s.origin.y + 26, 400, 50), 36, KPP->text, NSFontWeightBold, NSTextAlignmentLeft);
   KPTextWeight(who, CGRectMake(s.origin.x + 74, s.origin.y + 76, 700, 26), 18, KPP->secondaryText, NSFontWeightMedium, NSTextAlignmentLeft);
   const CGRect lineRect = CGRectMake(s.origin.x + 690, s.origin.y + 500, 540, 56);
   if (self.capturing >= 0) {
     const NSInteger left = std::max<NSInteger>(0, 8 - (NSInteger)(NSProcessInfo.processInfo.systemUptime - self.captureStarted));
-    KPTextWeight([NSString stringWithFormat:@"Press a %@ for %@  (%ld)", device.isKeyboard ? @"key" : @"button",
-                  KPActionTitles()[self.capturing], (long)left], lineRect, 20, KPP->accentBottom, NSFontWeightSemibold);
+    KPTextWeight([NSString stringWithFormat:@"Press a %@ for %@ (%ld)", device.isKeyboard ? @"key" : @"button",
+                  self.titles[self.capturing], (long)left], lineRect, 20, KPP->accentBottom, NSFontWeightSemibold);
   } else if (self.status) {
     KPTextWeight(self.status, lineRect, 20, KPP->secondaryText, NSFontWeightSemibold);
   } else {
@@ -1013,7 +1098,7 @@ static const SDL_Scancode KPDefaultKeys[12] = {
                 NSTextAlignmentCenter, device);
   }
   if (device.isKeyboard)
-    KPTextWeight(@"Steer with W A S D. Esc opens HOME.", CGRectMake(s.origin.x + 690, s.origin.y + 118, 540, 26), 16,
+    KPTextWeight(@"Steer with W A S D. esc opens HOME.", CGRectMake(s.origin.x + 690, s.origin.y + 118, 540, 26), 16,
                  KPP->secondaryText, NSFontWeightMedium);
 }
 @end
@@ -1031,6 +1116,7 @@ static void KPSetUpButtons(KPPadDevice *device) {
 @property(nonatomic, strong) KPPadDevice *device;
 @property(nonatomic, copy) NSArray<NSDictionary *> *records;
 @property(nonatomic, strong) NSMutableArray<KPUIButton *> *tiles;
+@property(nonatomic, strong) KPUIButton *cancel;
 @property(nonatomic) NSInteger page;
 @end
 
@@ -1049,6 +1135,11 @@ static constexpr NSInteger KPMiiPickerColumns = 6, KPMiiPickerRows = 3;
     tile.radius = 16;
     [self.tiles addObject:tile];
   }
+  self.cancel = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
+    KPDrawPill(c, r, state, KPStyle::Plain, KPUIGlyph::Close, @"Cancel");
+  } action:^{ [KPOverlay() pop]; }];
+  self.cancel.label = @"Cancel";
+  self.cancel.sound = KPUISound::Close;
 }
 - (NSInteger)perPage { return KPMiiPickerColumns * KPMiiPickerRows; }
 // Index 0 on the first page is "No Mii".
@@ -1060,9 +1151,11 @@ static constexpr NSInteger KPMiiPickerColumns = 6, KPMiiPickerRows = 3;
 - (void)layoutDesign {
   const CGRect s = self.safe;
   const CGFloat w = 176, h = 160, gap = 16, x0 = s.origin.x + (1280 - (KPMiiPickerColumns * w + (KPMiiPickerColumns - 1) * gap)) / 2;
+  [self place:self.cancel at:CGRectMake(CGRectGetMaxX(s) - 56 - 170, s.origin.y + 30, 170, 60)];
   for (KPUIButton *tile in self.tiles) {
     const NSInteger i = tile.tag2, index = self.page * self.perPage + i;
     tile.hidden = index > (NSInteger)self.records.count;
+    tile.label = self.page == 0 && i == 0 ? @"No Mii" : [self recordAt:i][@"name"];
     [self place:tile at:CGRectMake(x0 + (i % KPMiiPickerColumns) * (w + gap), s.origin.y + 124 + (i / KPMiiPickerColumns) * (h + gap), w, h)];
     tile.needsDisplay = YES;
   }
@@ -1124,9 +1217,13 @@ static constexpr NSInteger KPMiiPickerColumns = 6, KPMiiPickerRows = 3;
   NSString *who = self.device.slot >= 0 ? [NSString stringWithFormat:@"%@ · %@", KPPlayerName(self.device.slot), self.device.name]
                                         : self.device.name;
   KPTextWeight(who, CGRectMake(s.origin.x + 58, s.origin.y + 76, 700, 26), 18, KPP->secondaryText, NSFontWeightMedium, NSTextAlignmentLeft);
-  if (self.pages > 1)
-    KPTextWeight([NSString stringWithFormat:@"Page %ld of %ld    LB / RB Turn", (long)self.page + 1, (long)self.pages],
-                 CGRectMake(s.origin.x + 56, s.origin.y + 670, 1168, 26), 16, KPP->secondaryText, NSFontWeightMedium, NSTextAlignmentRight);
+  std::vector<KPHint> hints = {{KartPadMiiPadConfirm, @"Choose"}, {KartPadMiiPadBack, @"Cancel"}};
+  if (self.pages > 1) {
+    hints.insert(hints.begin() + 1, {KartPadMiiPadPreviousTab, @"Turn page", KartPadMiiPadNextTab});
+    KPTextWeight([NSString stringWithFormat:@"Page %ld of %ld", (long)self.page + 1, (long)self.pages],
+                 CGRectMake(s.origin.x + 56, s.origin.y + 670, 400, 26), 16, KPP->secondaryText, NSFontWeightMedium, NSTextAlignmentLeft);
+  }
+  KPDrawHints(c, CGRectMake(s.origin.x + 56, s.origin.y + 670, 1168, 26), hints, 16, NSTextAlignmentRight);
   if (!self.records.count)
     KPTextWeight(@"No Miis yet. Make one in HOME › Miis.", CGRectMake(s.origin.x + 56, s.origin.y + 320, 1168, 30), 20,
                  KPP->secondaryText, NSFontWeightMedium);
@@ -1183,7 +1280,7 @@ static NSString *KPPairSteps(KPPairKind kind) {
     case KPPairKind::WiiRemote:
       return @"Open the battery cover and press the red SYNC button.";
     case KPPairKind::Phone:
-      return @"1. Join this Mac\u2019s Wi\u2011Fi.\n2. Scan the code with the phone\u2019s camera.\n3. Tap Join.\nUp to four phones.";
+      return @"1. Join this Mac\u2019s Wi\u2011Fi.\n2. Scan the code with each phone\u2019s camera (up to four).\n3. Tap Join.";
   }
   return @"";
 }
@@ -1220,8 +1317,9 @@ static const struct {
     [self.kinds addObject:tile];
   }
   self.primary = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
-    KPDrawPill(c, r, state, KPStyle::Primary, KPUIGlyph::Find, weakSelf.busy ? @"Searching…" : @"Search Again");
+    KPDrawPill(c, r, state, KPStyle::Primary, KPUIGlyph::Search, weakSelf.busy ? @"Searching…" : @"Search Again");
   } action:^{ [weakSelf primaryAction]; }];
+  self.primary.label = @"Search Again";
   self.removes = [NSMutableArray array];
   for (int row = 0; row < kpp::MaxPhones; ++row) {
     KPUIButton *remove = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
@@ -1234,9 +1332,12 @@ static const struct {
   self.settings = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
     KPDrawPill(c, r, state, KPStyle::Plain, KPUIGlyph::Bluetooth, @"Bluetooth Settings");
   } action:^{ [weakSelf openBluetoothSettings]; }];
+  self.settings.label = @"Bluetooth Settings";
   self.done = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
-    KPDrawPill(c, r, state, KPStyle::Plain, KPUIGlyph::Check, @"Done");
+    KPDrawPill(c, r, state, KPStyle::Primary, KPUIGlyph::Check, @"Done");
   } action:^{ [KPOverlay() pop]; }];
+  self.done.label = @"Done";
+  self.done.sound = KPUISound::Close;
   [KPControllerRoster.shared.listeners addObject:self];
 }
 - (void)layoutDesign {
@@ -1369,9 +1470,9 @@ static constexpr CGFloat KPPhoneListTop = 300, KPPhoneRowHeight = 58;
           [roster move:device toSlot:slot];
           break;
         }
-    self.status = device.slot >= 0 ? [NSString stringWithFormat:@"%@as %@!", phone ? [device.name stringByAppendingString:@" joined "]
-                                                                                        : @"Connected ", KPPlayerName(device.slot)]
-                                   : [NSString stringWithFormat:@"%@ connected!", device.name];
+    self.status = device.slot >= 0 ? [NSString stringWithFormat:@"%@as %@", phone ? [device.name stringByAppendingString:@" joined "]
+                                                                                       : @"Connected ", KPPlayerName(device.slot)]
+                                   : [NSString stringWithFormat:@"%@ connected", device.name];
     self.busy = NO;
     [roster identify:device];
     KPUIPlay(KPUISound::Saved);
@@ -1428,8 +1529,8 @@ static constexpr CGFloat KPPhoneListTop = 300, KPPhoneRowHeight = 58;
 - (void)drawDesign:(CGContextRef)c size:(CGSize)size {
   [super drawDesign:c size:size];
   const CGRect s = self.safe;
-  KPTextWeight(@"Connect a Controller", CGRectMake(s.origin.x + 56, s.origin.y + 26, 800, 50), 36, KPP->text, NSFontWeightBold,
-               NSTextAlignmentLeft);
+  KPTextWeight(!self.choosing && self.kind == KPPairKind::Phone ? @"Connect a Phone" : @"Connect a Controller",
+               CGRectMake(s.origin.x + 56, s.origin.y + 26, 800, 50), 36, KPP->text, NSFontWeightBold, NSTextAlignmentLeft);
   if (self.choosing) {
     KPTextWeight(@"What are you connecting?", CGRectMake(s.origin.x + 58, s.origin.y + 78, 760, 26), 18, KPP->secondaryText,
                  NSFontWeightMedium, NSTextAlignmentLeft);
@@ -1437,9 +1538,10 @@ static constexpr CGFloat KPPhoneListTop = 300, KPPhoneRowHeight = 58;
                  CGRectMake(s.origin.x + 56, s.origin.y + 460, 1168, 30), 18, KPP->secondaryText, NSFontWeightRegular);
     return;
   }
-  // "Controller" under "Connect a Controller" says nothing; which ones does.
-  KPTextWeight(self.kind == KPPairKind::Controller ? @"PlayStation, Switch, Xbox and more" : KPPairTitle(self.kind),
-               CGRectMake(s.origin.x + 58, s.origin.y + 78, 760, 26), 18, KPP->secondaryText, NSFontWeightMedium, NSTextAlignmentLeft);
+  // "Controller" under "Connect a Controller" says nothing; which ones does. The Phone page says it in its title.
+  if (self.kind != KPPairKind::Phone)
+    KPTextWeight(self.kind == KPPairKind::Controller ? @"PlayStation, Switch, Xbox and more" : KPPairTitle(self.kind),
+                 CGRectMake(s.origin.x + 58, s.origin.y + 78, 760, 26), 18, KPP->secondaryText, NSFontWeightMedium, NSTextAlignmentLeft);
   // The controller, big, with the steps beside it.
   KPArtState art;
   art.accent = KPP->accentBottom;

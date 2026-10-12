@@ -21,6 +21,8 @@ typedef NS_ENUM(NSInteger, KPRowKind) { KPRowSwitch, KPRowChoice, KPRowSlider, K
 @property(nonatomic, copy) void (^run)(void);
 @property(nonatomic, copy) NSString *(^value)(void);
 @property(nonatomic, copy) BOOL (^restart)(void);
+@property(nonatomic) BOOL inPlace;  // an action row that acts where it is (no chevron)
+@property(nonatomic) BOOL soundLevel;  // a level the Sound switch silences
 @end
 @implementation KPSettingRow
 @end
@@ -36,7 +38,7 @@ static KPSettingRow *KPRow(NSString *title, NSString *detail, KPRowKind kind) {
 static bool KPWriteConfig(const char *section, const char *key, const std::string &value, bool reload = true) {
   if (!RuntimeConfigFile::WriteSetting(section, key, value)) {
     KPUIPlay(KPUISound::Reject);
-    [KPOverlay() toast:@"That setting couldn't be saved" detail:@"KartPad's Config.toml can't be written." stripe:0
+    [KPOverlay() toast:@"That setting couldn’t be saved" detail:@"KartPad’s settings file can’t be written." stripe:0
                   icon:^(CGContextRef c, CGRect r) { KPDrawGlyph(c, KPUIGlyph::Gear, r, 0xd0342c); } image:nil];
     return false;
   }
@@ -85,7 +87,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
   [self makeRows];
   __weak KPSettingsScreen *weakSelf = self;
   self.tabs = [NSMutableArray array];
-  const KPUIGlyph icons[] = {KPUIGlyph::FullScreen, KPUIGlyph::Speaker, KPUIGlyph::Pad, KPUIGlyph::Play, KPUIGlyph::Gear};
+  const KPUIGlyph icons[] = {KPUIGlyph::Picture, KPUIGlyph::Speaker, KPUIGlyph::Pad, KPUIGlyph::Game, KPUIGlyph::Advanced};
   NSArray *names = self.categoryNames;
   for (NSInteger i = 0; i < (NSInteger)names.count; ++i) {
     const KPUIGlyph icon = icons[i];
@@ -118,8 +120,9 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
     [self.rowButtons addObject:row];
   }
   self.done = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
-    KPDrawPill(c, r, state, KPStyle::Plain, KPUIGlyph::Check, @"Done");
+    KPDrawPill(c, r, state, KPStyle::Primary, KPUIGlyph::Check, @"Done");
   } action:^{ [KPOverlay() pop]; }];
+  self.done.label = @"Done";
   self.done.sound = KPUISound::Close;
   self.gaugeGrab = -1;
 }
@@ -152,6 +155,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
     self.first = 0;
     [self layoutDesign];
     for (KPUIButton *tab in self.tabs) tab.needsDisplay = YES;
+    [KPOverlay() dismissToastsFrom:self];  // a toast about the last category's rows
   }
   if (focusRows) [KPOverlay() focus:self.rowButtons.firstObject sound:NO];
   self.needsDisplay = YES;
@@ -373,7 +377,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
   }
   const CGFloat right = CGRectGetMaxX(r) - 20, mid = CGRectGetMidY(r) - 1.5 + dy;
   if (row.restart && row.restart()) {
-    NSString *badge = @"Restart to apply";
+    NSString *badge = @"Restart to Apply";
     const CGSize size = KPTextSize(badge, 14, NSFontWeightBold);
     const CGRect pill = CGRectMake(right - controlWidth - size.width - 40, mid - 13, size.width + 22, 26);
     KPFill(c, pill, 0xf0a030, 13, 0.25);
@@ -398,9 +402,11 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
     }
     case KPRowSlider: {
       const float level = [self levelOf:row];
-      KPDrawSlider(c, CGRectOffset(KPSettingsSliderTrack(r), 0, dy), level);
+      // With Sound off the levels keep their place, greyed, as HOME's volume does.
+      const BOOL silenced = row.soundLevel && self.config.audioMuted.value_or(false);
+      KPDrawSlider(c, CGRectOffset(KPSettingsSliderTrack(r), 0, dy), level, silenced);
       KPTextWeight([NSString stringWithFormat:@"%d%%", (int)std::lround(level * 100)], CGRectMake(right - 62, mid - 13, 62, 26), 18,
-                   KPP->text, NSFontWeightSemibold, NSTextAlignmentRight);
+                   silenced ? KPP->secondaryText : KPP->text, NSFontWeightSemibold, NSTextAlignmentRight);
       break;
     }
     case KPRowAction: {
@@ -408,7 +414,8 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
       if (value.length)
         KPTextWeight(value, CGRectMake(right - controlWidth, mid - 13, controlWidth - 36, 26), 17, KPP->secondaryText,
                      NSFontWeightMedium, NSTextAlignmentRight);
-      KPDrawGlyph(c, KPUIGlyph::Chevron, CGRectMake(right - 28, mid - 14, 28, 28), KPP->accentBottom);
+      if (row.inPlace) KPDrawGlyph(c, KPUIGlyph::Find, CGRectMake(right - 32, mid - 16, 32, 32), KPP->accentBottom);
+      else KPDrawGlyph(c, KPUIGlyph::Chevron, CGRectMake(right - 28, mid - 14, 28, 28), KPP->accentBottom);
       break;
     }
   }
@@ -447,6 +454,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
   };
   auto levelRow = [config](NSString *title, const char *key, float (^read)(const RuntimeUserConfig &)) {
     KPSettingRow *row = KPRow(title, nil, KPRowSlider);
+    row.soundLevel = YES;
     std::string keyText = key;
     auto settings = config;
     row.level = ^float { return std::clamp(read(settings()), 0.0f, 1.0f); };
@@ -457,7 +465,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
   // Picture.
   NSMutableArray *picture = [NSMutableArray array];
   {
-    KPSettingRow *row = KPRow(@"Full screen", @"Shortcut: ⌃⌘F", KPRowSwitch);
+    KPSettingRow *row = KPRow(@"Full screen", nil, KPRowSwitch);
     row.on = ^BOOL { return aurora_get_display_mode() != AURORA_DISPLAY_MODE_WINDOWED; };
     row.setOn = ^(BOOL on) {
       if (on != (aurora_get_display_mode() != AURORA_DISPLAY_MODE_WINDOWED)) [Controller() toggleGameFullScreen:nil];
@@ -467,7 +475,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
   {
     KPSettingRow *row = KPRow(@"Picture quality", nil, KPRowChoice);
     NSArray<NSNumber *> *values = @[@0, @1, @1.5, @2, @3, @4, @6, @8];
-    row.choices = @[@"Auto", @"Standard · 1×", @"1.5×", @"High · 2×", @"Very high · 3×", @"Ultra · 4×", @"6×", @"8×"];
+    row.choices = @[@"Auto", @"1×", @"1.5×", @"2×", @"3×", @"4×", @"6×", @"8×"];
     row.index = ^NSInteger {
       const float value = config().resolutionMultiplier.value_or(1.0f);
       NSInteger best = 1;
@@ -495,10 +503,10 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
     };
     [picture addObject:row];
   }
-  [picture addObject:boolRow(@"Show frame rate", nil, "video", "show_fps", true,
-                             ^bool(const RuntimeUserConfig &c) { return c.showFps.value_or(true); }, false, true)];
+  [picture addObject:boolRow(@"Show frame rate", nil, "video", "show_fps", false,
+                             ^bool(const RuntimeUserConfig &c) { return c.showFps.value_or(false); }, false, true)];
   {
-    KPSettingRow *row = KPRow(@"Smoother motion", @"Experimental. Caps picture quality at 4×.", KPRowChoice);
+    KPSettingRow *row = KPRow(@"Smoother motion", @"Caps picture quality at 4×.", KPRowChoice);
     NSArray<NSNumber *> *values = @[@0, @120, @180];
     row.choices = @[@"Off · 60 fps", @"120 fps", @"180 fps"];
     row.index = ^NSInteger {
@@ -537,11 +545,11 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
   [sound addObject:levelRow(@"Music", "music_volume", ^float(const RuntimeUserConfig &c) { return c.audioMusicVolume.value_or(1); })];
   [sound addObject:levelRow(@"Sound effects", "sound_effects_volume",
                             ^float(const RuntimeUserConfig &c) { return c.audioSoundEffectsVolume.value_or(1); })];
-  [sound addObject:levelRow(@"Game menu sounds", "ui_volume", ^float(const RuntimeUserConfig &c) { return c.audioUiVolume.value_or(1); })];
+  [sound addObject:levelRow(@"Menu sounds in the game", "ui_volume", ^float(const RuntimeUserConfig &c) { return c.audioUiVolume.value_or(1); })];
   [sound addObject:levelRow(@"Character voices", "voices_volume",
                             ^float(const RuntimeUserConfig &c) { return c.audioVoicesVolume.value_or(1); })];
   {
-    KPSettingRow *row = KPRow(@"KartPad menu sounds", nil, KPRowSwitch);
+    KPSettingRow *row = KPRow(@"HOME menu sounds", nil, KPRowSwitch);
     row.on = ^BOOL { return KartPadUISoundsEnabled(); };
     row.setOn = ^(BOOL on) {
       KartPadUISetSoundsEnabled(on);
@@ -559,6 +567,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
       NSInteger playing = 0;
       for (KPPadDevice *device in KPControllerRoster.shared.devices)
         if (device.slot >= 0) ++playing;
+      if (playing == 0) return @"None";
       return playing == 1 ? @"1 player" : [NSString stringWithFormat:@"%ld players", (long)playing];
     };
     [controls addObject:row];
@@ -580,6 +589,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
   }
   {
     KPSettingRow *row = KPRow(@"Test vibration", nil, KPRowAction);
+    row.inPlace = YES;
     row.run = ^{
       const RuntimeUserConfig c = config();
       const auto level = static_cast<Uint16>(std::lround(std::clamp(c.rumbleStrength.value_or(0.5f), 0.0f, 1.0f) * 65535.0f));
@@ -588,10 +598,22 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
         for (KPPadDevice *device in KPControllerRoster.shared.devices)
           if (device.canRumble && device.gamepad && SDL_RumbleGamepad(device.gamepad, level, level, 500)) ++tested;
       if (tested == 0)
-        [KPOverlay() toast:c.rumbleEnabled.value_or(true) ? @"No controller here can vibrate" : @"Vibration is off"
+        [KPOverlay() toast:c.rumbleEnabled.value_or(true) ? @"No controller that can vibrate" : @"Vibration is off"
                     detail:nil stripe:0 icon:^(CGContextRef ctx, CGRect r) { KPDrawGlyph(ctx, KPUIGlyph::Pad, r, KPP->secondaryText); }
                      image:nil];
     };
+    [controls addObject:row];
+  }
+
+  {
+    KPSettingRow *row = KPRow(@"Hide the mouse pointer", nil, KPRowChoice);
+    NSArray<NSNumber *> *values = @[@0, @3, @5, @10];
+    row.choices = @[@"Never", @"After 3 s", @"After 5 s", @"After 10 s"];
+    row.index = ^NSInteger {
+      const NSUInteger index = [values indexOfObject:@(config().cursorAutoHideSeconds.value_or(3))];
+      return index == NSNotFound ? 1 : (NSInteger)index;
+    };
+    row.setIndex = ^(NSInteger index) { KPWriteConfig("video", "cursor_auto_hide_seconds", std::to_string(values[index].intValue)); };
     [controls addObject:row];
   }
 
@@ -607,7 +629,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
     row.setIndex = ^(NSInteger index) {
       if (index == 1 && !KPRetroRewindReady()) {
         KPUIPlay(KPUISound::Reject);
-        [KPOverlay() toast:@"Retro Rewind isn't set up yet" detail:@"Set up Retro Rewind files below first." stripe:0
+        [KPOverlay() toast:@"Retro Rewind isn’t set up yet" detail:@"Set up Retro Rewind files below first." stripe:0
                       icon:^(CGContextRef c, CGRect r) { KPDrawGlyph(c, KPUIGlyph::Disc, r, KPP->secondaryText); } image:nil];
         return;
       }
@@ -649,7 +671,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
   }
 #if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)
   {
-    KPSettingRow *row = KPRow(@"Retro Rewind files", [NSString stringWithFormat:@"Version %@", @KARTPAD_RR_VERSION], KPRowAction);
+    KPSettingRow *row = KPRow(@"Retro Rewind files", nil, KPRowAction);
     row.value = ^NSString * {
       if (KPRetroRewindReady()) return [NSString stringWithFormat:@"Ready · %@", @KARTPAD_RR_VERSION];
       KPRetroDownload *download = KPRetroDownload.shared;
@@ -673,22 +695,11 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
 
   // Advanced.
   NSMutableArray *advanced = [NSMutableArray array];
-  {
-    KPSettingRow *row = KPRow(@"Hide the mouse pointer", nil, KPRowChoice);
-    NSArray<NSNumber *> *values = @[@0, @3, @5, @10];
-    row.choices = @[@"Never", @"After 3 s", @"After 5 s", @"After 10 s"];
-    row.index = ^NSInteger {
-      const NSUInteger index = [values indexOfObject:@(config().cursorAutoHideSeconds.value_or(3))];
-      return index == NSNotFound ? 1 : (NSInteger)index;
-    };
-    row.setIndex = ^(NSInteger index) { KPWriteConfig("video", "cursor_auto_hide_seconds", std::to_string(values[index].intValue)); };
-    [advanced addObject:row];
-  }
   [advanced addObject:boolRow(@"Skip effects still loading", @"Less stutter the first time a course loads.", "video",
                               "skip_unready_pipelines", true,
                               ^bool(const RuntimeUserConfig &c) { return c.skipUnreadyPipelines.value_or(true); }, false, true)];
   {
-    KPSettingRow *row = KPRow(@"VSync", @"Experimental. Applies after a restart.", KPRowSwitch);
+    KPSettingRow *row = KPRow(@"VSync", nil, KPRowSwitch);
     row.on = ^BOOL { return config().vsync.value_or(false); };
     row.setOn = ^(BOOL on) {
       if (!KPWriteConfig("video", "vsync", on ? "true" : "false", false)) return;
@@ -698,7 +709,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
     [advanced addObject:row];
   }
   {
-    KPSettingRow *row = KPRow(@"Use the notch area", @"Applies after a restart.", KPRowSwitch);
+    KPSettingRow *row = KPRow(@"Use the notch area", nil, KPRowSwitch);
     row.on = ^BOOL { return KPFullscreenAcrossNotch(); };
     row.setOn = ^(BOOL on) {
       if (!KPWriteConfig("video", "fullscreen_across_notch", on ? "true" : "false", false)) return;
@@ -724,7 +735,7 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
   [advanced addObject:legacy(@"Controller compatibility tools", nil, @selector(showControllerCompatibility:))];
   [advanced addObject:legacy(@"Save a diagnostics report", nil, @selector(saveDiagnostics:))];
   [advanced addObject:legacy(@"Report a problem", nil, @selector(reportProblem:))];
-  [advanced addObject:legacy(@"Show KartPad's files", nil, @selector(showApplicationSupport:))];
+  [advanced addObject:legacy(@"Show KartPad files", nil, @selector(showApplicationSupport:))];
   [advanced addObject:legacy(@"Classic settings window", nil, @selector(showSettings:))];
 
   self.rows = @[picture, sound, controls, game, advanced];

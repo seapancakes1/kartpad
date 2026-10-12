@@ -9,7 +9,9 @@ do not limit GPL coverage of the combined work.
 KartPad builds from exact dependency revisions recorded in
 `dependencies.lock.json`. The public unsigned IPAs include the license and
 notice files collected from the exact pinned sources and package build under
-`ThirdPartyLicenses/`.
+`ThirdPartyLicenses/`. A Mac app built from source carries these documents and
+the license files of the pinned sources it compiled in under
+`KartPad.app/Contents/Resources/Licenses/`.
 
 Android's release includes a companion notices ZIP with these documents and
 the license files from its pinned native dependencies. Keep that ZIP with the
@@ -31,6 +33,7 @@ WorkManager (Apache-2.0), rather than Apple's Metal/GameController host paths.
 | [usrsctp](https://github.com/paullouisageneau/usrsctp) | `fec583d54493f879d2ae44a743423bf8a04371ab` (libdatachannel's pin) | BSD-3-Clause; SCTP for the phone link's data channels |
 | [plog](https://github.com/SergiusTheBest/plog) | `94899e0b926ac1b0f4750bfbd495167b4a6ae9ef` (libdatachannel's pin) | MIT; libdatachannel's logging |
 | Mbed TLS (Mac) | `3.6.7` | Apache-2.0 OR GPL-2.0-or-later; DTLS for the Mac phone link |
+| [MiiJS](https://github.com/Stewared/MiiJS), by Stewared | no pin recorded | Mii Channel tile order (`data.js` `lookupTables.pages`), used as the feature-ID tables in `runtime/include/kartpad/mii/editor.h`; no MiiJS code is included. Its `package.json` declares ISC; the repository has no license file. |
 | Minizip-NG | Dolphin-pinned source | zlib; tvOS Retro Rewind archive extraction |
 | WiimotePairPlus | `8e7f9b12db2da520e4f868305c4861cdf58fa15f` | GPL-2.0-or-later; experimental macOS Wii Remote Bluetooth pairing flow derived from Dolphin WiimotePair |
 | Abseil, Dear ImGui, fmt, FreeType, libpng, Tracy, xxHash, zstd | exact package-build inputs | Their included upstream license files apply |

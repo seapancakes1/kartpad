@@ -18,12 +18,14 @@ static BOOL KPDeviceAway(KPPadDevice *device) {
 @property(nonatomic, strong) NSMutableArray<NSNumber *> *waiting;           // players, in the order they dropped
 @property(nonatomic, strong) NSMutableDictionary<NSNumber *, NSString *> *names;  // the controller each one had
 @property(nonatomic, strong) NSMutableDictionary<NSNumber *, NSData *> *miis;
+@property(nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *families;     // KPPadFamily, for its drawing
+@property(nonatomic, strong) NSMutableDictionary<NSNumber *, NSString *> *systemNames;
 @property(nonatomic, strong) NSMutableSet<NSNumber *> *back;
 @property(nonatomic, strong) NSMutableArray<KPUIView *> *tiles;
 @property(nonatomic, strong) KPUIButton *controllers, *carryOn;
 @property(nonatomic) NSTimeInterval closeAt;
 @property(nonatomic) CGFloat pulse;
-- (void)addSlot:(int)slot name:(NSString *)name mii:(NSData *)mii;
+- (void)addSlot:(int)slot name:(NSString *)name mii:(NSData *)mii family:(KPPadFamily)family systemName:(NSString *)systemName;
 @end
 
 @implementation KPReconnectScreen
@@ -33,6 +35,8 @@ static BOOL KPDeviceAway(KPPadDevice *device) {
     _waiting = [NSMutableArray array];
     _names = [NSMutableDictionary dictionary];
     _miis = [NSMutableDictionary dictionary];
+    _families = [NSMutableDictionary dictionary];
+    _systemNames = [NSMutableDictionary dictionary];
     _back = [NSMutableSet set];
     _tiles = [NSMutableArray array];
   }
@@ -80,7 +84,7 @@ static BOOL KPDeviceAway(KPPadDevice *device) {
   const CGFloat width = 184, gap = 18, total = self.waiting.count * width + (self.waiting.count - 1) * gap;
   CGFloat x = std::round(CGRectGetMidX(card) - total / 2);
   for (NSUInteger i = 0; i < self.tiles.count; ++i) {
-    [self place:self.tiles[i] at:CGRectMake(x, card.origin.y + 132, width, 220)];
+    [self place:self.tiles[i] at:CGRectMake(x, card.origin.y + 126, width, 236)];
     x += width + gap;
   }
   const CGFloat bottom = CGRectGetMaxY(card) - 32 - 64;
@@ -98,13 +102,15 @@ static BOOL KPDeviceAway(KPPadDevice *device) {
 }
 - (void)willDisappear { [KPControllerRoster.shared.listeners removeObject:self]; }
 
-- (void)addSlot:(int)slot name:(NSString *)name mii:(NSData *)mii {
+- (void)addSlot:(int)slot name:(NSString *)name mii:(NSData *)mii family:(KPPadFamily)family systemName:(NSString *)systemName {
   if ([self.waiting containsObject:@(slot)]) {
     [self.back removeObject:@(slot)];
   } else {
     [self.waiting addObject:@(slot)];
   }
   self.names[@(slot)] = name;
+  self.families[@(slot)] = @(family);
+  self.systemNames[@(slot)] = systemName;
   if (mii) self.miis[@(slot)] = mii;
   self.closeAt = 0;
   AppendSessionLine([NSString stringWithFormat:@"controllerDropped=%@; player=%d", name, slot + 1]);
@@ -169,14 +175,27 @@ static BOOL KPDeviceAway(KPPadDevice *device) {
   CGContextRestoreGState(c);
   KPStroke(c, card, KPP->panelStroke, 1.5, 28);
   const NSUInteger count = self.waiting.count;
-  NSString *heading = count == 1 ? [NSString stringWithFormat:@"%@'s controller disconnected", KPPlayerName(self.waiting.firstObject.intValue)]
-                                 : @"Controllers disconnected";
-  if (count && self.back.count == count) heading = count == 1 ? @"Controller reconnected" : @"Controllers reconnected";
+  // Phones are told apart: they come back by reopening their page.
+  BOOL phones = count > 0, allPhones = count > 0;
+  for (NSNumber *slot in self.waiting) {
+    const BOOL phone = self.families[slot].integerValue == KPFamilyPhone;
+    if (![self.back containsObject:slot]) phones &= phone;
+    allPhones &= phone;
+  }
+  NSString *heading = count == 1 ? [NSString stringWithFormat:allPhones ? @"%@\u2019s phone disconnected" : @"%@\u2019s controller disconnected",
+                                                             KPPlayerName(self.waiting.firstObject.intValue)]
+                                 : allPhones ? @"Phones disconnected" : @"Controllers disconnected";
+  if (count && self.back.count == count)
+    heading = count == 1 ? (allPhones ? @"Phone reconnected" : @"Controller reconnected")
+                         : (allPhones ? @"Phones reconnected" : @"Controllers reconnected");
   KPTextWeight(heading, CGRectMake(card.origin.x + 40, card.origin.y + 30, card.size.width - 80, 44), 31, KPP->text, NSFontWeightBold,
                NSTextAlignmentLeft);
   if (self.back.count == count) return;
   NSString *press = KPButtonWord(KPJoinDevice(), KartPadMiiPadConfirm);
-  KPTextWeight([NSString stringWithFormat:@"Reconnect it, or press %@ on another controller.", press],
+  const BOOL several = count - self.back.count > 1;
+  KPTextWeight([NSString stringWithFormat:phones    ? (several ? @"Reopen the pages, or press %@ on another controller." : @"Reopen the page, or press %@ on another controller.")
+                                          : several ? @"Reconnect them, or press %@ on another controller."
+                                                    : @"Reconnect it, or press %@ on another controller.", press],
                CGRectMake(card.origin.x + 40, card.origin.y + 82, card.size.width - 80, 28), 21, KPP->secondaryText,
                NSFontWeightRegular, NSTextAlignmentLeft);
 }
@@ -199,25 +218,25 @@ static BOOL KPDeviceAway(KPPadDevice *device) {
   CGContextRestoreGState(c);
   KPTextWeight(KPPlayerName(player), CGRectMake(16, 9, size.width - 32, 28), 21, KPPlayerInk[player], NSFontWeightHeavy,
                NSTextAlignmentLeft);
-  const CGRect well = CGRectMake(size.width / 2 - 44, 58, 88, 88);
+  const CGRect well = CGRectMake(size.width / 2 - 36, 54, 72, 72);
   NSData *mii = self.miis[slot];
   __weak KPReconnectScreen *weakSelf = self;
   NSImage *portrait = mii ? KartPadMiiPortrait(mii, ^{ for (NSView *tile in weakSelf.tiles) tile.needsDisplay = YES; }) : nil;
   CGContextSaveGState(c);
   if (!back) CGContextSetAlpha(c, 0.55);
   KPDrawMiiWell(c, well, portrait, color, NO);
+  // The controller they had.
+  KPArtState art;
+  art.accent = color;
+  KPDrawControllerArt(c, CGRectMake(16, 132, size.width - 32, 48), (KPPadFamily)self.families[slot].integerValue, art,
+                      self.systemNames[slot]);
   CGContextRestoreGState(c);
-  KPTextWeight(self.names[slot] ?: @"Controller", CGRectMake(10, 152, size.width - 20, 24), 16, KPP->secondaryText, NSFontWeightMedium);
+  KPTextWeight(self.names[slot] ?: @"Controller", CGRectMake(10, 184, size.width - 20, 22), 15, KPP->secondaryText, NSFontWeightMedium);
   if (back) {
-    KPDrawGlyph(c, KPUIGlyph::Check, CGRectMake(size.width / 2 - 38, 180, 26, 26), color);
-    KPTextWeight(@"Back", CGRectMake(size.width / 2 - 8, 180, 60, 26), 19, KPP->text, NSFontWeightBold, NSTextAlignmentLeft);
+    KPDrawGlyph(c, KPUIGlyph::Check, CGRectMake(size.width / 2 - 38, 206, 26, 26), color);
+    KPTextWeight(@"Back", CGRectMake(size.width / 2 - 8, 206, 60, 26), 19, KPP->text, NSFontWeightBold, NSTextAlignmentLeft);
   } else {
-    KPTextWeight(@"Waiting…", CGRectMake(10, 180, size.width - 20, 26), 19, KPP->accentBottom, NSFontWeightSemibold);
-    // Three dots breathing under it.
-    for (int dot = 0; dot < 3; ++dot) {
-      const CGFloat phase = 0.5 + 0.5 * sin(NSProcessInfo.processInfo.systemUptime * 5 - dot * 0.9);
-      KPFill(c, CGRectMake(size.width / 2 - 17 + dot * 14, 208, 6, 6), KPP->accentBottom, 3, 0.25 + 0.75 * phase);
-    }
+    KPTextWeight(@"Waiting…", CGRectMake(10, 206, size.width - 20, 26), 19, KPP->accentBottom, NSFontWeightSemibold);
   }
 }
 
@@ -234,20 +253,27 @@ static BOOL KPReconnectWanted(int slot) {
   return KPReconnectShowing() || (!KPOverlay().active && !KartPadMiiWindowsVisible());
 }
 
-static void KPControllerDropped(int slot, NSString *name, NSData *mii) {
+static void KPControllerDroppedAs(int slot, NSString *name, NSData *mii, KPPadFamily family, NSString *systemName) {
   if (!KPReconnectWanted(slot)) return;
   // The roster can be refreshed from the game loop, inside a guest fiber; AppKit opens screens on the next turn.
   dispatch_async(dispatch_get_main_queue(), ^{
     if (!KPReconnectWanted(slot)) return;
     KPOverlayController *overlay = KPOverlay();
     if (KPReconnectShowing()) {
-      [(KPReconnectScreen *)overlay.top addSlot:slot name:name mii:mii];
+      [(KPReconnectScreen *)overlay.top addSlot:slot name:name mii:mii family:family systemName:systemName];
       return;
     }
     KPReconnectScreen *screen = [[KPReconnectScreen alloc] initWithFrame:NSZeroRect];
     [overlay present:screen];
-    [screen addSlot:slot name:name mii:mii];
+    [screen addSlot:slot name:name mii:mii family:family systemName:systemName];
   });
+}
+
+// From the roster's disconnect toast (KartPadHomeScreen.inc.mm): the controller is the one leaving.
+static void KPControllerDropped(int slot, NSString *name, NSData *mii) {
+  KPPadDevice *leaving = KPControllerRoster.shared.leaving;
+  const BOOL known = leaving != nil && leaving.slot == slot;
+  KPControllerDroppedAs(slot, name, mii, known ? leaving.family : KPFamilyGeneric, known ? leaving.systemName : nil);
 }
 
 // Phones keep their pad while away, so the roster never sees them go: watch their links instead.
@@ -274,7 +300,7 @@ static void KPReconnectPhonesTick() {
     told[phone] = true;
     KPControllerRoster *roster = KPControllerRoster.shared;
     KPPadDevice *device = [roster deviceInSlot:entry.player - 1];
-    KPControllerDropped(entry.player - 1, [NSString stringWithFormat:@"Phone %d", phone + 1], [roster miiFor:device]);
+    KPControllerDroppedAs(entry.player - 1, [NSString stringWithFormat:@"Phone %d", phone + 1], [roster miiFor:device], KPFamilyPhone, nil);
   }
   for (int phone = 0; phone < kpp::MaxPhones; ++phone)
     if (!seen[phone]) awaySince[phone] = 0, told[phone] = false;

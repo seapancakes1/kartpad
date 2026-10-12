@@ -26,8 +26,8 @@ static constexpr std::array<PADButton, 12> KPButtons = {
   PAD_BUTTON_LEFT, PAD_BUTTON_RIGHT};
 static NSArray<NSString *> *KPActions() {
   return @[@"Accelerate / Select", @"Brake / Back", @"X", @"Y", @"Pause",
-           @"Rear view (Z)", @"Item (L)", @"Drift (R)", @"Trick / D-pad Up",
-           @"D-pad Down", @"D-pad Left", @"D-pad Right"];
+           @"Look behind (Z)", @"Use item (L)", @"Drift (R)", @"Trick / D-pad up",
+           @"D-pad down", @"D-pad left", @"D-pad right"];
 }
 static NSString *KPButtonLabel(SDL_Gamepad *pad, int button) {
   if ((uint32_t)button == kartpad::binding::LeftTrigger) return @"LT / L2";
@@ -56,10 +56,10 @@ static NSString *KPButtonLabel(SDL_Gamepad *pad, int button) {
     case SDL_GAMEPAD_BUTTON_START: return ps ? @"Options" : @"Menu";
     case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER: return ps ? @"L1" : @"LB";
     case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER: return ps ? @"R1" : @"RB";
-    case SDL_GAMEPAD_BUTTON_DPAD_UP: return @"D-pad Up";
-    case SDL_GAMEPAD_BUTTON_DPAD_DOWN: return @"D-pad Down";
-    case SDL_GAMEPAD_BUTTON_DPAD_LEFT: return @"D-pad Left";
-    case SDL_GAMEPAD_BUTTON_DPAD_RIGHT: return @"D-pad Right";
+    case SDL_GAMEPAD_BUTTON_DPAD_UP: return @"D-pad up";
+    case SDL_GAMEPAD_BUTTON_DPAD_DOWN: return @"D-pad down";
+    case SDL_GAMEPAD_BUTTON_DPAD_LEFT: return @"D-pad left";
+    case SDL_GAMEPAD_BUTTON_DPAD_RIGHT: return @"D-pad right";
     case SDL_GAMEPAD_BUTTON_GUIDE: return @"Guide";
     case SDL_GAMEPAD_BUTTON_LEFT_STICK: return @"Left stick click";
     case SDL_GAMEPAD_BUTTON_RIGHT_STICK: return @"Right stick click";
@@ -149,12 +149,12 @@ static NSString *KPProfileKey(SDL_Gamepad *pad) {
       } else {
         AppendSessionLine(@"controllerProfiles=invalid; existing file preserved");
         _profileReadFailed = YES;
-        _status = [NSTextField labelWithString:@"ControllerProfiles.json couldn’t be read. Fix or rename it before saving."];
+        _status = [NSTextField labelWithString:@"Saved button setups couldn’t be read. Saving is off."];
       }
     } else if (readError && readError.code != NSFileReadNoSuchFileError) {
       AppendSessionLine(@"controllerProfiles=read-failed; existing file preserved");
       _profileReadFailed = YES;
-      _status = [NSTextField labelWithString:@"ControllerProfiles.json couldn’t be read. Fix or rename it before saving."];
+      _status = [NSTextField labelWithString:@"Saved button setups couldn’t be read. Saving is off."];
     }
   }
   return self;
@@ -461,7 +461,7 @@ static NSString *KPProfileKey(SDL_Gamepad *pad) {
 }
 - (void)save:(id)sender {
   (void)sender;
-  if (self.profileReadFailed) { self.status.stringValue=@"ControllerProfiles.json is damaged. Fix or rename it, then save again."; return; }
+  if (self.profileReadFailed) { self.status.stringValue=@"Saved button setups couldn’t be read. Saving is off."; return; }
   NSError *error=nil;
   NSData *data=[NSJSONSerialization dataWithJSONObject:@{@"version":@1,@"devices":self.profiles}
     options:NSJSONWritingPrettyPrinted error:&error];

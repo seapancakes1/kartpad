@@ -17,7 +17,7 @@ static NSDictionary *KPGhostInfo(NSData *data, NSError **error) {
     const auto info = kartpad::ghost::Validate(bytes);
     const uint32_t race = kartpad::ghost::Read32(bytes, 4);
     const auto course = std::find(kartpad::ghost::CourseIds.begin(), kartpad::ghost::CourseIds.end(), info.course);
-    kartpad::ghost::Require(course != kartpad::ghost::CourseIds.end(), "Only Original race courses are supported");
+    kartpad::ghost::Require(course != kartpad::ghost::CourseIds.end(), "Only Mario Kart Wii courses are supported");
     const size_t slot = size_t(course - kartpad::ghost::CourseIds.begin());
     NSMutableDictionary *result = [NSMutableDictionary dictionary];
     result[@"slot"] = @(slot);
@@ -55,7 +55,7 @@ static NSArray<NSDictionary *> *KPGhostLicenses() {
 static NSString *KPLicenseTitle(NSDictionary *license) {
   NSString *name = [license[@"name"] isKindOfClass:NSString.class] && [license[@"name"] length] ? license[@"name"] : nil;
   const unsigned number = [license[@"slot"] unsignedIntValue] + 1;
-  return name ? [NSString stringWithFormat:@"%u · %@", number, name] : [NSString stringWithFormat:@"License %u", number];
+  return name ? [NSString stringWithFormat:@"License %u · %@", number, name] : [NSString stringWithFormat:@"License %u", number];
 }
 
 // .rkg isn't a type macOS knows; one made up from the extension lets the panels pick it.
@@ -66,7 +66,7 @@ static NSArray<UTType *> *KPGhostTypes() {
 
 static void KPGhostProblem(NSString *heading, NSString *message) {
   KPUIPlay(KPUISound::Reject);
-  KPAsk(heading, message, @[@"OK"], 0, -1, nil);
+  KPAsk(heading, message, @[@"Done"], 0, -1, nil);
 }
 
 #pragma mark Importing
@@ -76,19 +76,19 @@ static void KPGhostProblem(NSString *heading, NSString *message) {
 static void KPStageGhost(NSData *data, NSDictionary *info, NSDictionary *license) {
   const NSUInteger slot = [license[@"slot"] unsignedIntegerValue];
   NSString *whose = [license[@"name"] isKindOfClass:NSString.class] && [license[@"name"] length]
-                        ? [NSString stringWithFormat:@"%@'s", license[@"name"]]
-                        : [NSString stringWithFormat:@"License %lu's", (unsigned long)slot + 1];
+                        ? [NSString stringWithFormat:@"%@’s", license[@"name"]]
+                        : [NSString stringWithFormat:@"License %lu’s", (unsigned long)slot + 1];
   NSString *heading = [NSString stringWithFormat:@"%@ · %@", info[@"course"], info[@"time"]];
-  NSString *message = [NSString stringWithFormat:@"Replaces %@ downloaded ghost for this course. Applies after a restart.", whose];
-  KPAsk(heading, message, @[@"Restart Now", @"Later", @"Cancel"], 0, -1, ^(NSInteger choice) {
+  NSString *message = [NSString stringWithFormat:@"Replaces %@ downloaded ghost for this course.", whose];
+  KPAsk(heading, message, @[@"Restart", @"Later", @"Cancel"], 0, -1, ^(NSInteger choice) {
     if (choice == 2) return;
     NSError *error = nil;
     if (KartPadHasPendingGhost() && !KartPadCancelPendingGhost(&error)) {
-      KPGhostProblem(@"Couldn't Import the Ghost", error.localizedDescription);
+      KPGhostProblem(@"Couldn’t Import the Ghost", error.localizedDescription);
       return;
     }
     if (!KartPadStageOriginalGhost(data, slot, &error)) {
-      KPGhostProblem(@"Couldn't Import the Ghost", error.localizedDescription ?: @"The ghost doesn't fit this save.");
+      KPGhostProblem(@"Couldn’t Import the Ghost", error.localizedDescription ?: @"The ghost doesn’t fit this save.");
       return;
     }
     AppendSessionLine([NSString stringWithFormat:@"ghostStaged=%@; license=%lu", info[@"course"], (unsigned long)slot + 1]);
@@ -108,14 +108,14 @@ static void KPImportGhost(NSData *data, NSString *fileName) {
   NSError *error = nil;
   NSDictionary *info = data.length <= kartpad::ghost::GhostBytes ? KPGhostInfo(data, &error) : nil;
   if (info == nil) {
-    KPGhostProblem(@"Can't Use This Ghost",
+    KPGhostProblem(@"Can’t Use This Ghost",
                    [NSString stringWithFormat:@"%@: %@", fileName, error.localizedDescription ?: @"Not an RKG ghost"]);
     return;
   }
   // Mii and license changes waiting for a restart have to go first; a waiting ghost can be replaced.
   const BOOL onlyGhost = KartPadHasPendingGhost() && KartPadPendingMiiChangeCount() == 1;
   if (KartPadHasPendingMiiChanges() && !onlyGhost) {
-    KPAsk(@"Restart First", @"Other changes are waiting for a restart.", @[@"Restart Now", @"Cancel"], 0, -1, ^(NSInteger choice) {
+    KPAsk(@"Restart First", @"Other changes are waiting for a restart.", @[@"Restart", @"Cancel"], 0, -1, ^(NSInteger choice) {
       if (choice == 0) KPRestartWithCurtain(@"Restarting", @"");
     });
     return;
@@ -140,7 +140,7 @@ static void KPImportGhostFile(NSString *path) {
   NSDictionary *attributes = [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil];
   NSData *data = attributes && attributes.fileSize <= kartpad::ghost::GhostBytes ? [NSData dataWithContentsOfFile:path] : nil;
   if (data == nil) {
-    KPGhostProblem(@"Can't Use This Ghost", [NSString stringWithFormat:@"%@ isn't an RKG ghost.", path.lastPathComponent]);
+    KPGhostProblem(@"Can’t Use This Ghost", [NSString stringWithFormat:@"%@ isn’t an RKG ghost.", path.lastPathComponent]);
     return;
   }
   AppendSessionLine([NSString stringWithFormat:@"ghostFile=%@", path.lastPathComponent]);
@@ -177,7 +177,7 @@ static void KPChooseGhostToImport() {
         glyph:(int)KPUIGlyph::Ghost enabled:YES run:^{ KPImportGhostFile(path); }];
   }
   if (listed == 0) menu.message = @"No ghosts in Downloads or on the Desktop.";
-  [menu add:@"Choose a File…" detail:@"Needs a mouse" glyph:(int)KPUIGlyph::Search enabled:YES run:^{
+  [menu add:@"Choose a File…" detail:@"Needs a mouse." glyph:(int)KPUIGlyph::Folder enabled:YES run:^{
     NSOpenPanel *panel = NSOpenPanel.openPanel;
     panel.allowedContentTypes = KPGhostTypes();
     panel.message = @"Choose a Mario Kart Wii ghost (.rkg)";
@@ -259,7 +259,7 @@ static void KPExportGhost(NSData *data, NSDictionary *info) {
       KPUIPlay(KPUISound::Saved);
       return;
     }
-    KPGhostProblem(@"Couldn't Save the Ghost", writeError.localizedDescription);
+    KPGhostProblem(@"Couldn’t Save the Ghost", writeError.localizedDescription);
   }];
 }
 
@@ -296,7 +296,7 @@ static constexpr NSInteger KPGhostColumns = 4, KPGhostRows = 3;
     const CGFloat dy = state.pressed ? 2 : 0;
     KPFill(c, CGRectInset(CGRectMake(r.origin.x, r.origin.y + dy, r.size.width, r.size.height - 3), 2, 2), KPP->caution, 6, 0.22);
     KPDrawGlyph(c, KPUIGlyph::Restart, CGRectMake(r.origin.x + 16, CGRectGetMidY(r) - 14 + dy, 26, 26), KPP->cautionInk);
-    KPTextWeight(@"Restart to apply", CGRectMake(r.origin.x + 50, CGRectGetMidY(r) - 13 + dy, r.size.width - 58, 26), 19, KPP->text,
+    KPTextWeight(@"Restart to Apply", CGRectMake(r.origin.x + 50, CGRectGetMidY(r) - 13 + dy, r.size.width - 58, 26), 19, KPP->text,
                  NSFontWeightSemibold, NSTextAlignmentLeft);
   } action:^{
     KPAskWarning(@"Restart KartPad?", @"Unsaved progress will be lost.", @[@"Restart", @"Later"], 0, -1, ^(NSInteger choice) {
@@ -344,7 +344,7 @@ static constexpr NSInteger KPGhostColumns = 4, KPGhostRows = 3;
   }
   NSError *error = nil;
   NSArray<NSDictionary *> *records = KartPadOriginalGhosts([self.licenses[self.license][@"slot"] unsignedIntegerValue], &error);
-  if (records == nil) self.problem = error.localizedDescription ?: @"The save couldn't be read.";
+  if (records == nil) self.problem = error.localizedDescription ?: @"The save couldn’t be read.";
   NSMutableArray *ghosts = [NSMutableArray array];
   for (NSDictionary *record in records) {
     NSMutableDictionary *ghost = [KPGhostInfo(record[@"data"], nil) mutableCopy];
@@ -401,7 +401,7 @@ static constexpr NSInteger KPGhostColumns = 4, KPGhostRows = 3;
   }
 }
 
-- (KPUIButton *)initialFocus { return self.ghosts.count ? self.tiles.firstObject : self.import; }
+- (KPUIButton *)initialFocus { return self.ghosts.count ? self.tiles.firstObject : self.done; }
 
 - (void)willAppear {
   // Back from importing: the restart may be waiting now.
@@ -453,7 +453,7 @@ static constexpr NSInteger KPGhostColumns = 4, KPGhostRows = 3;
   const CGRect s = self.safe;
   KPTextWeight(@"Time Trial Ghosts", CGRectMake(s.origin.x + 56, s.origin.y + 26, 640, 50), 36, KPP->text, NSFontWeightBold,
                NSTextAlignmentLeft);
-  NSString *subtitle = self.licenses.count == 1 ? [NSString stringWithFormat:@"Mario Kart Wii · %@", KPLicenseTitle(self.licenses.firstObject)]
+  NSString *subtitle = self.licenses.count == 1 ? KPLicenseTitle(self.licenses.firstObject)
                                                 : @"Mario Kart Wii";
   KPTextWeight(subtitle, CGRectMake(s.origin.x + 58, s.origin.y + 76, 640, 26), 18, KPP->secondaryText, NSFontWeightMedium,
                NSTextAlignmentLeft);
@@ -466,7 +466,7 @@ static constexpr NSInteger KPGhostColumns = 4, KPGhostRows = 3;
     hints.insert(hints.begin(), {KartPadMiiPadPreviousTab, [NSString stringWithFormat:@"Page %ld of %ld", (long)self.page + 1,
                                                             (long)self.pages], KartPadMiiPadNextTab});
   KPDrawHints(c, CGRectMake(s.origin.x + 56, s.origin.y + 670, 1168, 26), hints, 16, NSTextAlignmentRight);
-  KPTextWeight(@"Drop an .rkg file here to import it.", CGRectMake(s.origin.x + 56, s.origin.y + 670, 600, 26), 16,
+  KPTextWeight(@"Drag a ghost file here.", CGRectMake(s.origin.x + 56, s.origin.y + 670, 600, 26), 16,
                KPP->secondaryText, NSFontWeightRegular, NSTextAlignmentLeft);
 }
 

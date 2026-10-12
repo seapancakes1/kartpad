@@ -56,7 +56,7 @@ NSArray<NSDictionary<NSString *, NSString *> *> *SaveLocations() {
   return @[
     @{
       @"identifier": @"original",
-      @"title": @"Original Mario Kart Wii",
+      @"title": @"Mario Kart Wii",
       @"path": [support stringByAppendingPathComponent:
           @"NAND/title/00010004/524d4350/data/rksys.dat"],
       @"backup": @"rksys-nand",

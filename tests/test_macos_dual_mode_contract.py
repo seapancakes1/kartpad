@@ -31,7 +31,7 @@ class MacOSDualModeContractTests(unittest.TestCase):
         shell = (ROOT / "apple/macos/KartPadMacShell.mm").read_text()
         for marker in (
             '@"Game"', '@"Data"', '@"Controls"', '@"Help"',
-            '@"Original Mario Kart Wii"', '@"Retro Rewind"',
+            '@"Mario Kart Wii"', '@"Retro Rewind"',
             '@"Choose Retro Rewind Data…"', "KARTPAD_RR_CODE_PUL_SHA256",
             'setenv("KARTPAD_RUNTIME_PROFILE"',
             'WriteSetting("video", "resolution_multiplier", "2.0")',

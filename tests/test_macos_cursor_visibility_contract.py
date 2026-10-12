@@ -31,7 +31,7 @@ class MacOSCursorVisibilityContractTests(unittest.TestCase):
         self.assertIn('"video", "cursor_auto_hide_seconds"', config)
         settings = (REPO / "apple/macos/KartPadMacSettings.inc.mm").read_text()
         self.assertIn('@"video.cursor_auto_hide_seconds":@(c.cursorAutoHideSeconds.value_or(3))', settings)
-        self.assertIn('label:@"Hide mouse pointer" choices:@[@"Never",', settings)
+        self.assertIn('label:@"Hide the mouse pointer" choices:@[@"Never",', settings)
         self.assertIn("values:@[@0,@3,@5,@10]", settings)
 
     def test_macos_runtime_preparation_applies_cursor_patch(self) -> None:

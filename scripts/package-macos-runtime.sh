@@ -66,6 +66,45 @@ cp "${runtime_build}/dsp_coef.bin" "${runtime_resources}/dsp_coef.bin"
 cp "${runtime_build}/initial_pipeline_cache.db" "${resources}/initial_pipeline_cache.db"
 cp -R "${runtime_build}/wii_bootstrap" "${runtime_resources}/wii_bootstrap"
 cp "${icon_file}" "${resources}/KartPad.icns"
+
+# License texts: KartPad's GPLv3 grant and notices, then the license files of
+# the pinned third-party sources this build compiled in.
+licenses="${resources}/Licenses"
+mkdir -p "${licenses}/ThirdParty"
+cp "${repo_root}/LICENSE" "${repo_root}/THIRD_PARTY_NOTICES.md" \
+  "${repo_root}/RIGHTS_AND_LICENSES.md" "${licenses}/"
+cp -R "${repo_root}/LICENSES" "${licenses}/LICENSES"
+copy_license_files() { # name source-directory [required]
+  local name="$1" source="$2" copied=0 file
+  for file in "${source}"/LICENSE* "${source}"/License* "${source}"/COPYING*; do
+    [[ -f "${file}" ]] || continue
+    mkdir -p "${licenses}/ThirdParty/${name}"
+    cp "${file}" "${licenses}/ThirdParty/${name}/"
+    copied=1
+  done
+  if [[ "${copied}" == 0 && "${3:-}" == required ]]; then
+    echo "missing license file for ${name} in ${source}" >&2
+    exit 66
+  fi
+}
+runtime_source="${repo_root}/vendor/runtimes/macos"
+copy_license_files WiiCompiled "${runtime_source}" required
+copy_license_files aurora "${runtime_source}/aurora-main" required
+for source in "${runtime_source}"/runtime/third_party/*/; do
+  copy_license_files "$(basename "${source}")" "${source%/}"
+done
+phone_link="${runtime_build}/_deps/kartpad_libdatachannel-src"
+copy_license_files libdatachannel "${phone_link}" required
+for dependency in libjuice usrsctp plog; do
+  copy_license_files "${dependency}" "${phone_link}/deps/${dependency}" required
+done
+copy_license_files mbedtls "${runtime_build}/_deps/kartpad_mbedtls-src" required
+for source in "${runtime_build}"/_deps/*-src/; do
+  name="$(basename "${source}")"
+  name="${name%-src}"
+  case "${name}" in kartpad_*) continue ;; esac
+  copy_license_files "${name}" "${source%/}"
+done
 ln -s ../Resources/Runtime/dsp_coef.bin "${macos}/dsp_coef.bin"
 ln -s ../Resources/Runtime/wii_bootstrap "${macos}/wii_bootstrap"
 
@@ -79,7 +118,8 @@ plutil -insert CFBundleIdentifier -string dev.kartpad.app "${plist}"
 plutil -insert CFBundleInfoDictionaryVersion -string 6.0 "${plist}"
 plutil -insert CFBundleName -string KartPad "${plist}"
 plutil -insert CFBundlePackageType -string APPL "${plist}"
-plutil -insert NSLocalNetworkUsageDescription -string "KartPad connects to your selected private Wii server and other players on your local network, and lets phones on your network join as controllers." "${plist}"
+plutil -insert NSLocalNetworkUsageDescription -string \
+  "KartPad lets phones on your network join as controllers and connects to local players." "${plist}"
 plutil -insert CFBundleShortVersionString -string "${KARTPAD_VERSION:-${release_version}}" "${plist}"
 plutil -insert CFBundleVersion -string "${KARTPAD_BUILD_NUMBER:-${release_build}}" "${plist}"
 plutil -insert LSApplicationCategoryType -string public.app-category.games "${plist}"
@@ -90,6 +130,20 @@ plutil -insert NSHighResolutionCapable -bool true "${plist}"
 plutil -insert NSPrefersDisplaySafeAreaCompatibilityMode -bool false "${plist}"
 plutil -insert NSBluetoothAlwaysUsageDescription -string \
   "KartPad uses Bluetooth to pair controllers, including Wii Remotes." "${plist}"
+# Setup looks for the game in these places; ghosts are read from Downloads and
+# the Desktop and saved to Downloads.
+plutil -insert NSDownloadsFolderUsageDescription -string \
+  "KartPad looks in Downloads for your game and ghosts, and saves ghosts there." "${plist}"
+plutil -insert NSDesktopFolderUsageDescription -string \
+  "KartPad looks on the Desktop for your game and ghosts." "${plist}"
+plutil -insert NSDocumentsFolderUsageDescription -string \
+  "KartPad looks in Documents for your game." "${plist}"
+plutil -insert NSRemovableVolumesUsageDescription -string \
+  "KartPad looks on connected drives for your game." "${plist}"
+plutil -insert NSNetworkVolumesUsageDescription -string \
+  "KartPad looks on network drives for your game." "${plist}"
+plutil -insert NSHumanReadableCopyright -string \
+  "Free software under GPLv3. Not affiliated with Nintendo." "${plist}"
 plutil -insert NSPrincipalClass -string NSApplication "${plist}"
 
 # Bundle every non-system dylib and rewrite absolute paths. Release builds are

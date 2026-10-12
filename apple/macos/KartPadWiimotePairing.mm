@@ -208,7 +208,7 @@ NSSet<NSNumber *> *ConnectedRemotes() {
         initWithContentRect:NSMakeRect(0, 0, 520, 230)
                   styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable)
                     backing:NSBackingStoreBuffered defer:NO];
-    _panel.title = @"Experimental Wii Remote + Nunchuk";
+    _panel.title = @"Pair Wii Remote";
     _panel.releasedWhenClosed = NO;
     _panel.delegate = self;
 
@@ -487,8 +487,8 @@ void KartPadApplyExperimentalWiimotePreference(void) {
   SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_WII, enabled ? "1" : "0");
 }
 
-// The experimental setting stays as the player left it (the menu turns it on, with its warning);
-// pairing switches SDL's Wii driver on only while it needs it.
+// Pairing turns Wii Remote support on (Pair Wii Remote…); the classic Settings window can turn it
+// off again. Pairing switches SDL's Wii driver on only while it needs it.
 void KartPadBeginWiimotePairing(void (^status)(NSString *message, BOOL busy)) {
   if (gKartPadWiimotePairController == nil) {
     gKartPadWiimotePairController = [KartPadWiimotePairController new];

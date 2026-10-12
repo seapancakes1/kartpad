@@ -60,6 +60,10 @@ static NSString *KPHintLabel(KPPadDevice *device, KartPadMiiPadButton button) {
       return device.family == KPFamilyWiiRemote ? nil : nintendo ? @"L" : KPButtonLabel(pad, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER);
     case KartPadMiiPadNextTab:
       return device.family == KPFamilyWiiRemote ? nil : nintendo ? @"R" : KPButtonLabel(pad, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER);
+    case KartPadMiiPadStart:
+      return device.family == KPFamilyWiiRemote || nintendo ? @"+"
+           : device.family == KPFamilyGameCube              ? @"Start"
+                                                            : KPButtonLabel(pad, SDL_GAMEPAD_BUTTON_START);
     case KartPadMiiPadLeft: return @"Left";
     case KartPadMiiPadRight: return @"Right";
     default: return nil;

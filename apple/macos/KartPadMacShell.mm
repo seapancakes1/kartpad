@@ -259,7 +259,7 @@ static NSString *ValidateExtractedRoot(NSString *root, NSError **error) {
       [root stringByAppendingPathComponent:@"sys/boot.bin"]
                                              options:0
                                                error:error];
-  if (boot == nil) return @"KartPad could not read sys/boot.bin.";
+  if (boot == nil) return @"KartPad couldn’t read sys/boot.bin.";
   if (boot.length < 0x20) return @"The selected sys/boot.bin is truncated.";
   const uint8_t *bytes = static_cast<const uint8_t *>(boot.bytes);
   if (memcmp(bytes, "RMCP01", 6) != 0 || bytes[6] != 0 || bytes[7] != 0) {
@@ -275,20 +275,20 @@ static NSString *ValidateExtractedRoot(NSString *root, NSError **error) {
 
   NSString *hash = SHA256ForFile(
       [root stringByAppendingPathComponent:@"sys/main.dol"], error);
-  if (hash == nil) return @"KartPad could not hash sys/main.dol.";
+  if (hash == nil) return @"KartPad couldn’t hash sys/main.dol.";
   if (![hash isEqualToString:
       @"80d18895b39c63bd80f457398bfcbb91b7d16ac116a41a88967e954080155b05"]) {
     return @"This game data has been modified. Use an unmodified RMCP01 copy.";
   }
   NSString *relHash = SHA256ForFile(
       [root stringByAppendingPathComponent:@"files/rel/StaticR.rel"], error);
-  if (relHash == nil) return @"KartPad could not hash files/rel/StaticR.rel.";
+  if (relHash == nil) return @"KartPad couldn’t hash files/rel/StaticR.rel.";
   if (![relHash isEqualToString:
       @"16d9d146112541fefea701ecb5bc1a496f9d50e4a752fbb5b6778e7c6399f67d"]) {
     return @"This game data has been modified. Use an unmodified RMCP01 copy.";
   }
   return KartPadIncompleteGameFilesError(root,
-      @"If it's in iCloud Drive, Control-click the folder in Finder, choose Download Now and wait "
+      @"If it’s in iCloud Drive, Control-click the folder in Finder, choose Download Now and wait "
       @"for it to finish. Then choose it again.");
 }
 
@@ -464,14 +464,10 @@ static NSString *ChooseAndValidateRetroRewindData() {
   NSString *detail = error.localizedDescription.length > 0
       ? error.localizedDescription : validation;
   NSString *newer = KPLocalUpdateSettings() != nil
-      ? @"Retro Rewind Updates… in the Game menu installs newer packs."
-      : @"To use a newer pack, first check KartPad's GitHub Releases for a KartPad build that supports it. "
-         "Retro Rewind updates are not installed automatically.";
-  alert.informativeText = [NSString stringWithFormat:
-      @"%@\n\nThis KartPad build supports Retro Rewind %@. Choose the matching "
-       "pack. %@\n\nKeep your existing game data and saves; the selected "
-       "folder has not been changed.",
-      detail, @KARTPAD_RR_VERSION, newer];
+      ? @"Get newer packs from Game → Retro Rewind Updates…"
+      : @"Newer packs need a newer KartPad.";
+  alert.informativeText = [NSString stringWithFormat:@"%@\n\nKartPad needs Retro Rewind %@. %@",
+                                                     detail, @KARTPAD_RR_VERSION, newer];
   [alert runModal];
   return @"";
 }
@@ -556,7 +552,7 @@ static NSString *DiagnosticsReport() {
       std::clamp(runtime.audioVolume.value_or(1.0f), 0.0f, 1.0f) * 100.0f);
   NSString *displayMode = @"windowed";
   if (runtime.displayMode == "borderless") displayMode = @"borderless";
-  if (runtime.displayMode == "fullscreen") displayMode = @"fullscreen";
+  if (runtime.displayMode == "exclusive") displayMode = @"exclusive";
   return [NSString stringWithFormat:
       @"KartPad diagnostics\n"
        "schema=3\n"
@@ -643,10 +639,12 @@ static bool KPShowScreen(NSString *which);
 @property(nonatomic, strong) NSTextField *settingsStatus;
 @property(nonatomic, strong) KPMiisWindow *miisWindow;
 @property(nonatomic, strong) NSButton *backgroundPauseSwitch;
+// Settings → Advanced: SDL's Wii Remote driver from launch (pairing turns it on).
+@property(nonatomic, strong) NSButton *wiimoteSwitch;
 // Settings → Controllers: Off, Light, Medium or Strong.
 @property(nonatomic, strong) NSPopUpButton *vibrationChoice;
 // Changes waiting for a restart, by what they are. While there are any, the Game menu has Restart
-// KartPad and Settings has Restart Now.
+// to Apply and Settings has Restart.
 @property(nonatomic, strong) NSMutableSet<NSString *> *restartReasons;
 @property(nonatomic, strong) NSButton *settingsRestart;
 @property(nonatomic, strong) NSMenuItem *restartItem;
@@ -740,15 +738,15 @@ static NSString *KPGameTitle(NSString *profile);                       // KartPa
   alert.messageText = title;
   alert.informativeText = message;
   [alert addButtonWithTitle:action];
-  [alert addButtonWithTitle:@"Later"];
+  [alert addButtonWithTitle:@"Not Now"];
   return [alert runModal] == NSAlertFirstButtonReturn;
 }
 
-// A change that applies at launch: Restart Now, or Later, which leaves Apply Changes in the Game
+// A change that applies at launch: Restart, or Not Now, which leaves Restart to Apply in the Game
 // menu until then.
 - (void)offerRestart:(NSString *)title message:(NSString *)message reason:(NSString *)reason {
   [self setRestartNeeded:YES for:reason];
-  if ([self askToRestart:title message:message action:@"Restart Now"]) [self restartKartPad:nil];
+  if ([self askToRestart:title message:message action:@"Restart"]) [self restartKartPad:nil];
 }
 
 - (void)finishQuitting:(id)sender {
@@ -771,8 +769,8 @@ static NSString *KPGameTitle(NSString *profile);                       // KartPa
   if (root == nil || root.length == 0) return;
   if (!WriteGameDataRoot(root)) {
     NSAlert *alert = [NSAlert new];
-    alert.messageText = @"Game Data Could Not Be Saved";
-    alert.informativeText = @"KartPad could not update Config.toml.";
+    alert.messageText = @"Game Data Couldn’t Be Saved";
+    alert.informativeText = @"KartPad couldn’t update Config.toml.";
     [alert runModal];
     return;
   }
@@ -787,8 +785,8 @@ static NSString *KPGameTitle(NSString *profile);                       // KartPa
   NSString *root = ChooseAndValidateRetroRewindData();
   if (root == nil || root.length == 0) return;
   if (!WriteRetroRewindRoot(root)) {
-    [self showSimpleAlert:@"Retro Rewind Data Could Not Be Saved"
-                  message:@"KartPad could not update Config.toml."];
+    [self showSimpleAlert:@"Retro Rewind Data Couldn’t Be Saved"
+                  message:@"KartPad couldn’t update Config.toml."];
     return;
   }
   if ([RunningRuntimeProfile() isEqualToString:kKartPadRetroProfile]) {
@@ -825,7 +823,7 @@ static NSString *KPGameTitle(NSString *profile);                       // KartPa
   if ([profile isEqualToString:RunningRuntimeProfile()]) return;
   if ([self askToRestart:[NSString stringWithFormat:@"Switch to %@?", title]
                  message:@"Unsaved progress will be lost."
-                  action:@"Restart Now"]) {
+                  action:@"Restart"]) {
     [self restartKartPad:nil];
   }
 }
@@ -841,7 +839,7 @@ static NSString *KPGameTitle(NSString *profile);                       // KartPa
 
 - (void)useOriginalGame:(id)sender {
   (void)sender;
-  [self selectRuntimeProfile:kKartPadBaseProfile title:@"Original Mario Kart Wii"];
+  [self selectRuntimeProfile:kKartPadBaseProfile title:@"Mario Kart Wii"];
 }
 
 - (void)useRetroRewind:(id)sender {
@@ -878,34 +876,55 @@ static NSString *KPGameTitle(NSString *profile);                       // KartPa
   [self.miis show];
 }
 
-- (NSMenuItem *)playerMenuItem:(NSString *)title action:(SEL)action enabled:(BOOL)enabled {
-  NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:title action:action keyEquivalent:@""];
-  item.target = self;
-  item.enabled = enabled;
-  return item;
+// The Game menu shows Restart to Apply (and the separator below it) while a change waits for a
+// restart, as HOME does: a setting, the next game, or Mii changes.
+- (void)menuNeedsUpdate:(NSMenu *)menu {
+  if (![menu.title isEqualToString:@"Game"]) return;
+  const BOOL waiting = self.restartPending || KartPadHasPendingMiiChanges();
+  self.restartItem.hidden = !waiting;
+  NSInteger index = [menu indexOfItem:self.restartItem];
+  if (index >= 0 && index + 1 < menu.numberOfItems) [menu itemAtIndex:index + 1].hidden = !waiting;
 }
 
-// Rebuilt each time the Player menu opens so the pending-restart state is
-// current. Everything else about Miis happens in the Miis window. The Game
-// menu shows Apply Changes while a change waits for one.
-- (void)menuNeedsUpdate:(NSMenu *)menu {
-  if ([menu.title isEqualToString:@"Game"]) {
-    self.restartItem.hidden = !self.restartPending;
-    NSInteger index = [menu indexOfItem:self.restartItem];
-    if (index >= 0 && index + 1 < menu.numberOfItems) [menu itemAtIndex:index + 1].hidden = !self.restartPending;
-    return;
+// The Edit menu works on text fields. A shortcut of its own that it can't act on there goes on to
+// the window as a key press, as with no Edit menu: the Mii editor has its own ⌘Z, and the game
+// hears every key before AppKit sees it anyway. (A disabled menu item would swallow the key.)
+- (BOOL)menuHasKeyEquivalent:(NSMenu *)menu forEvent:(NSEvent *)event target:(id *)target action:(SEL *)action {
+  if (![menu.title isEqualToString:@"Edit"]) return NO;
+  const NSEventModifierFlags chord = event.modifierFlags & (NSEventModifierFlagCommand | NSEventModifierFlagShift |
+                                                            NSEventModifierFlagOption | NSEventModifierFlagControl);
+  NSString *key = event.charactersIgnoringModifiers.lowercaseString;
+  for (NSMenuItem *item in menu.itemArray) {
+    if (item.keyEquivalent.length == 0 || item.keyEquivalentModifierMask != chord || ![item.keyEquivalent isEqualToString:key]) continue;
+    NSWindow *window = event.window ?: NSApp.keyWindow;
+    id receiver = [NSApp targetForAction:item.action to:nil from:item];
+    BOOL enabled = receiver != nil;
+    if (enabled && [receiver respondsToSelector:@selector(validateMenuItem:)]) enabled = [receiver validateMenuItem:item];
+    else if (enabled && [receiver respondsToSelector:@selector(validateUserInterfaceItem:)])
+      enabled = [receiver validateUserInterfaceItem:item];
+    // Undo and Redo are for typing; elsewhere they're the window's (the Mii editor's history).
+    if ((item.action == @selector(undo:) || item.action == @selector(redo:)) && ![window.firstResponder isKindOfClass:NSText.class])
+      enabled = NO;
+    if (enabled) {
+      *target = receiver;
+      *action = item.action;
+    } else {
+      [window.firstResponder keyDown:event];
+      *target = self;
+      *action = @selector(ignoreKeyEquivalent:);
+    }
+    return YES;
   }
-  if (![menu.title isEqualToString:@"Player"]) return;
-  [menu removeAllItems];
-  if (KartPadHasPendingMiiChanges()) {
-    [menu addItem:[self playerMenuItem:@"Apply Mii Changes"
-                                action:@selector(restartKartPad:) enabled:YES]];
-    [menu addItem:NSMenuItem.separatorItem];
-  }
-  NSMenuItem *miis = [self playerMenuItem:@"Miis…" action:@selector(showMiis:) enabled:YES];
-  miis.keyEquivalent = @"m";
-  miis.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
-  [menu addItem:miis];
+  return NO;
+}
+
+- (void)ignoreKeyEquivalent:(id)sender { (void)sender; }
+
+// Window → Close: Settings, Keyboard Controls, Miis, pairing and the other panels. Not the game
+// window, which closing would quit (⌘Q asks first).
+- (void)closeKeyWindow:(id)sender {
+  NSWindow *window = NSApp.keyWindow;
+  if (window != nil && window != KPGameWindow()) [window performClose:sender];
 }
 
 // Full Screen (⌃⌘F) is the Display mode setting: windowed, or back to the fullscreen mode last
@@ -964,33 +983,25 @@ static NSString *KPGameTitle(NSString *profile);                       // KartPa
     item.title = aurora_get_display_mode() == AURORA_DISPLAY_MODE_WINDOWED
         ? @"Enter Full Screen" : @"Exit Full Screen";
   }
+  if (item.action == @selector(closeKeyWindow:)) {
+    NSWindow *window = NSApp.keyWindow;
+    return window != nil && window != KPGameWindow() && (window.styleMask & NSWindowStyleMaskClosable);
+  }
   return YES;
 }
 
-- (void)toggleExperimentalWiimote:(NSMenuItem *)sender {
-  NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
-  const BOOL enabled = ![defaults boolForKey:KartPadExperimentalWiimoteDefaultsKey];
-  if (enabled) {
-    NSAlert *warning = [NSAlert new];
-    warning.messageText = @"Enable Experimental Wii Remote Support?";
-    warning.informativeText =
-        @"For original Wii Remotes with a Nunchuk. It can stop working after a macOS update and may conflict with a DolphinBar.";
-    [warning addButtonWithTitle:@"Enable and Pair"];
-    [warning addButtonWithTitle:@"Cancel"];
-    if ([warning runModal] != NSAlertFirstButtonReturn) return;
-  }
-  [defaults setBool:enabled forKey:KartPadExperimentalWiimoteDefaultsKey];
-  sender.state = enabled ? NSControlStateValueOn : NSControlStateValueOff;
+// Wii Remote support: SDL's Wii Remote driver from launch, so paired remotes connect. Pairing from
+// the menus turns it on; Settings → Advanced (the classic window) turns it off again.
+- (void)setWiimoteSupport:(BOOL)on {
+  [NSUserDefaults.standardUserDefaults setBool:on forKey:KartPadExperimentalWiimoteDefaultsKey];
   KartPadApplyExperimentalWiimotePreference();
-  if (enabled) KartPadShowWiimotePairing();
+  self.wiimoteSwitch.state = on ? NSControlStateValueOn : NSControlStateValueOff;
 }
 
 - (void)pairWiimote:(id)sender {
   (void)sender;
+  [self setWiimoteSupport:YES];
   if (KPShowScreen(@"pair-wii")) return;
-  [NSUserDefaults.standardUserDefaults setBool:YES
-      forKey:KartPadExperimentalWiimoteDefaultsKey];
-  KartPadApplyExperimentalWiimotePreference();
   KartPadShowWiimotePairing();
 }
 
@@ -1004,8 +1015,8 @@ static NSString *KPGameTitle(NSString *profile);                       // KartPa
 - (void)showMultiplayer:(id)sender {
   (void)sender;
   NSAlert *alert = [NSAlert new];
-  alert.messageText = @"KartPad Multiplayer";
-  alert.informativeText = @"Local: choose Multiplayer in the game, then press A on each controller.\n\nOnline with friends: everyone needs the same game and server. Swap friend codes in Nintendo WFC → Friends. Original Mario Kart Wii needs a private Wii server.";
+  alert.messageText = @"Multiplayer";
+  alert.informativeText = @"Local: choose Multiplayer in the game, then press A on each controller.\n\nOnline with friends: everyone needs the same game and server. Swap friend codes in Nintendo WFC → Friends. Mario Kart Wii needs a private Wii server.";
   [alert addButtonWithTitle:@"Done"];
   [alert addButtonWithTitle:@"Private Wii Server…"];
   if ([alert runModal] == NSAlertSecondButtonReturn) [self showPrivateServer:sender];
@@ -1015,19 +1026,19 @@ static NSString *KPGameTitle(NSString *profile);                       // KartPa
   (void)sender;
   NSAlert *alert = [NSAlert new];
   alert.messageText = @"Private Wii Server";
-  alert.informativeText = @"Enter the server's hostname or IPv4 address. Everyone you play with needs the same server. Wii online traffic isn't encrypted. Applies after a restart.";
+  alert.informativeText = @"Enter the server’s hostname or IPv4 address. Everyone you play with needs the same server. Wii online traffic isn’t encrypted.";
   NSTextField *field = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 340, 26)];
   field.stringValue = KartPadPrivateServerHost();
   field.placeholderString = @"Server hostname or IPv4 address";
   field.accessibilityLabel = @"Private Wii server address";
   alert.accessoryView = field;
-  [alert addButtonWithTitle:@"Save for Next Launch"];
+  [alert addButtonWithTitle:@"Save"];
+  [alert addButtonWithTitle:@"Use Default"];
   [alert addButtonWithTitle:@"Cancel"];
-  [alert addButtonWithTitle:@"Use Default Service Next Launch"];
   [alert.window setInitialFirstResponder:field];
   NSModalResponse response = [alert runModal];
-  if (response == NSAlertSecondButtonReturn) return;
-  if (response == NSAlertThirdButtonReturn) {
+  if (response == NSAlertThirdButtonReturn) return;
+  if (response == NSAlertSecondButtonReturn) {
     [NSUserDefaults.standardUserDefaults removeObjectForKey:@"KartPadPrivateWfcHost"];
   } else {
     NSString *host = [field.stringValue stringByTrimmingCharactersInSet:
@@ -1042,7 +1053,7 @@ static NSString *KPGameTitle(NSString *profile);                       // KartPa
     [NSUserDefaults.standardUserDefaults setObject:host forKey:@"KartPadPrivateWfcHost"];
   }
   [self offerRestart:@"Online Service Saved"
-             message:@"Applies after a restart."
+             message:@"Restart KartPad to use it."
               reason:@"online-service"];
 }
 
@@ -1054,7 +1065,7 @@ static NSString *KPGameTitle(NSString *profile);                       // KartPa
                   styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable)
                     backing:NSBackingStoreBuffered
                       defer:NO];
-    self.controlsPanel.title = @"KartPad Controls";
+    self.controlsPanel.title = @"Keyboard Controls";
     self.controlsPanel.releasedWhenClosed = NO;
   }
   {
@@ -1071,6 +1082,7 @@ static NSString *KPGameTitle(NSString *profile);                       // KartPa
       @[@"Classic ZL / ZR", @"Z / V"],
       @[@"Settings (also in fullscreen)", @"⌘, or F10 / Fn–F10"],
       @[@"Full screen", @"⌃⌘F or ⌥Return"],
+      @[@"HOME", @"esc"],
       @[@"HOME from a controller", @"HOME, or hold Menu"],
     ];
     NSMutableArray<NSView *> *rows = [NSMutableArray array];
@@ -1139,16 +1151,6 @@ static NSString *KPGameTitle(NSString *profile);                       // KartPa
   [NSWorkspace.sharedWorkspace openURL:url];
 }
 
-- (void)showCache:(id)sender {
-  (void)sender;
-  NSURL *url = CacheURL();
-  [NSFileManager.defaultManager createDirectoryAtURL:url
-                         withIntermediateDirectories:YES
-                                          attributes:nil
-                                               error:nil];
-  [NSWorkspace.sharedWorkspace openURL:url];
-}
-
 - (void)reportProblem:(id)sender {
   (void)sender;
   NSBundle *bundle = NSBundle.mainBundle;
@@ -1172,23 +1174,24 @@ static NSString *KPGameTitle(NSString *profile);                       // KartPa
   choice.informativeText = @"Not sure? Choose KartPad.";
   [choice addButtonWithTitle:@"KartPad"];
   [choice addButtonWithTitle:@"WiiCompiled"];
-  [choice addButtonWithTitle:@"Cancel"];
   [choice addButtonWithTitle:@"Search Both Trackers"];
+  [choice addButtonWithTitle:@"Cancel"];
   NSModalResponse response = [choice runModal];
-  if (response == NSAlertThirdButtonReturn) return;
+  if (response == NSAlertFirstButtonReturn + 3) return;
   if (response == NSAlertSecondButtonReturn) {
     draft = [NSURLComponents componentsWithString:@"https://github.com/patchzyy/Wiicompiled/issues/new/choose"];
   }
-  if (response == NSAlertFirstButtonReturn + 3) {
+  if (response == NSAlertThirdButtonReturn) {
     draft = [NSURLComponents componentsWithString:@"https://github.com/search?q=is%3Aissue+repo%3Achrissotraidis%2Fkartpad+repo%3Apatchzyy%2FWiicompiled&type=issues"];
   }
   if (draft.URL != nil) [NSWorkspace.sharedWorkspace openURL:draft.URL];
 }
 
-- (void)showReportingGuide:(id)sender {
+// Help → Known Issues (it links the reporting guide).
+- (void)showKnownIssues:(id)sender {
   (void)sender;
   [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:
-      @"https://github.com/chrissotraidis/kartpad/blob/main/docs/REPORTING.md"]];
+      @"https://github.com/chrissotraidis/kartpad/blob/main/docs/KNOWN-ISSUES.md"]];
 }
 
 - (void)showWiiCompiled:(id)sender {
@@ -1211,7 +1214,7 @@ static NSString *KPGameTitle(NSString *profile);                       // KartPa
                                 encoding:NSUTF8StringEncoding
                                    error:&error]) {
       NSAlert *alert = [NSAlert new];
-      alert.messageText = @"Diagnostics Could Not Be Saved";
+      alert.messageText = @"Diagnostics Couldn’t Be Saved";
       NSString *description = error.localizedDescription;
       alert.informativeText =
           description.length == 0 ? @"Unknown write error." : description;
@@ -1287,13 +1290,13 @@ static bool KPShowScreen(NSString *which) {
   (void)sender;
   if (KPShowScreen(@"ghosts")) return;
   [self showSimpleAlert:@"Start the Game First"
-                message:@"Ghosts open once Mario Kart is running. Then choose Data → Time Trial Ghosts… again."];
+                message:@"Ghosts open once the game is running. Then choose Data → Time Trial Ghosts… again."];
 }
 - (void)addPhoneController:(id)sender {
   (void)sender;
   if (KPShowScreen(@"pair-phone")) return;
   [self showSimpleAlert:@"Start the Game First"
-                message:@"Phones join once Mario Kart is running. Then choose Controls → Add Phone Controller… again."];
+                message:@"Phones join once the game is running. Then choose Controls → Add Phone Controller… again."];
 }
 @end
 
@@ -1471,16 +1474,56 @@ static void InstallMenu() {
     }
   }
 
+  // The standard Edit menu, for text fields (the Private Wii Server address, Mii and license names).
+  // Its shortcuts don't take keys from the game: see menuHasKeyEquivalent:.
+  bool hasEditMenu = false;
+  for (NSMenuItem *item in mainMenu.itemArray) hasEditMenu |= [item.submenu.title isEqualToString:@"Edit"];
+  if (!hasEditMenu) {
+    NSMenu *editMenu = [[NSMenu alloc] initWithTitle:@"Edit"];
+    editMenu.delegate = Controller();
+    [editMenu addItemWithTitle:@"Undo" action:@selector(undo:) keyEquivalent:@"z"];
+    NSMenuItem *redo = [editMenu addItemWithTitle:@"Redo" action:@selector(redo:) keyEquivalent:@"z"];
+    redo.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    [editMenu addItem:NSMenuItem.separatorItem];
+    [editMenu addItemWithTitle:@"Cut" action:@selector(cut:) keyEquivalent:@"x"];
+    [editMenu addItemWithTitle:@"Copy" action:@selector(copy:) keyEquivalent:@"c"];
+    [editMenu addItemWithTitle:@"Paste" action:@selector(paste:) keyEquivalent:@"v"];
+    [editMenu addItemWithTitle:@"Select All" action:@selector(selectAll:) keyEquivalent:@"a"];
+    NSMenuItem *editItem = [[NSMenuItem alloc] initWithTitle:@"Edit" action:nil keyEquivalent:@""];
+    editItem.submenu = editMenu;
+    [mainMenu insertItem:editItem atIndex:std::min<NSInteger>(1, mainMenu.numberOfItems)];
+  }
+
   // SDL makes a Window menu only when it creates the app itself; KartPad creates the app first (to
-  // take the focus at launch), so it makes its own: Minimize, Zoom and the window list.
+  // take the focus at launch), so it makes its own: Close, Minimize, Zoom, Full Screen and the
+  // window list.
   if (NSApp.windowsMenu == nil) {
     NSMenu *windowMenu = [[NSMenu alloc] initWithTitle:@"Window"];
+    [windowMenu addItemWithTitle:@"Close" action:@selector(performClose:) keyEquivalent:@"w"];
     [windowMenu addItemWithTitle:@"Minimize" action:@selector(performMiniaturize:) keyEquivalent:@"m"];
     [windowMenu addItemWithTitle:@"Zoom" action:@selector(performZoom:) keyEquivalent:@""];
+    [windowMenu addItem:NSMenuItem.separatorItem];
+    NSMenuItem *fullScreen = [windowMenu addItemWithTitle:@"Enter Full Screen" action:@selector(toggleFullScreen:)
+                                            keyEquivalent:@"f"];
+    fullScreen.keyEquivalentModifierMask = NSEventModifierFlagControl | NSEventModifierFlagCommand;
     NSMenuItem *windowItem = [[NSMenuItem alloc] initWithTitle:@"Window" action:nil keyEquivalent:@""];
     windowItem.submenu = windowMenu;
     [mainMenu addItem:windowItem];
     NSApp.windowsMenu = windowMenu;
+  }
+  // Close goes through KartPad, which leaves the game window alone. SDL's Toggle Full Screen
+  // (⌃⌘F) is macOS full screen, which the Display mode setting doesn't follow: it goes through
+  // that setting instead.
+  for (NSMenuItem *menu in mainMenu.itemArray) {
+    for (NSMenuItem *item in menu.submenu.itemArray) {
+      if (item.action == @selector(performClose:)) {
+        item.target = Controller();
+        item.action = @selector(closeKeyWindow:);
+      } else if (item.action == @selector(toggleFullScreen:)) {
+        item.target = Controller();
+        item.action = @selector(toggleGameFullScreen:);
+      }
+    }
   }
 
   NSInteger productMenuIndex = mainMenu.numberOfItems;
@@ -1495,14 +1538,16 @@ static void InstallMenu() {
   gameMenuItem.tag = kKartPadMenuTag;
   NSMenu *gameMenu = [[NSMenu alloc] initWithTitle:@"Game"];
   gameMenu.delegate = Controller();
-  // HOME: everything players need, over the game. Escape opens it from the game window (the key
-  // monitor), not as a menu shortcut, so Escape keeps its meaning in the Mii editor and text fields.
-  NSMenuItem *home = [[NSMenuItem alloc] initWithTitle:@"HOME (esc)" action:@selector(openHome:) keyEquivalent:@""];
+  // HOME: everything players need, over the game. The menu shows esc as its shortcut, but the key
+  // monitor opens it from the game window: AppKit gives a plain esc to the window first, so it
+  // keeps its meaning in the Mii editor, text fields and alerts.
+  NSMenuItem *home = [[NSMenuItem alloc] initWithTitle:@"HOME" action:@selector(openHome:) keyEquivalent:@"\033"];
+  home.keyEquivalentModifierMask = 0;
   home.target = Controller();
   [gameMenu addItem:home];
   [gameMenu addItem:NSMenuItem.separatorItem];
   NSMenuItem *restart = [[NSMenuItem alloc]
-      initWithTitle:@"Apply Changes" action:@selector(restartKartPad:) keyEquivalent:@""];
+      initWithTitle:@"Restart to Apply" action:@selector(restartKartPad:) keyEquivalent:@""];
   restart.target = Controller();
   Controller().restartItem = restart;
   [gameMenu addItem:restart];
@@ -1514,20 +1559,20 @@ static void InstallMenu() {
       : nil;
   if (activeProfile.length == 0) activeProfile = kKartPadBaseProfile;
   NSMenuItem *original = [[NSMenuItem alloc]
-      initWithTitle:@"Original Mario Kart Wii"
-             action:@selector(useOriginalGame:) keyEquivalent:@"1"];
+      initWithTitle:@"Mario Kart Wii"
+             action:@selector(useOriginalGame:) keyEquivalent:@""];
   original.target = Controller();
   original.state = [activeProfile isEqualToString:kKartPadBaseProfile]
       ? NSControlStateValueOn : NSControlStateValueOff;
   [gameMenu addItem:original];
   NSMenuItem *retro = [[NSMenuItem alloc]
       initWithTitle:@"Retro Rewind"
-             action:@selector(useRetroRewind:) keyEquivalent:@"2"];
+             action:@selector(useRetroRewind:) keyEquivalent:@""];
   retro.target = Controller();
   retro.state = [activeProfile isEqualToString:kKartPadRetroProfile]
       ? NSControlStateValueOn : NSControlStateValueOff;
   [gameMenu addItem:retro];
-  // The Retro Rewind pack's own updates (Help → Check for Updates… is KartPad's).
+  // The Retro Rewind pack's own updates.
   if (KPLocalUpdateSettings() != nil) {
     NSMenuItem *updates = [[NSMenuItem alloc] initWithTitle:@"Retro Rewind Updates…"
         action:@selector(showAutomaticUpdates:) keyEquivalent:@""];
@@ -1542,40 +1587,12 @@ static void InstallMenu() {
   }
   [gameMenu addItem:NSMenuItem.separatorItem];
 #endif
-  NSMenuItem *settings = [[NSMenuItem alloc]
-      initWithTitle:@"Game Settings…" action:@selector(openSettings:)
-      keyEquivalent:@""];
-  settings.target = Controller();
-  [gameMenu addItem:settings];
-  // SDL's Window → Toggle Full Screen (⌃⌘F) is macOS full screen, which the Display mode setting
-  // doesn't follow. It goes through that setting instead.
-  bool fullScreenItem = false;
-  for (NSMenuItem *menu in mainMenu.itemArray) {
-    for (NSMenuItem *item in menu.submenu.itemArray) {
-      if (item.action != @selector(toggleFullScreen:)) continue;
-      item.target = Controller();
-      item.action = @selector(toggleGameFullScreen:);
-      fullScreenItem = true;
-    }
-  }
-  if (!fullScreenItem) {
-    NSMenuItem *fullScreen = [[NSMenuItem alloc]
-        initWithTitle:@"Enter Full Screen" action:@selector(toggleGameFullScreen:) keyEquivalent:@"f"];
-    fullScreen.keyEquivalentModifierMask = NSEventModifierFlagControl | NSEventModifierFlagCommand;
-    fullScreen.target = Controller();
-    [gameMenu addItem:fullScreen];
-  }
+  NSMenuItem *miis = [[NSMenuItem alloc] initWithTitle:@"Miis…" action:@selector(showMiis:) keyEquivalent:@"m"];
+  miis.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+  miis.target = Controller();
+  [gameMenu addItem:miis];
   gameMenuItem.submenu = gameMenu;
   [mainMenu insertItem:gameMenuItem atIndex:productMenuIndex++];
-
-  NSMenuItem *playerMenuItem = [[NSMenuItem alloc]
-      initWithTitle:@"Player" action:nil keyEquivalent:@""];
-  NSMenu *playerMenu = [[NSMenu alloc] initWithTitle:@"Player"];
-  playerMenu.autoenablesItems = NO;
-  playerMenu.delegate = Controller();
-  [Controller() menuNeedsUpdate:playerMenu];
-  playerMenuItem.submenu = playerMenu;
-  [mainMenu insertItem:playerMenuItem atIndex:productMenuIndex++];
 
   NSMenuItem *dataMenuItem = [[NSMenuItem alloc]
       initWithTitle:@"Data" action:nil keyEquivalent:@""];
@@ -1599,55 +1616,43 @@ static void InstallMenu() {
   [dataMenu addItem:ghosts];
   [dataMenu addItem:NSMenuItem.separatorItem];
   NSMenuItem *data = [[NSMenuItem alloc]
-      initWithTitle:@"Show KartPad Data"
+      initWithTitle:@"Show KartPad Files"
              action:@selector(showApplicationSupport:) keyEquivalent:@""];
   data.target = Controller();
   [dataMenu addItem:data];
-  NSMenuItem *cache = [[NSMenuItem alloc]
-      initWithTitle:@"Show KartPad Cache"
-             action:@selector(showCache:) keyEquivalent:@""];
-  cache.target = Controller();
-  [dataMenu addItem:cache];
   dataMenuItem.submenu = dataMenu;
   [mainMenu insertItem:dataMenuItem atIndex:productMenuIndex++];
 
+  // Controllers… and Pair Wii Remote… open the Controllers and Connect screens over the game (the
+  // classic Settings window and pairing panel before there's a game window).
   NSMenuItem *controlsMenuItem = [[NSMenuItem alloc]
       initWithTitle:@"Controls" action:nil keyEquivalent:@""];
   NSMenu *controlsMenu = [[NSMenu alloc] initWithTitle:@"Controls"];
-  NSMenuItem *multiplayer = [[NSMenuItem alloc]
-      initWithTitle:@"Multiplayer…" action:@selector(showMultiplayer:) keyEquivalent:@""];
-  multiplayer.target = Controller();
-  [controlsMenu addItem:multiplayer];
-
   NSMenuItem *controllerSettings = [[NSMenuItem alloc]
-      initWithTitle:@"Controller Settings…"
+      initWithTitle:@"Controllers…"
              action:@selector(showControllerSettings:) keyEquivalent:@""];
   controllerSettings.target = Controller();
   [controlsMenu addItem:controllerSettings];
-  NSMenuItem *controls = [[NSMenuItem alloc]
-      initWithTitle:@"Control Reference…" action:@selector(showControls:)
-      keyEquivalent:@"/"];
-  controls.keyEquivalentModifierMask = NSEventModifierFlagCommand;
-  controls.target = Controller();
-  [controlsMenu addItem:controls];
   NSMenuItem *phone = [[NSMenuItem alloc]
       initWithTitle:@"Add Phone Controller…" action:@selector(addPhoneController:) keyEquivalent:@""];
   phone.target = Controller();
   [controlsMenu addItem:phone];
-  [controlsMenu addItem:NSMenuItem.separatorItem];
-  NSMenuItem *experimentalWiimote = [[NSMenuItem alloc]
-      initWithTitle:@"Experimental Wii Remote + Nunchuk"
-             action:@selector(toggleExperimentalWiimote:) keyEquivalent:@""];
-  experimentalWiimote.target = Controller();
-  experimentalWiimote.state = [NSUserDefaults.standardUserDefaults
-      boolForKey:KartPadExperimentalWiimoteDefaultsKey]
-      ? NSControlStateValueOn : NSControlStateValueOff;
-  [controlsMenu addItem:experimentalWiimote];
   NSMenuItem *pairWiimote = [[NSMenuItem alloc]
       initWithTitle:@"Pair Wii Remote…" action:@selector(pairWiimote:)
       keyEquivalent:@""];
   pairWiimote.target = Controller();
   [controlsMenu addItem:pairWiimote];
+  [controlsMenu addItem:NSMenuItem.separatorItem];
+  NSMenuItem *controls = [[NSMenuItem alloc]
+      initWithTitle:@"Keyboard Controls" action:@selector(showControls:)
+      keyEquivalent:@"/"];
+  controls.keyEquivalentModifierMask = NSEventModifierFlagCommand;
+  controls.target = Controller();
+  [controlsMenu addItem:controls];
+  NSMenuItem *multiplayer = [[NSMenuItem alloc]
+      initWithTitle:@"Multiplayer" action:@selector(showMultiplayer:) keyEquivalent:@""];
+  multiplayer.target = Controller();
+  [controlsMenu addItem:multiplayer];
   controlsMenuItem.submenu = controlsMenu;
   [mainMenu insertItem:controlsMenuItem atIndex:productMenuIndex];
 
@@ -1665,8 +1670,8 @@ static void InstallMenu() {
   NSMenuItem *report = [helpMenu addItemWithTitle:@"Report a Problem…"
       action:@selector(reportProblem:) keyEquivalent:@""];
   report.target = Controller();
-  NSMenuItem *guide = [helpMenu addItemWithTitle:@"Reporting and Existing Issues"
-      action:@selector(showReportingGuide:) keyEquivalent:@""];
+  NSMenuItem *guide = [helpMenu addItemWithTitle:@"Known Issues"
+      action:@selector(showKnownIssues:) keyEquivalent:@""];
   guide.target = Controller();
   [helpMenu addItem:NSMenuItem.separatorItem];
   NSMenuItem *upstream = [helpMenu addItemWithTitle:@"Built on WiiCompiled"
@@ -1872,8 +1877,8 @@ bool KartPadMacShellPrepareGameData(void) {
       }
 
       NSAlert *writeError = [NSAlert new];
-      writeError.messageText = @"Game Data Could Not Be Saved";
-      writeError.informativeText = @"KartPad could not update Config.toml.";
+      writeError.messageText = @"Game Data Couldn’t Be Saved";
+      writeError.informativeText = @"KartPad couldn’t update Config.toml.";
       [writeError runModal];
     }
   }

@@ -123,6 +123,9 @@ struct KPUIState {
 - (void)willDisappear;
 - (void)tick;
 - (void)relayout;
+// Where this screen's toasts may go first (top-left corners, in design points), before the overlay's
+// usual places. A place is used only while no control lies under it.
+- (NSArray<NSValue *> *)toastSpots;
 @end
 
 #pragma mark Overlay controller
@@ -138,6 +141,11 @@ struct KPUIState {
 // A controller's toast: its player (-1 while it has none) and a drawing of the controller.
 @property(nonatomic) int player;
 @property(nonatomic, copy) void (^art)(CGContextRef c, CGRect r);
+// The screen that was showing when it came (nil over the game, or for a controller's): it goes when
+// that screen does.
+@property(nonatomic, weak) KPScreen *owner;
+@property(nonatomic) BOOL owned, started, leaving;
+@property(nonatomic) NSTimeInterval seconds;
 @end
 
 @interface KPOverlayController : NSObject
@@ -186,6 +194,9 @@ struct KPUIState {
          icon:(void (^)(CGContextRef c, CGRect r))icon image:(NSImage *)image seconds:(NSTimeInterval)seconds;
 - (void)toastController:(NSString *)heading detail:(NSString *)detail player:(int)player image:(NSImage *)image
                    icon:(void (^)(CGContextRef c, CGRect r))icon art:(void (^)(CGContextRef c, CGRect r))art;
+// Takes away the toasts raised on screen (and any whose screen has gone).
+- (void)dismissToastsFrom:(KPScreen *)screen;
+- (void)layoutToasts:(BOOL)animated;
 - (void)relayout;
 @end
 static KPOverlayController *KPOverlay() { return [KPOverlayController shared]; }
@@ -563,6 +574,7 @@ static void KPDrawScreenBackdrop(NSView *view, CGContextRef c, CGSize size) {
 - (void)didAppear {}
 - (void)willDisappear {}
 - (void)tick {}
+- (NSArray<NSValue *> *)toastSpots { return @[]; }
 - (void)drawDesign:(CGContextRef)c size:(CGSize)size {
   if (!self.solid) return;
   KPDrawScreenBackdrop(self, c, size);
@@ -831,6 +843,7 @@ static KPUIButton *KPUINearest(NSArray<KPUIButton *> *candidates, KPUIButton *fr
   [screen relayout];
   [screen willAppear];
   [self showHost];
+  [self dismissStaleToasts];
   [self layoutToasts:NO];
   KPUIButton *focus = screen.focus.enabled && !screen.focus.hidden ? screen.focus : [screen initialFocus];
   screen.focus = nil;
@@ -881,6 +894,8 @@ static KPUIButton *KPUINearest(NSArray<KPUIButton *> *candidates, KPUIButton *fr
   [back relayout];
   [back willAppear];
   [self showHost];
+  [self dismissStaleToasts];
+  [self layoutToasts:NO];
   [self fadeScrim:!back.solid];
   [self focus:back.focus.enabled && !back.focus.hidden ? back.focus : [back initialFocus] sound:NO];
   [self animateIn:back];
@@ -918,6 +933,7 @@ static KPUIButton *KPUINearest(NSArray<KPUIButton *> *candidates, KPUIButton *fr
   [self removeKeyMonitor];
   [self.ticker invalidate];
   self.ticker = nil;
+  [self dismissStaleToasts];
   [self layoutToasts:YES];
 }
 
@@ -1077,8 +1093,12 @@ static KPUIButton *KPUINearest(NSArray<KPUIButton *> *candidates, KPUIButton *fr
   [NSRunLoop.mainRunLoop addTimer:self.ticker forMode:NSRunLoopCommonModes];
 }
 
-// Toasts stack down from the top right, in front of the game and any screen (below its header, so
-// they don't cover its buttons), and never take the focus or a click.
+// Toasts come in front of the game and any screen, and never take the focus or a click. Over the
+// game they stack down from the top right. Over a screen they go where no control is: the screen's
+// own places first (toastSpots), then the top centre, the bottom centre above the hints, and down the
+// right below the header. One with nowhere free waits for room, its time starting once it shows. A
+// toast raised on a screen goes when that screen goes (or, for Settings, changes category).
+static constexpr CGFloat KPToastWidth = 420, KPToastHeight = 92;
 - (void)toast:(NSString *)heading detail:(NSString *)detail stripe:(unsigned)stripe
          icon:(void (^)(CGContextRef c, CGRect r))icon image:(NSImage *)image {
   [self toast:heading detail:detail stripe:stripe icon:icon image:image seconds:3.4];
@@ -1091,6 +1111,8 @@ static KPUIButton *KPUINearest(NSArray<KPUIButton *> *candidates, KPUIButton *fr
   toast.stripe = stripe;
   toast.icon = icon;
   toast.image = image;
+  toast.owner = self.top;
+  toast.owned = self.top != nil;
   [self show:toast seconds:seconds];
 }
 - (void)toastController:(NSString *)heading detail:(NSString *)detail player:(int)player image:(NSImage *)image
@@ -1106,14 +1128,21 @@ static KPUIButton *KPUINearest(NSArray<KPUIButton *> *candidates, KPUIButton *fr
 }
 - (void)show:(KPToastView *)toast seconds:(NSTimeInterval)seconds {
   if (![self attach]) return;
+  toast.seconds = seconds;
   [self.toasts addObject:toast];
-  while (self.toasts.count > 3) {
+  while (self.toasts.count > 4) {
     [self.toasts.firstObject removeFromSuperview];
     [self.toasts removeObjectAtIndex:0];
   }
   self.host.hidden = NO;
+  toast.hidden = YES;
   [self.host addSubview:toast positioned:NSWindowAbove relativeTo:nil];
-  [self layoutToasts:NO];
+  [self layoutToasts:YES];
+}
+// A toast's first showing: it slides in and its time starts.
+- (void)start:(KPToastView *)toast {
+  toast.started = YES;
+  toast.hidden = NO;
   toast.alphaValue = 0;
   const CGFloat slide = KPUIReduceMotion() ? 0 : 40 * self.scale;
   NSRect end = toast.frame;
@@ -1125,31 +1154,106 @@ static KPUIButton *KPUINearest(NSArray<KPUIButton *> *candidates, KPUIButton *fr
     toast.animator.frame = end;
   }];
   __weak KPToastView *weakToast = toast;
-  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(seconds * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-    KPToastView *gone = weakToast;
-    if (gone == nil) return;
-    [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context) {
-      context.duration = 0.25;
-      gone.animator.alphaValue = 0;
-    } completionHandler:^{
-      [gone removeFromSuperview];
-      [self.toasts removeObject:gone];
-      [self layoutToasts:YES];
-      if (!self.active && self.toasts.count == 0) self.host.hidden = YES;
-    }];
+  __weak KPOverlayController *weakSelf = self;
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(toast.seconds * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    if (KPToastView *gone = weakToast) [weakSelf dismissToast:gone];
   });
+}
+- (void)dismissToast:(KPToastView *)toast {
+  if (toast.leaving || ![self.toasts containsObject:toast]) return;
+  toast.leaving = YES;
+  [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context) {
+    context.duration = toast.started ? 0.25 : 0;
+    toast.animator.alphaValue = 0;
+  } completionHandler:^{
+    [toast removeFromSuperview];
+    [self.toasts removeObject:toast];
+    [self layoutToasts:YES];
+    if (!self.active && self.toasts.count == 0) self.host.hidden = YES;
+  }];
+}
+// Toasts raised on a screen that has gone, or isn't on top any more, or on screen itself.
+- (void)dismissToastsFrom:(KPScreen *)screen {
+  for (KPToastView *toast in self.toasts.copy)
+    if (toast.owned && (toast.owner == nil || toast.owner == screen || toast.owner != self.top)) [self dismissToast:toast];
+}
+- (void)dismissStaleToasts { [self dismissToastsFrom:nil]; }
+
+// The controls on a screen, in design points, for toasts to keep off.
+static void KPCollectControls(NSView *view, NSView *screen, CGFloat scale, std::vector<CGRect> &out) {
+  for (NSView *child in view.subviews) {
+    if (child.hidden) continue;
+    if ([child isKindOfClass:KPUIButton.class]) {
+      // The face, without the margin its focus glow takes, and a little room round it.
+      const NSRect r = [child convertRect:child.bounds toView:screen];
+      const CGFloat margin = ((KPUIButton *)child).margin - 3;
+      out.push_back(CGRectInset(CGRectMake(r.origin.x / scale, r.origin.y / scale, r.size.width / scale, r.size.height / scale),
+                                margin, margin));
+    }
+    KPCollectControls(child, screen, scale, out);
+  }
 }
 
 - (void)layoutToasts:(BOOL)animated {
-  const CGFloat s = self.scale, width = 420, height = 92;
-  CGFloat y = self.active ? std::round((self.stage.height - KPUIDesignHeight) / 2) + 112 : 18;
-  for (KPToastView *toast in self.toasts.reverseObjectEnumerator) {
-    const NSRect frame = NSMakeRect(std::round((self.stage.width - width - 18) * s), std::round(y * s),
-                                    std::round(width * s), std::round(height * s));
+  const CGFloat s = self.scale, width = KPToastWidth, height = KPToastHeight;
+  KPScreen *screen = self.top;
+  std::vector<CGPoint> spots;
+  std::vector<CGRect> controls;
+  if (screen == nil) {
+    for (int i = 0; i < 3; ++i) spots.push_back(CGPointMake(self.stage.width - width - 18, 18 + i * (height - 4)));
+  } else {
+    const CGRect safe = CGRectMake(std::round((self.stage.width - KPUIDesignWidth) / 2),
+                                   std::round((self.stage.height - KPUIDesignHeight) / 2), KPUIDesignWidth, KPUIDesignHeight);
+    for (NSValue *spot in screen.toastSpots) spots.push_back(spot.pointValue);
+    const CGFloat mid = std::round(CGRectGetMidX(safe) - width / 2);
+    spots.push_back(CGPointMake(mid, safe.origin.y + 6));
+    spots.push_back(CGPointMake(mid, safe.origin.y + 588));
+    for (int i = 0; i < 3; ++i) spots.push_back(CGPointMake(CGRectGetMaxX(safe) - width - 18, safe.origin.y + 112 + i * (height - 4)));
+    KPCollectControls(screen, screen, s, controls);
+  }
+  // The card a toast draws, inside its frame (KPToastView), is what mustn't cover a control.
+  auto card = [&](CGPoint p) { return CGRectMake(p.x + 6, p.y + 4, width - 12, height - 12); };
+  std::vector<CGRect> taken;
+  auto isFree = [&](CGPoint p) {
+    const CGRect r = card(p);
+    for (const CGRect &control : controls)
+      if (CGRectIntersectsRect(r, control)) return false;
+    for (const CGRect &other : taken)
+      if (CGRectIntersectsRect(r, CGRectInset(other, 2, 2))) return false;
+    return true;
+  };
+  // Oldest first, so a toast keeps its place as more come.
+  for (KPToastView *toast in self.toasts.copy) {
+    if (toast.leaving) continue;
+    bool placed = false;
+    CGPoint at = CGPointZero;
+    for (const CGPoint &spot : spots)
+      if (isFree(spot)) {
+        at = spot;
+        placed = true;
+        break;
+      }
+    // Nowhere free on this screen at all: the first place rather than never.
+    if (!placed && taken.empty() && !spots.empty()) {
+      at = spots.front();
+      placed = true;
+    }
+    if (!placed) {
+      if (!toast.started) toast.hidden = YES;
+      else [self dismissToast:toast];  // a screen's control came up under it
+      continue;
+    }
+    taken.push_back(card(at));
+    const NSRect frame = NSMakeRect(std::round(at.x * s), std::round(at.y * s), std::round(width * s), std::round(height * s));
     toast.scale = s;
-    if (animated) toast.animator.frame = frame;
-    else toast.frame = frame;
-    y += height - 4;
+    if (!toast.started) {
+      toast.frame = frame;
+      [self start:toast];
+    } else if (animated) {
+      toast.animator.frame = frame;
+    } else {
+      toast.frame = frame;
+    }
   }
 }
 

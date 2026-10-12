@@ -31,9 +31,11 @@ static NSString *KPLicensePending(NSDictionary *license){
 }
 static UTType *KPMiiFileType(){return [UTType typeWithFilenameExtension:@"mii" conformingToType:UTTypeData]?:UTTypeData;}
 
-// The well stays light in dark mode, like the editor's artwork tiles, so dark hair stays visible.
+// The well follows the theme. In dark mode it is a lighter graphite than the tile, so black and
+// dark brown hair still stand out against it.
+static unsigned KPPortraitWell(){return KPP==&KPDarkPalette?0x48515a:KPLightPalette.well;}
 static void KPDrawPortrait(CGContextRef c,CGRect well,NSDictionary *record){
-    KPFill(c,well,KPLightPalette.well,well.size.width*.08);
+    KPFill(c,well,KPPortraitWell(),well.size.width*.08);
     if(KPMiiImage *image=[KPMiiPortraits() objectForKey:record[@"mii"]]){
         KPDrawImage(image,CGRectInset(well,well.size.width*.06,well.size.height*.06));return;
     }
@@ -44,6 +46,29 @@ static void KPDrawPortrait(CGContextRef c,CGRect well,NSDictionary *record){
     KPFill(c,head,hex,s*.2,.45);KPFill(c,body,hex,s*.1,.3);
     // An outline keeps white and light favorite colors visible on the light well.
     KPStroke(c,head,0x000000,1,s*.2,.12);KPStroke(c,body,0x000000,1,s*.1,.1);
+}
+
+// Pills like the other KartPad screens' (KartPadHomeScreen.inc.mm KPDrawPill): a glyph and a word
+// centred on a button face.
+enum class KPMiiPillGlyph{None,Check,Plus};
+static void KPMiiDrawPill(CGContextRef c,CGRect r,KPStyle style,KPMiiPillGlyph glyph,NSString *title,CGFloat size,
+    BOOL enabled,BOOL pressed,BOOL hovered){
+    KPButtonFace(c,r,style,NO,enabled,pressed,hovered);
+    CGContextSaveGState(c);if(!enabled)CGContextSetAlpha(c,.42);
+    const BOOL primary=style==KPStyle::Primary;const unsigned ink=primary?0xffffff:KPP->text,mark=primary?0xffffff:KPP->accentBottom;
+    const CGFloat dy=pressed?2:0,mid=CGRectGetMidY(r)+dy;
+    const CGFloat icon=glyph==KPMiiPillGlyph::None?0:std::min(std::round(size*1.43),r.size.height-26);
+    const CGFloat gap=icon>0?std::round(size*.48):0,textW=std::ceil(KPTextSize(title,size,NSFontWeightSemibold).width);
+    const CGFloat width=std::min(r.size.width-16,icon+gap+textW),x=std::round(CGRectGetMidX(r)-width/2);
+    if(glyph==KPMiiPillGlyph::Check)KPControlIcon(c,CGRectMake(x,mid-icon/2-1,icon,icon),KPGlyph::Check,0,mark);
+    else if(glyph==KPMiiPillGlyph::Plus){
+        CGContextSaveGState(c);CGContextTranslateCTM(c,x,mid-icon/2-1);CGContextScaleCTM(c,icon/40,icon/40);
+        KPSetInk(c,mark);CGContextSetLineWidth(c,4.2);CGContextSetLineCap(c,kCGLineCapRound);
+        KPLine(c,20,7,20,33);KPLine(c,7,20,33,20);CGContextRestoreGState(c);
+    }
+    KPTextWeight(title,CGRectMake(x+icon+gap,mid-size*.71,width-icon-gap+4,size*1.43),size,ink,NSFontWeightSemibold,
+        icon>0?NSTextAlignmentLeft:NSTextAlignmentCenter);
+    CGContextRestoreGState(c);
 }
 
 // One entry of a menu, action sheet, context menu or VoiceOver action list. A nil title is a separator.
@@ -156,7 +181,15 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
 @property(nonatomic,copy) NSString *dragName;
 @property(nonatomic) BOOL pointerOver,pressing;
 @property(nonatomic) NSUInteger slot;
+// Room around the face for the Mac's focus glow (KPMiiRing); the face block gets the rect inside it.
+@property(nonatomic) CGFloat margin;
 @end
+// The margin Mac controls leave for the focus glow, as on KartPad's other screens. iPhone and iPad draw none.
+#if TARGET_OS_OSX
+static constexpr CGFloat KPMiiRing=8;
+#else
+static constexpr CGFloat KPMiiRing=0;
+#endif
 @implementation KPMiiBrowserButton{
 #if TARGET_OS_OSX
     NSPoint _down;BOOL _dragging;NSData *_promised;
@@ -172,10 +205,29 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
 - (BOOL)becomeFirstResponder{self.needsDisplay=YES;return [super becomeFirstResponder];}
 - (BOOL)resignFirstResponder{self.needsDisplay=YES;return [super resignFirstResponder];}
 - (void)setEnabled:(BOOL)enabled{[super setEnabled:enabled];self.needsDisplay=YES;[self.window invalidateCursorRectsForView:self];}
+- (CGRect)face{return CGRectInset(self.bounds,self.margin,self.margin);}
+// The focus is a Wii-blue glow around the face, as on KartPad's other screens (KPUIButton).
 - (void)drawRect:(NSRect)rect{
-    CGContextRef c=NSGraphicsContext.currentContext.CGContext;KPUsePalette(self);
-    if(self.paint)self.paint(c,self.bounds,self.pressing,self.pointerOver&&self.enabled);
-    if(self.window.firstResponder==self&&self.window.isKeyWindow)KPStroke(c,self.bounds,KPP->accentBottom,2.5,11);
+    CGContextRef c=NSGraphicsContext.currentContext.CGContext;KPUsePalette(self);CGRect face=[self face];
+    CGContextSaveGState(c);CGContextTranslateCTM(c,face.origin.x,face.origin.y);KPFaceRadiusDrawn=-1;
+    if(self.paint)self.paint(c,CGRectMake(0,0,face.size.width,face.size.height),self.pressing,self.pointerOver&&self.enabled);
+    CGContextRestoreGState(c);
+    const CGFloat radius=KPFaceRadiusDrawn>=0?KPFaceRadiusDrawn:10;KPFaceRadiusDrawn=-1;
+    if(self.window.firstResponder!=self||!self.window.isKeyWindow)return;
+    if(self.margin<4){KPStroke(c,self.bounds,KPP->accentBottom,2.5,11);return;}
+    // Outside the face only, so the glow doesn't wash over it.
+    CGRect inner=CGRectInset(face,1,1);CGContextSaveGState(c);
+    CGPathRef hole=CGPathCreateWithRoundedRect(inner,std::max(CGFloat(0),radius-1),std::max(CGFloat(0),radius-1),nullptr);
+    CGContextAddRect(c,self.bounds);CGContextAddPath(c,hole);CGContextEOClip(c);CGPathRelease(hole);
+    CGContextSetShadowWithColor(c,CGSizeZero,std::min(CGFloat(10),self.margin),KPColor(KPP->accentTop,.85).CGColor);
+    KPStroke(c,CGRectInset(face,-3.5,-3.5),KPP->accentTop,4.5,radius+3.5);
+    CGContextRestoreGState(c);
+}
+// The margin around the face takes no clicks, so neighbouring controls' margins never steal them.
+- (NSView*)hitTest:(NSPoint)point{
+    NSView *hit=[super hitTest:point];
+    if(hit==self&&!NSPointInRect([self convertPoint:point fromView:self.superview],[self face]))return nil;
+    return hit;
 }
 - (void)press:(BOOL)pressing{if(pressing==self.pressing)return;self.pressing=pressing;self.needsDisplay=YES;}
 - (void)mouseDown:(NSEvent*)event{if(!self.enabled)return;_down=event.locationInWindow;_dragging=NO;[self press:YES];}
@@ -202,13 +254,12 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
 }
 - (void)updateTrackingAreas{
     [super updateTrackingAreas];for(NSTrackingArea *area in self.trackingAreas.copy)[self removeTrackingArea:area];
-    [self addTrackingArea:[[NSTrackingArea alloc]initWithRect:NSZeroRect
-        options:NSTrackingMouseEnteredAndExited|NSTrackingActiveInKeyWindow|NSTrackingInVisibleRect owner:self
-        userInfo:nil]];
+    [self addTrackingArea:[[NSTrackingArea alloc]initWithRect:[self face]
+        options:NSTrackingMouseEnteredAndExited|NSTrackingActiveInKeyWindow owner:self userInfo:nil]];
 }
 - (void)mouseEntered:(NSEvent*)event{[self setHover:YES];}
 - (void)mouseExited:(NSEvent*)event{[self setHover:NO];}
-- (void)resetCursorRects{if(self.enabled&&self.tapped)[self addCursorRect:self.bounds cursor:NSCursor.pointingHandCursor];}
+- (void)resetCursorRects{if(self.enabled&&self.tapped)[self addCursorRect:[self face] cursor:NSCursor.pointingHandCursor];}
 - (void)beginDrag:(NSEvent*)event{
     _promised=self.dragData;
     NSFilePromiseProvider *provider=[[NSFilePromiseProvider alloc]initWithFileType:KPMiiFileType().identifier delegate:self];
@@ -305,8 +356,8 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
 #endif
 @property(nonatomic,weak) KPMiiBrowser *browser;
 @property(nonatomic) CGSize laidOut;
-@property(nonatomic) CGRect gridCard,detailCard,banner,hintRect;
-@property(nonatomic) CGFloat margin;
+@property(nonatomic) CGRect gridCard,detailCard,banner,hintRect,titleRect,subtitleRect;
+@property(nonatomic) CGFloat margin,titleSize,subtitleSize;
 @property(nonatomic,copy) NSString *subtitle,*hint;
 @property(nonatomic) BOOL dropTargeted;
 @end
@@ -329,6 +380,11 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
 @property(nonatomic,strong) KPMiiPaintView *detailPortrait;
 @property(nonatomic) BOOL problemShown;
 @property(nonatomic,weak) KPMiiBrowserButton *soundButton;
+// Mac: shown as one of KartPad's screens in the game window (KartPadMiisScreen.inc.mm), laid out on
+// its 1280×720 design canvas with its header and pills; the screen draws the button hints under it.
+@property(nonatomic) BOOL hosted;
+// How much larger than in a window the controls and type are (hosted: the screens' scale).
+@property(nonatomic) CGFloat k;
 - (void)rebuild;
 - (BOOL)handleKey:(NSString*)key;
 - (BOOL)editable;
@@ -390,20 +446,18 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
 #else
     CGContextRef c=UIGraphicsGetCurrentContext();
 #endif
-    KPUsePalette(self);CGFloat w=self.bounds.size.width,h=self.bounds.size.height,m=self.margin;
-    KPFill(c,self.bounds,KPP->background);
-    KPSetInk(c,KPP->stripe);CGContextSetLineWidth(c,1);for(CGFloat y=1.5;y<h;y+=4)KPLine(c,0,y,w,y);
-    KPText(@"Miis",CGRectMake(m,12,120,30),22,KPP->text,YES,NSTextAlignmentLeft);
-    if(self.subtitle.length)
-        KPText(self.subtitle,CGRectMake(m+66,19,std::max(CGFloat(0),w-2*m-66-120),20),14,KPP->secondaryText,NO,NSTextAlignmentLeft);
-    if(!CGRectIsEmpty(self.banner)){KPFill(c,self.banner,0xf0a030,10,.18);KPStroke(c,self.banner,0xd98a1c,1,10,.5);}
-    for(CGRect card:{self.gridCard,self.detailCard}){
-        if(CGRectIsEmpty(card))continue;
-        KPFill(c,CGRectOffset(card,0,2),0x000000,18,KPP->shadow*.6);KPFill(c,card,KPP->panel,18);KPStroke(c,card,KPP->panelStroke,1,18);
-    }
+    KPUsePalette(self);
+    KPFill(c,self.bounds,KPP->background);KPPinstripes(c,self.bounds,KPP->stripe);
+    // The header as on KartPad's other screens: a bold title with the count under it.
+    KPTextWeight(@"Miis",self.titleRect,self.titleSize,KPP->text,NSFontWeightBold,NSTextAlignmentLeft);
+    NSString *subtitle=self.dropTargeted?@"Drop to import":self.subtitle;
+    if(subtitle.length)
+        KPTextWeight(subtitle,self.subtitleRect,self.subtitleSize,self.dropTargeted?KPP->accentBottom:KPP->secondaryText,
+            NSFontWeightMedium,NSTextAlignmentLeft);
+    if(!CGRectIsEmpty(self.banner)){KPFill(c,self.banner,KPP->caution,10,.18);KPStroke(c,self.banner,KPP->cautionInk,1,10,.5);}
+    for(CGRect card:{self.gridCard,self.detailCard})if(!CGRectIsEmpty(card))KPCard(c,card);
     if(self.dropTargeted)KPStroke(c,CGRectInset(self.gridCard,-2,-2),KPP->accentBottom,3,20);
-    NSString *hint=self.dropTargeted?@"Drop to import":self.hint;
-    if(hint.length&&self.hintRect.size.width>=120)KPCenteredText(hint,self.hintRect,12,KPP->secondaryText,NO,NSTextAlignmentCenter);
+    if(self.hint.length&&self.hintRect.size.width>=120)KPCenteredText(self.hint,self.hintRect,12,KPP->secondaryText,NO,NSTextAlignmentCenter);
 }
 @end
 
@@ -466,6 +520,7 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
 #endif
 }
 // The editor's preview shader compiles meanwhile, off the main thread, so the editor opens ready.
+- (void)setHosted:(BOOL)hosted{if(hosted==_hosted)return;_hosted=hosted;[self rebuild];}
 - (void)willShow{
     [[KPMiiSounds shared] prepare:KPMiiSoundArchivePath()];KPPlay(KPSound::Open);
     KPMiiPreparePipeline(MTLCreateSystemDefaultDevice(),nil);
@@ -567,23 +622,45 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
     [(UIScrollView*)scroll setContentSize:size];
 #endif
 }
+// A control whose face fills frame; on Mac the view reaches KPMiiRing beyond it for the focus glow.
+- (KPMiiBrowserButton*)control:(CGRect)frame{
+    KPMiiBrowserButton *button=[[KPMiiBrowserButton alloc]initWithFrame:CGRectInset(frame,-KPMiiRing,-KPMiiRing)];
+    button.margin=KPMiiRing;
+#if TARGET_OS_OSX
+    button.bordered=NO;button.title=@"";
+#endif
+    return button;
+}
+- (void)name:(KPMiiBrowserButton*)button label:(NSString*)label{
+#if TARGET_OS_OSX
+    [button setAccessibilityLabel:label];
+#else
+    button.accessibilityLabel=label;
+#endif
+}
 - (KPMiiBrowserButton*)button:(NSString*)title frame:(CGRect)frame style:(KPStyle)style enabled:(BOOL)enabled
     action:(void(^)(KPMiiBrowserButton *button))action{
-    KPMiiBrowserButton *button=[[KPMiiBrowserButton alloc]initWithFrame:frame];__weak KPMiiBrowserButton *weak=button;
+    KPMiiBrowserButton *button=[self control:frame];__weak KPMiiBrowserButton *weak=button;CGFloat k=self.k;
     button.paint=^(CGContextRef c,CGRect b,BOOL pressed,BOOL hovered){
         KPMiiBrowserButton *strong=weak;BOOL on=strong.enabled;
         CGRect r=CGRectInset(b,1,1),face=CGRectMake(r.origin.x,r.origin.y,r.size.width,r.size.height-3);
         KPButtonFace(c,r,style,NO,on,pressed,hovered);
         CGContextSaveGState(c);if(!on)CGContextSetAlpha(c,.42);if(pressed)CGContextTranslateCTM(c,0,2);
-        KPCenteredText(title,CGRectInset(face,8,0),face.size.height<40?14:15,style==KPStyle::Primary?0xffffff:KPP->text,YES);
+        KPCenteredText(title,CGRectInset(face,8,0),(face.size.height<40*k?14:15)*k,style==KPStyle::Primary?0xffffff:KPP->text,YES);
         CGContextRestoreGState(c);
     };
     button.tapped=^{if(action)action(weak);};button.enabled=enabled;
-#if TARGET_OS_OSX
-    button.bordered=NO;button.title=@"";[button setAccessibilityLabel:[title stringByReplacingOccurrencesOfString:@"…" withString:@""]];
-#else
-    button.accessibilityLabel=[title stringByReplacingOccurrencesOfString:@"…" withString:@""];
-#endif
+    [self name:button label:[title stringByReplacingOccurrencesOfString:@"…" withString:@""]];
+    return button;
+}
+// A header pill (Import, Done), drawn like the other screens' pills.
+- (KPMiiBrowserButton*)pill:(NSString*)title glyph:(KPMiiPillGlyph)glyph label:(NSString*)label frame:(CGRect)frame
+    style:(KPStyle)style size:(CGFloat)size enabled:(BOOL)enabled action:(void(^)(void))action{
+    KPMiiBrowserButton *button=[self control:frame];__weak KPMiiBrowserButton *weak=button;
+    button.paint=^(CGContextRef c,CGRect b,BOOL pressed,BOOL hovered){
+        KPMiiDrawPill(c,CGRectInset(b,1,1),style,glyph,title,size,weak.enabled,pressed,hovered);
+    };
+    button.tapped=^{if(action)action();};button.enabled=enabled;[self name:button label:label];
     return button;
 }
 - (id)label:(NSString*)text frame:(CGRect)frame size:(CGFloat)size bold:(BOOL)bold secondary:(BOOL)secondary{
@@ -617,39 +694,57 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
     BOOL refocus=[focus isKindOfClass:NSView.class]&&[(NSView*)focus isDescendantOf:self.canvas];
 #endif
     for(id view in self.canvas.subviews.copy)[view removeFromSuperview];
-    self.tiles=[NSMutableArray array];self.detailPortrait=nil;
+    self.tiles=[NSMutableArray array];self.detailPortrait=nil;self.soundButton=nil;
     KPMiiBrowserView *canvas=self.canvas;CGFloat w=canvas.bounds.size.width,h=canvas.bounds.size.height;
-    BOOL compact=w<640,tight=h<480;CGFloat m=compact?12:20;canvas.margin=m;
+    // Hosted, the screens' 1280×720 design area, centred (the canvas is at least that big); otherwise the whole view.
+    BOOL hosted=self.hosted&&w>=1279&&h>=719;
+    CGRect area=hosted?CGRectMake(std::round((w-1280)/2),std::round((h-720)/2),1280,720):CGRectMake(0,0,w,h);
+    CGFloat ax=area.origin.x,ay=area.origin.y,aw=area.size.width,ah=area.size.height;
+    BOOL compact=!hosted&&w<640,tight=!hosted&&h<480;
+    self.k=hosted?1.3:1;CGFloat k=self.k;
+    CGFloat m=hosted?56:compact?12:20;canvas.margin=m;
     canvas.subtitle=self.readError?nil
-        :[NSString stringWithFormat:@"%lu/%lu",(unsigned long)self.records.count,(unsigned long)kartpad::mii::kMaximumMiiSlots];
+        :[NSString stringWithFormat:@"%lu of %lu",(unsigned long)self.records.count,(unsigned long)kartpad::mii::kMaximumMiiSlots];
     __weak KPMiiBrowser *weak=self;
 
-    // Header: the title (drawn) and the shared Sound switch.
-    KPMiiBrowserButton *sound=[[KPMiiBrowserButton alloc]initWithFrame:CGRectMake(w-m-96,8,96,40)];
+    // Header, as on KartPad's other screens: the title with the count under it (drawn), and Import
+    // and Done on the right.
+    CGFloat pillH=hosted?60:tight?40:44,pillY=hosted?ay+30:12,pillText=hosted?21:compact?15:17,pillGap=hosted?16:10;
+    CGFloat doneW=hosted?150:compact?92:112,importW=hosted?180:compact?112:136;
+    canvas.titleSize=hosted?36:compact?24:28;canvas.subtitleSize=hosted?18:compact?12:13;
+    canvas.titleRect=hosted?CGRectMake(ax+56,ay+26,640,50):CGRectMake(m,pillY-4,std::max(CGFloat(0),w-2*m-doneW-importW-pillGap),canvas.titleSize*1.3);
+    canvas.subtitleRect=hosted?CGRectMake(ax+58,ay+76,640,26)
+        :CGRectMake(m+1,CGRectGetMaxY(canvas.titleRect)-1,canvas.titleRect.size.width,canvas.subtitleSize*1.45);
+    CGFloat doneX=ax+aw-m-doneW,importX=doneX-pillGap-importW;
+    [canvas addSubview:[self pill:@"Done" glyph:KPMiiPillGlyph::Check label:@"Done" frame:CGRectMake(doneX,pillY,doneW,pillH)
+            style:KPStyle::Primary size:pillText enabled:YES action:^{
+        [weak finish];
+    }]];
+    [canvas addSubview:[self pill:@"Import…" glyph:KPMiiPillGlyph::Plus label:@"Import a Mii" frame:CGRectMake(importX,pillY,importW,pillH)
+            style:KPStyle::Plain size:pillText enabled:[self editable]&&self.records.count<kartpad::mii::kMaximumMiiSlots action:^{
+        [weak importMii];
+    }]];
+#if !TARGET_OS_OSX
+    // The sound switch the editor also has (Mac has it in Settings › Sound instead).
+    CGFloat soundW=compact?100:118;
+    KPMiiBrowserButton *sound=[self control:CGRectMake(importX-pillGap-soundW,pillY,soundW,pillH)];
     sound.paint=^(CGContextRef c,CGRect b,BOOL pressed,BOOL hovered){
-        BOOL on=[KPMiiSounds shared].enabled;CGFloat side=26;CGRect box=CGRectMake(2,(b.size.height-side-3)/2+1,side,side+3);
-        KPButtonFace(c,box,KPStyle::Plain,on,YES,pressed,hovered);
-        if(on)KPControlIcon(c,CGRectMake(box.origin.x+3,box.origin.y+3+(pressed?2:0),side-6,side-6),KPGlyph::Check,0,KPP->accentBottom);
-        KPCenteredText(@"Sound",CGRectMake(side+10,0,b.size.width-side-10,b.size.height),15,KPP->text,YES,NSTextAlignmentLeft);
+        CGFloat tw=50,th=30;CGRect track=CGRectMake(b.size.width-tw-2,(b.size.height-th)/2,tw,th);
+        KPCenteredText(@"Sound",CGRectMake(2,0,b.size.width-tw-12,b.size.height),15,KPP->text,YES,NSTextAlignmentRight);
+        KPSwitch(c,track,[KPMiiSounds shared].enabled);
     };
     sound.tapped=^{KPMiiSounds *sounds=[KPMiiSounds shared];sounds.enabled=!sounds.enabled;if(sounds.enabled)KPPlay(KPSound::Confirm);};
-    self.soundButton=sound;
-#if TARGET_OS_OSX
-    sound.bordered=NO;sound.title=@"";[sound setAccessibilityLabel:@"Sound effects"];
-    [sound setAccessibilityRole:NSAccessibilityCheckBoxRole];
-    [sound setAccessibilityValue:@([KPMiiSounds shared].enabled)];
-#else
-    sound.accessibilityLabel=@"Sound effects";sound.accessibilityValue=[KPMiiSounds shared].enabled?@"On":@"Off";
-#endif
+    self.soundButton=sound;sound.accessibilityLabel=@"Sound effects";sound.accessibilityValue=[KPMiiSounds shared].enabled?@"On":@"Off";
     [canvas addSubview:sound];
-    CGFloat top=tight?52:58;
+#endif
+    CGFloat top=hosted?ay+130:pillY+pillH+(tight?10:14);
 
     // Banner: the changes waiting for the next launch, or why the Miis can't be read. Discard is
     // also offered with a read error, since a waiting change that no longer fits causes one.
     canvas.banner=CGRectZero;
     if(self.pending||self.readError){
-        BOOL restart=self.pending&&self.restart,discard=self.discardable;CGFloat bh=compact?66:48;
-        canvas.banner=CGRectMake(m,top,w-2*m,bh);
+        BOOL restart=self.pending&&self.restart,discard=self.discardable;CGFloat bh=(compact?66:48)*k,bx=ax+m,bw=aw-2*m;
+        canvas.banner=CGRectMake(bx,top,bw,bh);
         NSUInteger count=MAX(self.pendingCount,(NSUInteger)1);NSMutableArray *parts=[NSMutableArray array];
         if(self.lastChange)[parts addObject:self.lastChange];
         if(count>1)[parts addObject:[NSString stringWithFormat:@"%lu changes are waiting for the next launch.",(unsigned long)count]];
@@ -658,48 +753,39 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
         if(self.queueBlocked)[parts addObject:@"Until then, Miis and licenses can’t be changed."];
         NSString *text=self.readError?[NSString stringWithFormat:@"The Miis can’t be shown. %@",self.readError]
             :[parts componentsJoinedByString:@" "];
-        CGFloat restartW=restart?148:0,discardW=discard?96:0;
-        CGFloat textW=w-2*m-28-(restart?restartW+12:0)-(discard?discardW+12:0);
-        id label=[self label:text frame:CGRectMake(m+14,top+(bh-(compact?52:34))/2,textW,compact?52:34) size:13 bold:NO secondary:NO];
+        CGFloat restartW=restart?110*k:0,discardW=discard?96*k:0,buttonH=38*k,textH=(compact?52:34)*k;
+        CGFloat textW=bw-28-(restart?restartW+12:0)-(discard?discardW+12:0);
+        id label=[self label:text frame:CGRectMake(bx+14,top+(bh-textH)/2,textW,textH) size:13*k bold:NO secondary:NO];
 #if TARGET_OS_OSX
         [label setAccessibilityRole:NSAccessibilityStaticTextRole];
 #endif
         [canvas addSubview:label];
         if(restart)
-            [canvas addSubview:[self button:@"Restart KartPad"
-                    frame:CGRectMake(w-m-14-restartW,top+(bh-38)/2,restartW,38) style:KPStyle::Plain enabled:YES
+            [canvas addSubview:[self button:@"Restart"
+                    frame:CGRectMake(bx+bw-14-restartW,top+(bh-buttonH)/2,restartW,buttonH) style:KPStyle::Plain enabled:YES
                     action:^(KPMiiBrowserButton *b){
                 KPPlay(KPSound::Press);if(weak.restart)weak.restart();
             }]];
         if(discard)
             [canvas addSubview:[self button:@"Discard"
-                    frame:CGRectMake(w-m-14-restartW-(restart?12:0)-discardW,top+(bh-38)/2,discardW,38)
+                    frame:CGRectMake(bx+bw-14-restartW-(restart?12:0)-discardW,top+(bh-buttonH)/2,discardW,buttonH)
                     style:KPStyle::Plain enabled:YES action:^(KPMiiBrowserButton *b){
                 [weak discardPending];
             }]];
-        top+=bh+10;
+        top+=bh+10*k;
     }
 
-    // Footer: Import on the left, Done on the right, a hint between them when there is room.
-    CGFloat footerH=tight?40:44,footerY=h-m-footerH;
-    CGFloat importW=compact?140:170;
-    KPMiiBrowserButton *import=[self button:@"Import .mii…" frame:CGRectMake(m,footerY,importW,footerH)
-            style:KPStyle::Plain enabled:[self editable]&&self.records.count<kartpad::mii::kMaximumMiiSlots
-            action:^(KPMiiBrowserButton *b){
-        [weak importMii];
-    }];
-    [canvas addSubview:import];
-    [canvas addSubview:[self button:@"Done" frame:CGRectMake(w-m-120,footerY,120,footerH) style:KPStyle::Primary
-            enabled:YES action:^(KPMiiBrowserButton *b){
-        [weak finish];
-    }]];
-    canvas.hintRect=CGRectMake(m+importW+12,footerY,w-2*m-importW-120-24,footerH);
-#if TARGET_OS_OSX
-    canvas.hint=nil;
-#else
-    canvas.hint=canvas.hintRect.size.width>=300?@"Fully close KartPad from the app switcher and reopen it to apply changes.":nil;
+    // Bottom: hosted, the screen's button hints go under the cards (KartPadMiisScreen.inc.mm). On
+    // iPhone and iPad a line says how to apply changes when there is room.
+    canvas.hint=nil;canvas.hintRect=CGRectZero;
+    CGFloat bottom=hosted?ay+650:h-m;
+#if !TARGET_OS_OSX
+    if(w>=420){
+        canvas.hintRect=CGRectMake(m,h-m-24,w-2*m,24);bottom-=30;
+        canvas.hint=@"Fully close KartPad from the app switcher and reopen it to apply changes.";
+    }
 #endif
-    CGFloat bottom=footerY-12;
+    (void)ah;
 
     // Cards: the grid beside the details, or the grid above the details on narrow screens.
     if(compact){
@@ -707,8 +793,9 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
         canvas.gridCard=CGRectMake(m,top,w-2*m,gridH);
         canvas.detailCard=CGRectMake(m,top+gridH+10,w-2*m,std::max(CGFloat(120),available-gridH-10));
     }else{
-        CGFloat detailW=std::clamp(w*.4,CGFloat(300),CGFloat(390));
-        canvas.gridCard=CGRectMake(m,top,w-3*m-detailW,bottom-top);canvas.detailCard=CGRectMake(w-m-detailW,top,detailW,bottom-top);
+        CGFloat detailW=hosted?440:std::clamp(w*.4,CGFloat(300),CGFloat(390)),gap=hosted?24:m;
+        canvas.gridCard=CGRectMake(ax+m,top,aw-2*m-gap-detailW,bottom-top);
+        canvas.detailCard=CGRectMake(ax+aw-m-detailW,top,detailW,bottom-top);
     }
     [self buildGrid];
     [self buildDetail];
@@ -720,59 +807,63 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
 }
 
 - (void)buildGrid{
-    KPMiiBrowserView *canvas=self.canvas;
-    CGRect frame=CGRectInset(canvas.gridCard,10,10);id scroll=[self scrollIn:frame];self.gridScroll=scroll;
+    KPMiiBrowserView *canvas=self.canvas;CGFloat k=self.k;
+    // The list runs 8 points inside its scroll view, leaving room for the focus glow at the edges.
+    const CGFloat p=8;CGRect frame=CGRectInset(canvas.gridCard,2,2);id scroll=[self scrollIn:frame];self.gridScroll=scroll;
     id document=[self documentOf:scroll];
-    CGFloat gw=[self widthOf:scroll],gap=10,base=gw<380?96:112;
+    CGFloat gw=[self widthOf:scroll]-2*p,gap=10*k,base=(gw<380?96:112)*k;
     NSUInteger columns=std::max<NSUInteger>(1,NSUInteger((gw+gap)/(base+gap)));self.columns=columns;
-    CGFloat tw=std::floor((gw-gap*(columns-1))/columns),th=tw+24;
+    CGFloat tw=std::floor((gw-gap*(columns-1))/columns),th=tw+24*k;
     if(self.readError){
         [self finish:scroll
             height:[self note:@"Start the game once to create the Mii database, then open this screen again."
-                in:document x:6 y:6 width:gw-12 size:14 bold:NO secondary:YES]+6];
+                in:document x:p+6 y:p+6 width:gw-12 size:14*k bold:NO secondary:YES]+p+6];
         return;
     }
     NSUInteger count=self.records.count+1;
     for(NSUInteger i=0;i<count;i++){
-        CGRect tileFrame=CGRectMake((i%columns)*(tw+gap),2+(i/columns)*(th+gap),tw,th);
+        CGRect tileFrame=CGRectMake(p+(i%columns)*(tw+gap),p+(i/columns)*(th+gap),tw,th);
         KPMiiBrowserButton *tile=i<self.records.count?[self tileFor:self.records[i] frame:tileFrame]:[self newTile:tileFrame];
         [document addSubview:tile];
     }
-    CGFloat y=2+((count+columns-1)/columns)*(th+gap)+4;
+    CGFloat y=p+((count+columns-1)/columns)*(th+gap)+4*k;
     // Licenses whose Mii is gone can't be reached from a Mii, so they are listed under the grid.
     NSArray *unlinked=[self unlinkedLicenses];
     if(unlinked.count){
-        y=[self note:@"Licenses without a Mii" in:document x:4 y:y width:gw-8 size:14 bold:YES secondary:YES]+4;
+        y=[self note:@"Licenses without a Mii" in:document x:p+4 y:y width:gw-8 size:14*k bold:YES secondary:YES]+4*k;
         y=[self note:@"The game shows these as Player. Choose a Mii to repair one; its progress and friend code are kept."
-            in:document x:4 y:y width:gw-8 size:12 bold:NO secondary:YES]+10;
-        for(NSDictionary *license in unlinked){[document addSubview:[self licenseRow:license frame:CGRectMake(0,y,gw,56)]];y+=64;}
+            in:document x:p+4 y:y width:gw-8 size:12*k bold:NO secondary:YES]+10*k;
+        for(NSDictionary *license in unlinked){
+            [document addSubview:[self licenseRow:license frame:CGRectMake(p,y,gw,56*k)]];y+=64*k;
+        }
     }
-    [self finish:scroll height:y];
+    [self finish:scroll height:y+p];
 }
 - (KPMiiBrowserButton*)tileFor:(NSDictionary*)record frame:(CGRect)frame{
-    __weak KPMiiBrowser *weak=self;NSUInteger slot=[record[@"slot"] unsignedIntegerValue];
-    KPMiiBrowserButton *tile=[[KPMiiBrowserButton alloc]initWithFrame:frame];tile.slot=slot;
+    __weak KPMiiBrowser *weak=self;NSUInteger slot=[record[@"slot"] unsignedIntegerValue];CGFloat k=self.k;
+    KPMiiBrowserButton *tile=[self control:frame];tile.slot=slot;
     tile.paint=^(CGContextRef c,CGRect b,BOOL pressed,BOOL hovered){
         BOOL selected=weak.selectedSlot==slot;CGRect r=CGRectInset(b,1,1);
         KPButtonFace(c,r,KPStyle::Tile,selected,YES,pressed,hovered);
         CGContextSaveGState(c);if(pressed)CGContextTranslateCTM(c,0,2);
-        CGFloat side=r.size.width-16;CGRect well=CGRectMake(r.origin.x+8,r.origin.y+8,side,side);
+        CGFloat inset=8*k,side=r.size.width-2*inset;CGRect well=CGRectMake(r.origin.x+inset,r.origin.y+inset,side,side);
         KPDrawPortrait(c,well,record);
-        CGRect dot=CGRectMake(well.origin.x+6,well.origin.y+6,12,12);KPFill(c,dot,KPFavoriteHex(record),6);
-        KPStroke(c,dot,0xffffff,1.5,6,.9);
+        CGRect dot=CGRectMake(well.origin.x+6*k,well.origin.y+6*k,12*k,12*k);KPFill(c,dot,KPFavoriteHex(record),6*k);
+        KPStroke(c,dot,0xffffff,1.5,6*k,.9);
         KPCenteredText(record[@"name"],
-            CGRectMake(r.origin.x+5,CGRectGetMaxY(well)+1,r.size.width-10,r.size.height-side-14),13,KPP->text,YES);
+            CGRectMake(r.origin.x+5,CGRectGetMaxY(well)+1,r.size.width-10,r.size.height-side-inset-6*k),13*k,KPP->text,YES);
         CGContextRestoreGState(c);
     };
     tile.tapped=^{[weak selectSlot:slot];};
     tile.doubleTapped=^{[weak editSlot:slot];};
     tile.menuEntries=^NSArray*{return [weak actionsFor:record];};
     tile.dragData=record[@"mii"];tile.dragName=record[@"name"];
-    NSString *label=[NSString stringWithFormat:@"%@, %@",record[@"name"],KPSlotName(record)];
+    // VoiceOver reads the Mii's name; its slot follows as help.
+    [self name:tile label:record[@"name"]];
 #if TARGET_OS_OSX
-    tile.bordered=NO;tile.title=@"";[tile setAccessibilityLabel:label];[tile setAccessibilityHelp:@"Double-click to edit."];
+    [tile setAccessibilityHelp:[NSString stringWithFormat:@"%@. Double-click to edit.",KPSlotName(record)]];
 #else
-    tile.accessibilityLabel=label;
+    tile.accessibilityHint=KPSlotName(record);
 #endif
     tile.accessibilityCustomActions=KPMiiAccessibilityActions([self actionsFor:record]);
     [self.tiles addObject:tile];[self markTile:tile];
@@ -788,45 +879,43 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
 }
 - (KPMiiBrowserButton*)newTile:(CGRect)frame{
     __weak KPMiiBrowser *weak=self;BOOL enabled=[self editable]&&self.records.count<kartpad::mii::kMaximumMiiSlots;
-    KPMiiBrowserButton *tile=[[KPMiiBrowserButton alloc]initWithFrame:frame];tile.slot=NSNotFound;__weak KPMiiBrowserButton *weakTile=tile;
+    KPMiiBrowserButton *tile=[self control:frame];tile.slot=NSNotFound;__weak KPMiiBrowserButton *weakTile=tile;CGFloat k=self.k;
     tile.paint=^(CGContextRef c,CGRect b,BOOL pressed,BOOL hovered){
         BOOL on=weakTile.enabled;CGRect r=CGRectInset(b,1,1);KPButtonFace(c,r,KPStyle::Tile,NO,on,pressed,hovered);
         CGContextSaveGState(c);if(!on)CGContextSetAlpha(c,.42);if(pressed)CGContextTranslateCTM(c,0,2);
-        CGFloat side=r.size.width-16,arm=side*.3,bar=std::max(CGFloat(5),side*.07);
-        CGPoint mid=CGPointMake(CGRectGetMidX(r),r.origin.y+8+side/2);
+        CGFloat inset=8*k,side=r.size.width-2*inset,arm=side*.3,bar=std::max(CGFloat(5),side*.07);
+        CGPoint mid=CGPointMake(CGRectGetMidX(r),r.origin.y+inset+side/2);
         KPFill(c,CGRectMake(mid.x-arm,mid.y-bar/2,arm*2,bar),KPP->icon,bar/2);
         KPFill(c,CGRectMake(mid.x-bar/2,mid.y-arm,bar,arm*2),KPP->icon,bar/2);
-        KPCenteredText(@"New Mii",CGRectMake(r.origin.x+5,r.origin.y+8+side+1,r.size.width-10,r.size.height-side-14),13,KPP->text,YES);
+        KPCenteredText(@"New Mii",CGRectMake(r.origin.x+5,r.origin.y+inset+side+1,r.size.width-10,r.size.height-side-inset-6*k),13*k,
+            KPP->text,YES);
         CGContextRestoreGState(c);
     };
     tile.tapped=^{[weak createMii];};tile.enabled=enabled;
-#if TARGET_OS_OSX
-    tile.bordered=NO;tile.title=@"";[tile setAccessibilityLabel:@"Create Mii"];
-#else
-    tile.accessibilityLabel=@"Create Mii";
-#endif
+    [self name:tile label:@"New Mii"];
     return tile;
 }
 
 - (void)buildDetail{
-    KPMiiBrowserView *canvas=self.canvas;__weak KPMiiBrowser *weak=self;
+    KPMiiBrowserView *canvas=self.canvas;__weak KPMiiBrowser *weak=self;CGFloat k=self.k;
     [self.detailScroll removeFromSuperview];
-    CGRect frame=CGRectInset(canvas.detailCard,14,14);id scroll=[self scrollIn:frame];self.detailScroll=scroll;
+    // As the grid, the details run 8 points inside their scroll view for the focus glow.
+    const CGFloat p=8;CGRect frame=CGRectInset(canvas.detailCard,6,6);id scroll=[self scrollIn:frame];self.detailScroll=scroll;
     id document=[self documentOf:scroll];
-    CGFloat dw=[self widthOf:scroll],y=0;BOOL editable=[self editable];
+    CGFloat dw=[self widthOf:scroll]-2*p,y=p;BOOL editable=[self editable];
     NSDictionary *record=[self selectedRecord];
     self.problemShown=NO;
     if(!record){
         [self finish:scroll
-            height:[self note:self.readError?@"No Miis to show.":@"Choose a Mii." in:document x:2 y:2 width:dw-4 size:15
-                bold:NO secondary:YES]];
+            height:[self note:self.readError?@"No Miis to show.":@"Choose a Mii." in:document x:p+2 y:p+2 width:dw-4 size:15*k
+                bold:NO secondary:YES]+p];
         return;
     }
     NSUInteger slot=[record[@"slot"] unsignedIntegerValue];NSArray *linked=[self licensesForRecord:record];
 
     // Portrait beside the name, slot, creator and favorite color.
-    CGFloat side=std::min(CGFloat(150),std::floor(dw*.42));
-    KPMiiPaintView *portrait=[[KPMiiPaintView alloc]initWithFrame:CGRectMake(0,0,side,side)];
+    CGFloat side=std::min((k>1?118:150)*k,std::floor(dw*.42));
+    KPMiiPaintView *portrait=[[KPMiiPaintView alloc]initWithFrame:CGRectMake(p,y,side,side)];
     portrait.paint=^(CGContextRef c,CGRect b){KPDrawPortrait(c,b,record);};
 #if TARGET_OS_OSX
     [portrait setAccessibilityElement:YES];[portrait setAccessibilityRole:NSAccessibilityImageRole];
@@ -836,89 +925,95 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
     portrait.accessibilityLabel=[NSString stringWithFormat:@"Portrait of %@",record[@"name"]];
 #endif
     [document addSubview:portrait];self.detailPortrait=portrait;
-    CGFloat ix=side+14,iw=dw-ix;
-    CGFloat iy=[self note:record[@"name"] in:document x:ix y:2 width:iw size:22 bold:YES secondary:NO]+4;
+    CGFloat ix=p+side+14*k,iw=dw-side-14*k;
+    CGFloat iy=[self note:record[@"name"] in:document x:ix y:y+2 width:iw size:22*k bold:YES secondary:NO]+4*k;
     // The creator is worth showing only for a Mii made elsewhere, such as on a Wii.
     NSString *creator=record[@"creator"];
     if(creator.length&&![creator isEqual:@"Unknown"]&&![creator isEqual:@"KartPad"])
-        iy=[self note:[@"Created by " stringByAppendingString:creator] in:document x:ix y:iy width:iw size:13 bold:NO secondary:YES]+4;
-    iy+=6;
-    KPMiiPaintView *chip=[[KPMiiPaintView alloc]initWithFrame:CGRectMake(ix,iy,18,18)];unsigned hex=KPFavoriteHex(record);
-    chip.paint=^(CGContextRef c,CGRect b){KPFill(c,b,hex,5);KPStroke(c,b,0x000000,1,5,.18);};[document addSubview:chip];
-    iy=std::max(iy+18,[self note:KPFavoriteName(record) in:document x:ix+26 y:iy width:iw-26 size:13 bold:NO secondary:NO])+8;
+        iy=[self note:[@"Created by " stringByAppendingString:creator] in:document x:ix y:iy width:iw size:13*k bold:NO secondary:YES]+4*k;
+    iy+=6*k;CGFloat chipSide=18*k;
+    KPMiiPaintView *chip=[[KPMiiPaintView alloc]initWithFrame:CGRectMake(ix,iy,chipSide,chipSide)];unsigned hex=KPFavoriteHex(record);
+    chip.paint=^(CGContextRef c,CGRect b){KPFill(c,b,hex,5*k);KPStroke(c,b,0x000000,1,5*k,.18);};[document addSubview:chip];
+    iy=std::max(iy+chipSide,[self note:KPFavoriteName(record) in:document x:ix+chipSide+8*k y:iy width:iw-chipSide-8*k size:13*k
+        bold:NO secondary:NO])+8*k;
     if(KPMiiPortraitProblem&&![KPMiiPortraits() objectForKey:record[@"mii"]]){
         iy=[self note:[NSString stringWithFormat:@"Portraits unavailable: %@",KPMiiPortraitProblem] in:document x:ix
-            y:iy width:iw size:11 bold:NO secondary:YES]+6;
+            y:iy width:iw size:11*k bold:NO secondary:YES]+6*k;
         self.problemShown=YES;
     }
-    y=std::max(side,iy)+16;
+    y=std::max(y+side,iy)+(k>1?12:16)*k;
 
     // Actions: Edit first, then the rest two by two. A Mii no license races as (a new one, say)
     // offers Use for a License… straight after Edit, since that is its next step.
     NSArray *others=self.licenseError?@[]:[self licensesToLink:record];BOOL promote=!linked.count&&others.count;
-    [document addSubview:[self button:@"Edit Mii" frame:CGRectMake(0,y,dw,48) style:KPStyle::Primary enabled:editable
+    CGFloat rowH=44*k,step=rowH+8*k;
+    [document addSubview:[self button:@"Edit Mii" frame:CGRectMake(p,y,dw,48*k) style:KPStyle::Primary enabled:editable
             action:^(KPMiiBrowserButton *b){
         [weak editSlot:slot];
     }]];
-    y+=58;
+    y+=58*k;
     if(promote){
-        [document addSubview:[self button:@"Use for a License…" frame:CGRectMake(0,y,dw,44) style:KPStyle::Plain
+        [document addSubview:[self button:@"Use for a License…" frame:CGRectMake(p,y,dw,rowH) style:KPStyle::Plain
                 enabled:editable action:^(KPMiiBrowserButton *b){
             [weak chooseLicenseFor:record from:b];
         }]];
-        y+=52;
+        y+=step;
     }
-    CGFloat half=(dw-8)/2;
-    [document addSubview:[self button:@"Rename…" frame:CGRectMake(0,y,half,44) style:KPStyle::Plain enabled:editable
+    CGFloat half=(dw-8*k)/2;
+    [document addSubview:[self button:@"Rename…" frame:CGRectMake(p,y,half,rowH) style:KPStyle::Plain enabled:editable
             action:^(KPMiiBrowserButton *b){
         [weak rename:record];
     }]];
-    [document addSubview:[self button:@"Duplicate" frame:CGRectMake(half+8,y,half,44) style:KPStyle::Plain
+    [document addSubview:[self button:@"Duplicate" frame:CGRectMake(p+half+8*k,y,half,rowH) style:KPStyle::Plain
             enabled:editable&&self.records.count<kartpad::mii::kMaximumMiiSlots action:^(KPMiiBrowserButton *b){
         [weak duplicate:record];
     }]];
-    y+=52;
-    [document addSubview:[self button:@"Export…" frame:CGRectMake(0,y,half,44) style:KPStyle::Plain enabled:YES
+    y+=step;
+    [document addSubview:[self button:@"Export…" frame:CGRectMake(p,y,half,rowH) style:KPStyle::Plain enabled:YES
             action:^(KPMiiBrowserButton *b){
         [weak exportRecord:record from:b];
     }]];
-    [document addSubview:[self button:@"Remove…" frame:CGRectMake(half+8,y,half,44) style:KPStyle::Plain
+    [document addSubview:[self button:@"Remove" frame:CGRectMake(p+half+8*k,y,half,rowH) style:KPStyle::Plain
             enabled:editable action:^(KPMiiBrowserButton *b){
         [weak remove:record];
     }]];
-    y+=60;
+    y+=rowH+(k>1?12:16)*k;
 
     // Licenses that race as this Mii, and linking another license to it.
-    y=[self note:@"Licenses" in:document x:2 y:y width:dw-4 size:15 bold:YES secondary:NO]+8;
-    if(self.licenseError)y=[self note:self.licenseError in:document x:2 y:y width:dw-4 size:12 bold:NO secondary:YES]+8;
+    y=[self note:@"Licenses" in:document x:p+2 y:y width:dw-4 size:15*k bold:YES secondary:NO]+8*k;
+    if(self.licenseError)y=[self note:self.licenseError in:document x:p+2 y:y width:dw-4 size:12*k bold:NO secondary:YES]+8*k;
     else{
-        for(NSDictionary *license in linked){[document addSubview:[self licenseRow:license frame:CGRectMake(0,y,dw,56)]];y+=64;}
-        if(!linked.count)y=[self note:@"No license races as this Mii yet." in:document x:2 y:y width:dw-4 size:13 bold:NO secondary:YES]+10;
+        for(NSDictionary *license in linked){
+            [document addSubview:[self licenseRow:license frame:CGRectMake(p,y,dw,56*k)]];y+=64*k;
+        }
+        if(!linked.count)
+            y=[self note:@"No license races as this Mii yet." in:document x:p+2 y:y width:dw-4 size:13*k bold:NO secondary:YES]+10*k;
         if(!promote&&others.count){
-            [document addSubview:[self button:@"Use for a License…" frame:CGRectMake(0,y,dw,44) style:KPStyle::Plain
+            [document addSubview:[self button:@"Use for a License…" frame:CGRectMake(p,y,dw,rowH) style:KPStyle::Plain
                     enabled:editable action:^(KPMiiBrowserButton *b){
                 [weak chooseLicenseFor:record from:b];
             }]];
-            y+=52;
+            y+=step;
         }
     }
     if(!linked.count)
         y=[self note:@"To start a new license, choose New on the game’s license screen and pick this Mii." in:document
-            x:2 y:y width:dw-4 size:12 bold:NO secondary:YES]+8;
-    [self finish:scroll height:y];
+            x:p+2 y:y width:dw-4 size:12*k bold:NO secondary:YES]+8*k;
+    [self finish:scroll height:y+p];
 }
 - (KPMiiBrowserButton*)licenseRow:(NSDictionary*)license frame:(CGRect)frame{
-    __weak KPMiiBrowser *weak=self;NSString *pending=KPLicensePending(license),*title=KPLicenseTitle(license);
+    __weak KPMiiBrowser *weak=self;NSString *pending=KPLicensePending(license),*title=KPLicenseTitle(license);CGFloat k=self.k;
     BOOL missing=[license[@"missingLinkedMii"] boolValue];
-    KPMiiBrowserButton *row=[[KPMiiBrowserButton alloc]initWithFrame:frame];__weak KPMiiBrowserButton *weakRow=row;
+    KPMiiBrowserButton *row=[self control:frame];__weak KPMiiBrowserButton *weakRow=row;
     row.paint=^(CGContextRef c,CGRect b,BOOL pressed,BOOL hovered){
         BOOL on=weakRow.enabled;CGRect r=CGRectInset(b,1,1);KPButtonFace(c,r,KPStyle::Plain,NO,on,pressed,hovered);
         CGContextSaveGState(c);if(!on)CGContextSetAlpha(c,.42);if(pressed)CGContextTranslateCTM(c,0,2);
-        CGFloat textW=r.size.width-60;
-        KPText(license[@"name"]?:@"Unnamed",CGRectMake(14,8,textW,22),15,KPP->text,YES,NSTextAlignmentLeft);
-        KPText(pending?[NSString stringWithFormat:@"%@ · %@",title,pending]:title,CGRectMake(14,29,textW,18),12,
-            pending?0xc77a14:KPP->secondaryText,NO,NSTextAlignmentLeft);
-        KPControlIcon(c,CGRectMake(r.size.width-40,(r.size.height-3)/2-13,26,26),KPGlyph::More,0,KPP->icon);
+        CGFloat textW=r.size.width-60*k,x=r.origin.x+13*k,y=r.origin.y;
+        KPText(license[@"name"]?:@"Unnamed",CGRectMake(x,y+7*k,textW,22*k),15*k,KPP->text,YES,NSTextAlignmentLeft);
+        KPText(pending?[NSString stringWithFormat:@"%@ · %@",title,pending]:title,CGRectMake(x,y+28*k,textW,18*k),12*k,
+            pending?KPP->cautionInk:KPP->secondaryText,NO,NSTextAlignmentLeft);
+        CGFloat icon=26*k;
+        KPControlIcon(c,CGRectMake(CGRectGetMaxX(r)-icon-14*k,y+(r.size.height-3-icon)/2,icon,icon),KPGlyph::More,0,KPP->icon);
         CGContextRestoreGState(c);
     };
     NSArray *(^entries)(void)=^NSArray*{
@@ -927,18 +1022,14 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
         BOOL choices=missing||weak.records.count>1;
         [list addObject:KPEntry(missing?@"Choose Mii…":@"Change Mii…",can&&choices,NO,^{[weak chooseMiiForLicense:license from:weakRow];})];
         if(!missing)[list addObject:KPEntry(@"Rename License…",can,NO,^{[weak renameLicense:license];})];
-        [list addObject:KPEntry(@"Delete License…",can,YES,^{[weak deleteLicense:license];})];
+        [list addObject:KPEntry(@"Delete License",can,YES,^{[weak deleteLicense:license];})];
         return list;
     };
     row.tapped=^{KPPlay(KPSound::Press);[weak showMenu:entries() title:title from:weakRow];};
     row.menuEntries=entries;row.enabled=YES;
     NSString *label=[NSString stringWithFormat:@"%@, %@%@",license[@"name"]?:@"Unnamed",title,
         pending?[@", " stringByAppendingString:pending]:@""];
-#if TARGET_OS_OSX
-    row.bordered=NO;row.title=@"";[row setAccessibilityLabel:label];
-#else
-    row.accessibilityLabel=label;
-#endif
+    [self name:row label:label];
     row.accessibilityCustomActions=KPMiiAccessibilityActions(entries());
     return row;
 }
@@ -996,18 +1087,19 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
 }
 - (NSArray<KPMiiMenuEntry*>*)actionsFor:(NSDictionary*)record{
     __weak KPMiiBrowser *weak=self;NSUInteger slot=[record[@"slot"] unsignedIntegerValue];BOOL editable=[self editable];
-    return @[KPEntry(@"Edit Mii…",editable,NO,^{[weak editSlot:slot];}),KPEntry(@"Rename…",editable,NO,^{[weak rename:record];}),
+    return @[KPEntry(@"Edit Mii",editable,NO,^{[weak editSlot:slot];}),KPEntry(@"Rename…",editable,NO,^{[weak rename:record];}),
              KPEntry(@"Duplicate",editable&&weak.records.count<kartpad::mii::kMaximumMiiSlots,NO,^{
                  [weak duplicate:record];
              }),KPEntry(@"Export…",YES,NO,^{[weak exportRecord:record from:nil];}),
-             KPEntry(nil,NO,NO,nil),KPEntry(@"Remove…",editable,YES,^{[weak remove:record];})];
+             KPEntry(nil,NO,NO,nil),KPEntry(@"Remove",editable,YES,^{[weak remove:record];})];
 }
 
 #pragma mark Dialogs
 
 - (void)showMenu:(NSArray<KPMiiMenuEntry*>*)entries title:(NSString*)title from:(KPMiiBrowserButton*)button{
 #if TARGET_OS_OSX
-    if(button)[KPMiiMenu(entries) popUpMenuPositioningItem:nil atLocation:NSMakePoint(0,button.bounds.size.height+2) inView:button];
+    if(button)[KPMiiMenu(entries) popUpMenuPositioningItem:nil
+        atLocation:NSMakePoint(button.margin,button.bounds.size.height-button.margin+2) inView:button];
     else [KPMiiMenu(entries) popUpMenuPositioningItem:nil
         atLocation:NSMakePoint(NSMidX(self.canvas.bounds),NSMidY(self.canvas.bounds)) inView:self.canvas];
 #else
@@ -1162,7 +1254,7 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
     if([self blocked])return;NSUInteger linked=[self licensesForRecord:record].count;__weak KPMiiBrowser *weak=self;
     if(self.records.count<=1){[self tell:@"This Mii Can’t Be Removed" message:@"KartPad always keeps at least one Mii."];return;}
     if(linked){
-        [self tell:[NSString stringWithFormat:@"“%@” Is In Use",record[@"name"]]
+        [self tell:[NSString stringWithFormat:@"“%@” Is in Use",record[@"name"]]
             message:[NSString stringWithFormat:
                 @"%@ races as this Mii. Delete %@, or move %@ to another Mii with Use for a License…, then remove this Mii.",
                 linked==1?@"A license":[NSString stringWithFormat:@"%lu licenses",(unsigned long)linked],
@@ -1248,7 +1340,7 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
         if(KartPadStageMiiImport(files[i],&name,&error))[added addObject:name.length?name:names[i]];
         else{
             [failed addObject:[NSString stringWithFormat:@"“%@”",names[i]]];
-            problem=problem?:error.localizedDescription?:@"The file is not a standard 74-byte .mii file.";
+            problem=problem?:error.localizedDescription?:@"The file isn’t a standard 74-byte .mii file.";
         }
     }
     if(added.count)
@@ -1354,7 +1446,7 @@ static NSArray *KPMiiAccessibilityActions(NSArray<KPMiiMenuEntry*> *entries){
             [weak link:license to:record];
         })];
     KPPlay(KPSound::Press);
-    [self showMenu:entries title:[NSString stringWithFormat:@"Choose a license to race as “%@”",record[@"name"]] from:button];
+    [self showMenu:entries title:[NSString stringWithFormat:@"Choose a License to Race As “%@”",record[@"name"]] from:button];
 }
 - (void)chooseMiiForLicense:(NSDictionary*)license from:(KPMiiBrowserButton*)anchor{
     if([self blocked])return;__weak KPMiiBrowser *weak=self;NSMutableArray *entries=[NSMutableArray array];

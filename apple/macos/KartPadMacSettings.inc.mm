@@ -52,17 +52,18 @@
     @"video.display_mode":[NSString stringWithUTF8String:c.displayMode.value_or("windowed").c_str()],
     @"video.frame_interpolation_fps":@(c.frameInterpolationFps.value_or(0)),
     @"video.vsync":@(c.vsync.value_or(false)),
-    @"video.show_fps":@(c.showFps.value_or(true)),
+    @"video.show_fps":@(c.showFps.value_or(false)),
     @"video.cursor_auto_hide_seconds":@(c.cursorAutoHideSeconds.value_or(3)),
     @"video.disable_copy_filter":@(c.disableCopyFilter.value_or(true)),
     @"video.skip_unready_pipelines":@(c.skipUnreadyPipelines.value_or(true)),
-    @"video.disabled_post_processing_paths":@((c.disabledPostProcessingPaths.value_or(0)&0x10)!=0),
+    // Bloom and Sound are ticked when on: the opposite of the settings they write.
+    @"video.disabled_post_processing_paths":@((c.disabledPostProcessingPaths.value_or(0)&0x10)==0),
     @"audio.volume":@(c.audioVolume.value_or(1.0f)),
     @"audio.music_volume":@(c.audioMusicVolume.value_or(1.0f)),
     @"audio.sound_effects_volume":@(c.audioSoundEffectsVolume.value_or(1.0f)),
     @"audio.ui_volume":@(c.audioUiVolume.value_or(1.0f)),
     @"audio.voices_volume":@(c.audioVoicesVolume.value_or(1.0f)),
-    @"audio.muted":@(c.audioMuted.value_or(false)),
+    @"audio.muted":@(!c.audioMuted.value_or(false)),
     @"audio.mix_worker":@(c.audioMixWorker.value_or(true)),
     @"discord.enabled":@(c.discordPresenceEnabled.value_or(false))};
   for(NSString *key in self.settingControls) {
@@ -86,7 +87,8 @@ static void KPReadLaunchDisplaySettings() {
 }
 // Off, then Light, Medium and Strong: the rumble strengths behind them.
 static NSArray<NSNumber *> *KPVibrationStrengths() { return @[@0,@0.25,@0.5,@1]; }
-// What refreshSettings's table doesn't cover: vibration, the background pause and the restart button.
+// What refreshSettings's table doesn't cover: vibration, the background pause, Wii Remote support and
+// the restart button.
 - (void)refreshSettingsExtras {
   const auto c=RuntimeConfigFile::LoadConfigFile();
   NSInteger vibration=0;
@@ -97,6 +99,7 @@ static NSArray<NSNumber *> *KPVibrationStrengths() { return @[@0,@0.25,@0.5,@1];
   }
   [self.vibrationChoice selectItemAtIndex:vibration];
   self.backgroundPauseSwitch.state=KPBackgroundPauseEnabled()?NSControlStateValueOn:NSControlStateValueOff;
+  self.wiimoteSwitch.state=[NSUserDefaults.standardUserDefaults boolForKey:KartPadExperimentalWiimoteDefaultsKey]?NSControlStateValueOn:NSControlStateValueOff;
   self.settingsRestart.hidden=!self.restartPending;
 }
 - (void)vibrationChanged:(NSPopUpButton *)sender {
@@ -104,7 +107,7 @@ static NSArray<NSNumber *> *KPVibrationStrengths() { return @[@0,@0.25,@0.5,@1];
   std::ostringstream strength;strength<<KPVibrationStrengths()[index].floatValue;
   if(!RuntimeConfigFile::WriteSetting("controller","rumble",index>0?"true":"false")||
      (index>0&&!RuntimeConfigFile::WriteSetting("controller","rumble_strength",strength.str()))) {
-    self.settingsStatus.stringValue=@"Could not save this setting. Check that Config.toml is writable.";
+    self.settingsStatus.stringValue=@"Couldn’t save this setting. Check that Config.toml is writable.";
     [self refreshSettingsExtras];return;
   }
   self.settingsStatus.stringValue=index>0?[NSString stringWithFormat:@"Saved. Vibration is %@.",sender.titleOfSelectedItem.lowercaseString]:@"Saved. Controllers no longer vibrate.";
@@ -113,6 +116,10 @@ static NSArray<NSNumber *> *KPVibrationStrengths() { return @[@0,@0.25,@0.5,@1];
 - (void)backgroundPauseChanged:(NSButton *)sender {
   const BOOL on=sender.state==NSControlStateValueOn;
   [NSUserDefaults.standardUserDefaults setBool:on forKey:kKartPadBackgroundPauseDefaultsKey];
+  self.settingsStatus.stringValue=@"Saved.";
+}
+- (void)wiimoteSupportChanged:(NSButton *)sender {
+  [self setWiimoteSupport:sender.state==NSControlStateValueOn];
   self.settingsStatus.stringValue=@"Saved.";
 }
 - (void)restartFromSettings:(id)sender {
@@ -129,35 +136,38 @@ static NSArray<NSNumber *> *KPVibrationStrengths() { return @[@0,@0.25,@0.5,@1];
   } else if([sender isKindOfClass:NSSlider.class]) {
     std::ostringstream stream;stream<<sender.doubleValue/100.0;value=stream.str();
   } else value=((NSButton *)sender).state==NSControlStateValueOn?"true":"false";
+  // Sound ticked is audio.muted false.
+  if([key isEqual:@"audio.muted"]) value=((NSButton *)sender).state==NSControlStateValueOn?"false":"true";
+  // Bloom ticked clears its bit in the disabled paths.
   if([key isEqual:@"video.disabled_post_processing_paths"]) {
     uint32_t mask=RuntimeConfigFile::LoadConfigFile().disabledPostProcessingPaths.value_or(0);
-    mask=((NSButton *)sender).state==NSControlStateValueOn ? mask|0x10u : mask&~0x10u;
+    mask=((NSButton *)sender).state==NSControlStateValueOn ? mask&~0x10u : mask|0x10u;
     value=std::to_string(mask);
   }
   if(!RuntimeConfigFile::WriteSetting([parts[0] UTF8String],[parts[1] UTF8String],value)) {
-    self.settingsStatus.stringValue=@"Could not save this setting. Check that Config.toml is writable.";
+    self.settingsStatus.stringValue=@"Couldn’t save this setting. Check that Config.toml is writable.";
     [self refreshSettings];return;
   }
   if([key isEqual:@"video.vsync"]) {
     const bool changed=RuntimeConfigFile::LoadConfigFile().vsync.value_or(false)!=KPLaunchVsync;
     [self setRestartNeeded:changed for:@"vsync"];
-    self.settingsStatus.stringValue=changed?@"Saved. Applies after a restart.":@"Saved.";
+    self.settingsStatus.stringValue=changed?@"Saved. Restart to apply.":@"Saved.";
     [self refreshSettings];return;
   }
   if([key isEqual:@"video.fullscreen_across_notch"]) {
     const bool changed=KPFullscreenAcrossNotch()!=KPLaunchNotch;
     [self setRestartNeeded:changed for:@"notch"];
-    self.settingsStatus.stringValue=changed?@"Saved. Applies after a restart.":@"Saved.";
+    self.settingsStatus.stringValue=changed?@"Saved. Restart to apply.":@"Saved.";
     [self refreshSettings];return;
   }
   // Preserve the renderer's existing high-frame-rate resolution restriction.
   auto c=RuntimeConfigFile::LoadConfigFile();
   if(c.frameInterpolationFps.value_or(0)>60 && c.resolutionMultiplier.value_or(1)>4) {
     if(!RuntimeConfigFile::WriteSetting("video","resolution_multiplier","4")) {
-      self.settingsStatus.stringValue=@"Could not save the required 4× resolution limit. Check Config.toml permissions.";
+      self.settingsStatus.stringValue=@"Couldn’t save the 4× picture quality cap. Check that Config.toml is writable.";
       [self refreshSettings];return;
     }
-    self.settingsStatus.stringValue=@"Saved. Interpolation limits render resolution to 4×.";
+    self.settingsStatus.stringValue=@"Saved. Smoother motion caps picture quality at 4×.";
   } else self.settingsStatus.stringValue=[key isEqual:@"video.disabled_post_processing_paths"] ?
     @"Saved. Bloom changes apply when the next scene loads." : @"Saved.";
   KartPadRequestSettingsReload();
@@ -196,7 +206,7 @@ static NSArray<NSNumber *> *KPVibrationStrengths() { return @[@0,@0.25,@0.5,@1];
     self.settingsStatus.lineBreakMode=NSLineBreakByTruncatingTail;
     [self.settingsPanel.contentView addSubview:self.settingsStatus];
     // Shown while a change waits for a restart.
-    self.settingsRestart=[NSButton buttonWithTitle:@"Restart Now" target:self action:@selector(restartFromSettings:)];
+    self.settingsRestart=[NSButton buttonWithTitle:@"Restart" target:self action:@selector(restartFromSettings:)];
     self.settingsRestart.frame=NSMakeRect(820-24-130,5,130,32);
     self.settingsRestart.autoresizingMask=NSViewMinXMargin;
     [self.settingsPanel.contentView addSubview:self.settingsRestart];
@@ -204,28 +214,24 @@ static NSArray<NSNumber *> *KPVibrationStrengths() { return @[@0,@0.25,@0.5,@1];
     NSView *graphics=[self settingsPage:@"Graphics"];
     [graphics setFrameSize:NSMakeSize(780,850)];
     [self settingsLabel:@"Graphics & Display" page:graphics y:790].font=[NSFont boldSystemFontOfSize:19];
-    [self setting:@"video.cursor_auto_hide_seconds" label:@"Hide mouse pointer" choices:@[@"Never",@"After 3 seconds idle",@"After 5 seconds idle",@"After 10 seconds idle"] values:@[@0,@3,@5,@10] page:graphics y:730];
-    [self setting:@"video.resolution_multiplier" label:@"Render resolution" choices:@[@"Auto (window size)",@"Native (1×)",@"1.5×",@"2×",@"3×",@"4×",@"6×",@"8×"] values:@[@0,@1,@1.5,@2,@3,@4,@6,@8] page:graphics y:675];
-    [self setting:@"video.display_mode" label:@"Display mode" choices:@[@"Windowed",@"Borderless fullscreen",@"Exclusive fullscreen"] values:@[@"windowed",@"borderless",@"exclusive"] page:graphics y:620];
-    [self setting:@"video.frame_interpolation_fps" label:@"Frame interpolation" choices:@[@"Off (60 FPS)",@"120 FPS — experimental",@"180 FPS — experimental"] values:@[@0,@120,@180] page:graphics y:565];
-    [self settingsLabel:@"Limits resolution to 4×." page:graphics y:505];
-    [self setting:@"video.show_fps" checkbox:@"Show FPS counter" page:graphics y:455];
-    [self setting:@"video.disable_copy_filter" checkbox:@"Disable the Wii copy filter (sharper picture)" page:graphics y:405];
-    [self setting:@"video.disabled_post_processing_paths" checkbox:@"Disable bloom (applies at the next scene)" page:graphics y:355];
-    [self setting:@"video.skip_unready_pipelines" checkbox:@"Skip draws while shaders compile" page:graphics y:305];
-    [self setting:@"video.fullscreen_across_notch" checkbox:@"Use full display in borderless fullscreen (including notch area)" page:graphics y:245];
-    [self settingsLabel:@"Applies after a restart." page:graphics y:185];
-    [self setting:@"video.vsync" checkbox:@"VSync — experimental (requires restart)" page:graphics y:115];
-    [self settingsLabel:@"Settings shortcut: Command-comma or F10 (Fn–F10 on media-key keyboards)." page:graphics y:65];
+    [self setting:@"video.cursor_auto_hide_seconds" label:@"Hide the mouse pointer" choices:@[@"Never",@"After 3 seconds idle",@"After 5 seconds idle",@"After 10 seconds idle"] values:@[@0,@3,@5,@10] page:graphics y:730];
+    [self setting:@"video.resolution_multiplier" label:@"Picture quality" choices:@[@"Auto (window size)",@"Native (1×)",@"1.5×",@"2×",@"3×",@"4×",@"6×",@"8×"] values:@[@0,@1,@1.5,@2,@3,@4,@6,@8] page:graphics y:675];
+    [self setting:@"video.display_mode" label:@"Display mode" choices:@[@"Windowed",@"Standard full screen",@"Exclusive full screen"] values:@[@"windowed",@"borderless",@"exclusive"] page:graphics y:620];
+    [self setting:@"video.frame_interpolation_fps" label:@"Smoother motion" choices:@[@"Off · 60 fps",@"120 fps",@"180 fps"] values:@[@0,@120,@180] page:graphics y:565];
+    [self setting:@"video.show_fps" checkbox:@"Show frame rate" page:graphics y:505];
+    [self setting:@"video.disable_copy_filter" checkbox:@"Sharper picture" page:graphics y:455];
+    [self setting:@"video.disabled_post_processing_paths" checkbox:@"Bloom" page:graphics y:405];
+    [self setting:@"video.skip_unready_pipelines" checkbox:@"Skip effects still loading" page:graphics y:355];
+    [self setting:@"video.fullscreen_across_notch" checkbox:@"Use the notch area" page:graphics y:305];
+    [self setting:@"video.vsync" checkbox:@"VSync" page:graphics y:255];
 
     NSView *audio=[self settingsPage:@"Audio"];
     [self settingsLabel:@"Audio" page:audio y:680].font=[NSFont boldSystemFontOfSize:19];
     NSArray *keys=@[@"volume",@"music_volume",@"sound_effects_volume",@"ui_volume",@"voices_volume"];
-    NSArray *labels=@[@"Master volume",@"Music",@"Sound effects",@"Menu sounds",@"Character voices"];
+    NSArray *labels=@[@"Master volume",@"Music",@"Sound effects",@"Menu sounds in the game",@"Character voices"];
     for(int i=0;i<5;++i)[self setting:[@"audio." stringByAppendingString:keys[i]] volume:labels[i] page:audio y:620-i*60];
-    [self setting:@"audio.muted" checkbox:@"Mute game audio" page:audio y:295];
-    [self setting:@"audio.mix_worker" checkbox:@"Mix audio on a worker thread" page:audio y:245];
-    [self settingsLabel:@"Turn off only if sound crackles." page:audio y:180];
+    [self setting:@"audio.muted" checkbox:@"Sound" page:audio y:295];
+    [self setting:@"audio.mix_worker" checkbox:@"Mix audio on its own thread" page:audio y:245];
 
     // Controllers: the mapping panel, then vibration below it.
     NSView *controllers=[self settingsPage:@"Controllers"];
@@ -253,23 +259,21 @@ static NSArray<NSNumber *> *KPVibrationStrengths() { return @[@0,@0.25,@0.5,@1];
 #if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)
     [self settingsButton:@"Choose Retro Rewind Data…" action:@selector(chooseRetroRewindData:) page:data y:570];
 #endif
-    [self settingsLabel:@"Applies after a restart." page:data y:505];
-    [self settingsButton:@"Miis…" action:@selector(showMiis:) page:data y:440];
+    [self settingsButton:@"Miis…" action:@selector(showMiis:) page:data y:510];
     self.backgroundPauseSwitch=[NSButton checkboxWithTitle:@"Pause when you switch apps" target:self action:@selector(backgroundPauseChanged:)];
-    self.backgroundPauseSwitch.frame=NSMakeRect(24,395,715,28);[data addSubview:self.backgroundPauseSwitch];
-    [self setting:@"discord.enabled" checkbox:@"Discord Rich Presence" page:data y:355];
-    [self settingsButton:@"Open Application Support" action:@selector(showApplicationSupport:) page:data y:295];
-    [self settingsButton:@"Open Cache Folder" action:@selector(showCache:) page:data y:250];
-    [self settingsButton:@"Control Reference…" action:@selector(showControls:) page:data y:180];
+    self.backgroundPauseSwitch.frame=NSMakeRect(24,465,715,28);[data addSubview:self.backgroundPauseSwitch];
+    [self setting:@"discord.enabled" checkbox:@"Discord Rich Presence" page:data y:425];
+    [self settingsButton:@"Show KartPad files" action:@selector(showApplicationSupport:) page:data y:365];
+    [self settingsButton:@"Keyboard Controls" action:@selector(showControls:) page:data y:320];
 
     NSView *advanced=[self settingsPage:@"Advanced"];
     [self settingsLabel:@"Advanced & Diagnostics" page:advanced y:680].font=[NSFont boldSystemFontOfSize:19];
     [self settingsButton:@"Save Diagnostics Report…" action:@selector(saveDiagnostics:) page:advanced y:615];
-    [self settingsButton:@"Controller Compatibility Tools…" action:@selector(showControllerCompatibility:) page:advanced y:540];
-    [self settingsButton:@"Pair Wii Remote…" action:@selector(pairWiimote:) page:advanced y:465];
-    [self settingsLabel:@"Experimental." page:advanced y:400];
-    [self settingsButton:@"Private Wii Server…" action:@selector(showPrivateServer:) page:advanced y:330];
-    [self settingsLabel:@"Applies after a restart." page:advanced y:265];
+    [self settingsButton:@"Controller Compatibility Tools…" action:@selector(showControllerCompatibility:) page:advanced y:570];
+    [self settingsButton:@"Pair Wii Remote…" action:@selector(pairWiimote:) page:advanced y:525];
+    self.wiimoteSwitch=[NSButton checkboxWithTitle:@"Wii Remote support" target:self action:@selector(wiimoteSupportChanged:)];
+    self.wiimoteSwitch.frame=NSMakeRect(24,485,715,28);[advanced addSubview:self.wiimoteSwitch];
+    [self settingsButton:@"Private Wii Server…" action:@selector(showPrivateServer:) page:advanced y:425];
     [self.settingsPanel center];
     __weak KartPadMacShellController *weak=self;
     KartPadMiiPadSetSettings(self.settingsPanel,self.settingsTabs,^{

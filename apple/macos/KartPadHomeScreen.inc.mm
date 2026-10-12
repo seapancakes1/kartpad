@@ -9,6 +9,7 @@ extern "C" bool Network_HLE_HasOpenSockets();
 extern "C" bool KartPadGameStarting();
 static NSString *const KPHomeHintCountKey = @"KartPadHomeHintShownCount";
 static NSString *const KPHomeOpenedCountKey = @"KartPadHomeOpenedCount";
+static NSString *const KPHomeRestartTitle = @"Restart to Apply";
 
 static NSString *KPPlayerName(int slot) { return [NSString stringWithFormat:@"Player %d", slot + 1]; }
 static NSString *KPGameTitle(NSString *profile) {
@@ -165,6 +166,10 @@ static void KPShowRetroDownload(BOOL start);  // KartPadRetroDownload.inc.mm
 static BOOL KPRetroDownloadOffered();
 #endif
 static KPControllersScreen *KPMakeControllersScreen(int focusSlot);
+// A controller's small icon (KPFamilyGlyph, KartPadControllerArt.inc.mm).
+static KPUIGlyph KPDeviceGlyph(KPPadDevice *device) {
+  return device.isKeyboard ? KPUIGlyph::Keyboard : KPFamilyGlyph(device.family);
+}
 static KPScreen *KPMakeControllersScreenFor(int slot);
 static KPScreen *KPMakeSettingsScreen();
 static KPScreen *KPMakeMiisScreen();
@@ -194,7 +199,8 @@ static KPScreen *KPMakeMiisScreen();
   [self addSubview:self.bottomBar];
 
   self.resume = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
-    KPDrawTile(c, r, state, YES, KPUIGlyph::Play, @"Resume", nil);
+    // Blue only while it has the focus, so it never looks focused beside the tile that is.
+    KPDrawTile(c, r, state, state.focused, KPUIGlyph::Play, @"Resume", nil);
   } action:^{ [KPOverlay() closeAll]; }];
   self.resume.label = @"Resume";
   self.resume.sound = KPUISound::Confirm;
@@ -310,10 +316,10 @@ static KPScreen *KPMakeMiisScreen();
     const CGFloat dy = state.pressed ? 2 : 0;
     KPFill(c, CGRectInset(CGRectMake(r.origin.x, r.origin.y + dy, r.size.width, r.size.height - 3), 2, 2), KPP->caution, 6, 0.22);
     KPDrawGlyph(c, KPUIGlyph::Restart, CGRectMake(r.origin.x + 16, CGRectGetMidY(r) - 14 + dy, 26, 26), KPP->cautionInk);
-    KPTextWeight(@"Restart to apply", CGRectMake(r.origin.x + 50, CGRectGetMidY(r) - 13 + dy, r.size.width - 58, 26), 19, KPP->text,
+    KPTextWeight(KPHomeRestartTitle, CGRectMake(r.origin.x + 50, CGRectGetMidY(r) - 13 + dy, r.size.width - 58, 26), 19, KPP->text,
                  NSFontWeightSemibold, NSTextAlignmentLeft);
   } action:^{ [weakSelf askToRestart]; }];
-  self.restart.label = @"Restart to apply changes";
+  self.restart.label = KPHomeRestartTitle;
 
   self.slots = [NSMutableArray array];
   for (int slot = 0; slot < KPPlayerCount; ++slot) {
@@ -353,8 +359,9 @@ static KPScreen *KPMakeMiisScreen();
     [self place:self.switchGame at:CGRectMake(right - width, s.origin.y + 22, width, 58)];
     right -= width + 14;
   }
-  [self place:self.restart at:CGRectMake(right - 236, s.origin.y + 22, 236, 58)];
-  if (restart) right -= 236 + 14;
+  const CGFloat restartWidth = std::ceil(50 + KPTextSize(KPHomeRestartTitle, 19, NSFontWeightSemibold).width + 24);
+  [self place:self.restart at:CGRectMake(right - restartWidth, s.origin.y + 22, restartWidth, 58)];
+  if (restart) right -= restartWidth + 14;
   self.barButtonsLeft = right + 14;
   self.topBar.needsDisplay = YES;
 
@@ -366,8 +373,8 @@ static KPScreen *KPMakeMiisScreen();
   x += narrow + gap;
   [self place:self.controllers at:CGRectMake(x, top, narrow, height)];
 
-  // The volume, alone on its row.
-  [self place:self.volume at:CGRectMake(std::round(s.origin.x + (s.size.width - 820) / 2), s.origin.y + 396, 820, 74)];
+  // The volume, alone on its row. Toasts go in the gap under it (toastSpots).
+  [self place:self.volume at:CGRectMake(std::round(s.origin.x + (s.size.width - 820) / 2), s.origin.y + 388, 820, 74)];
 
   const CGFloat slotWidth = 282, slotGap = 16, slotTop = s.origin.y + 584;
   for (KPUIButton *button in self.slots)
@@ -375,6 +382,14 @@ static KPScreen *KPMakeMiisScreen();
 }
 
 - (KPUIButton *)initialFocus { return self.resume; }
+
+// Between the volume and the players: the middle, then either side.
+- (NSArray<NSValue *> *)toastSpots {
+  const CGRect s = self.safe;
+  const CGFloat y = s.origin.y + 462, mid = std::round(CGRectGetMidX(s) - KPToastWidth / 2);
+  return @[[NSValue valueWithPoint:NSMakePoint(mid, y)], [NSValue valueWithPoint:NSMakePoint(mid + KPToastWidth, y)],
+           [NSValue valueWithPoint:NSMakePoint(mid - KPToastWidth, y)]];
+}
 
 - (void)willAppear {
   [KPControllerRoster.shared.listeners addObject:self];
@@ -453,7 +468,10 @@ static KPScreen *KPMakeMiisScreen();
     self.topBar.needsDisplay = YES;
     self.resume.needsDisplay = YES;
   }
-  if (self.restart.hidden == KPRestartWaiting()) [self layoutDesign];
+  if (self.restart.hidden == KPRestartWaiting()) {
+    [self layoutDesign];
+    [KPOverlay() layoutToasts:YES];
+  }
   self.displayToggle.needsDisplay = YES;
 }
 
@@ -494,16 +512,21 @@ static KPScreen *KPMakeMiisScreen();
   KPFill(c, CGRectMake(0, height - 4, size.width, 4), KPP->accentBottom);
   KPFill(c, CGRectMake(0, height - 4, size.width, 1.5), KPP->accentTop, 0, 0.8);
   KPDrawGlyph(c, KPUIGlyph::Home, CGRectMake(s.origin.x + 52, s.origin.y + 26, 46, 46), KPP->accentBottom);
-  KPTextWeight(@"HOME", CGRectMake(s.origin.x + 110, s.origin.y + 24, 200, 50), 38, KPP->text, NSFontWeightHeavy, NSTextAlignmentLeft);
-  // Beside the title, what's playing. It gives way to the bar's buttons when they reach it (a waiting
-  // restart, with the other game's pill).
+  // Beside the title, what's playing; under it while the bar's buttons (a waiting restart, with the
+  // other game's pill) leave no room beside.
+  NSString *playing = self.canPause ? KPGameTitle(KPRunningProfile()) : nil;
   const CGFloat room = self.barButtonsLeft - 18;
-  if (self.canPause) {
-    NSString *playing = KPGameTitle(KPRunningProfile());
-    if (s.origin.x + 260 + KPTextSize(playing, 20, NSFontWeightMedium).width <= room)
-      KPTextWeight(playing, CGRectMake(s.origin.x + 260, s.origin.y + 38, 460, 28), 20, KPP->secondaryText, NSFontWeightMedium,
-                   NSTextAlignmentLeft);
+  const BOOL beside = playing && s.origin.x + 260 + KPTextSize(playing, 20, NSFontWeightMedium).width <= room;
+  if (playing && !beside) {
+    KPTextWeight(@"HOME", CGRectMake(s.origin.x + 110, s.origin.y + 12, 200, 50), 38, KPP->text, NSFontWeightHeavy, NSTextAlignmentLeft);
+    KPTextWeight(playing, CGRectMake(s.origin.x + 112, s.origin.y + 60, room - s.origin.x - 112, 24), 17, KPP->secondaryText,
+                 NSFontWeightMedium, NSTextAlignmentLeft);
+    return;
   }
+  KPTextWeight(@"HOME", CGRectMake(s.origin.x + 110, s.origin.y + 24, 200, 50), 38, KPP->text, NSFontWeightHeavy, NSTextAlignmentLeft);
+  if (beside)
+    KPTextWeight(playing, CGRectMake(s.origin.x + 260, s.origin.y + 38, 460, 28), 20, KPP->secondaryText, NSFontWeightMedium,
+                 NSTextAlignmentLeft);
 }
 
 - (void)drawBottomBar:(CGContextRef)c size:(CGSize)size {
@@ -523,7 +546,7 @@ static KPScreen *KPMakeMiisScreen();
                NSFontWeightSemibold, NSTextAlignmentLeft);
   // Which buttons do what, for the controller in hand.
   KPDrawHints(c, CGRectMake(s.origin.x + 1280 - 52 - 760, s.origin.y + 552 - origin, 760, 26),
-              {{KartPadMiiPadConfirm, @"Select"}, {KartPadMiiPadUndo, @"Find controller"}, {KartPadMiiPadBack, @"Close"}}, 16,
+              {{KartPadMiiPadConfirm, @"Select"}, {KartPadMiiPadUndo, @"Find"}, {KartPadMiiPadBack, @"Close"}}, 16,
               NSTextAlignmentRight);
 }
 
@@ -566,8 +589,7 @@ static KPScreen *KPMakeMiisScreen();
   KPTextWeight(mii[@"name"] ?: KPPlayerName(slot), CGRectMake(x, r.origin.y + 20 + dy, width - (battery ? 40 : 0), 28), 20, KPP->text,
                NSFontWeightSemibold, NSTextAlignmentLeft);
   if (battery) KPDrawBattery(c, CGRectMake(CGRectGetMaxX(r) - 16 - 32, r.origin.y + 22 + dy, 32, 24), device);
-  KPDrawGlyph(c, device.isKeyboard ? KPUIGlyph::Keyboard : device.family == KPFamilyWiiRemote ? KPUIGlyph::WiiRemote : KPUIGlyph::Pad,
-              CGRectMake(x, r.origin.y + 54 + dy, 22, 22), KPP->secondaryText);
+  KPDrawGlyph(c, KPDeviceGlyph(device), CGRectMake(x, r.origin.y + 54 + dy, 22, 22), KPP->secondaryText);
   KPTextWeight(device.name, CGRectMake(x + 28, r.origin.y + 56 + dy, width - 28, 22), 15, KPP->secondaryText, NSFontWeightMedium,
                NSTextAlignmentLeft);
 }
@@ -751,7 +773,7 @@ static void KPToastController(NSString *name, KPPadFamily family, NSString *syst
   if (slot >= 0) art.accent = KPPlayerColors[slot];
   [KPOverlay() toastController:slot >= 0 ? KPPlayerName(slot) : name detail:slot >= 0 ? name : @"Press any button to join"
                         player:slot image:portrait icon:^(CGContextRef c, CGRect r) {
-    KPDrawGlyph(c, family == KPFamilyWiiRemote ? KPUIGlyph::WiiRemote : KPUIGlyph::Pad, r, KPP->secondaryText);
+    KPDrawGlyph(c, KPFamilyGlyph(family), r, KPP->secondaryText);
   } art:^(CGContextRef c, CGRect r) { KPDrawControllerArt(c, r, family, art, systemName); }];
 }
 
@@ -892,11 +914,12 @@ static void KPShowHomeHint() {
     KPControllerDropped(slot, device.name, [self miiFor:device]);
     return;
   }
-  NSString *heading = slot >= 0 ? [NSString stringWithFormat:@"Player %d's controller disconnected", slot + 1]
+  NSString *heading = slot >= 0 ? [NSString stringWithFormat:@"Player %d’s controller disconnected", slot + 1]
                                 : [NSString stringWithFormat:@"%@ disconnected", device.name];
+  const KPUIGlyph glyph = KPDeviceGlyph(device);
   [KPOverlay() toast:heading detail:nil
               stripe:slot >= 0 ? KPPlayerColors[slot] : 0 icon:^(CGContextRef c, CGRect r) {
-    KPDrawGlyph(c, KPUIGlyph::Pad, r, KPP->secondaryText);
+    KPDrawGlyph(c, glyph, r, KPP->secondaryText);
   } image:nil];
   KPUIPlay(KPUISound::Close);
 }
@@ -915,8 +938,8 @@ static void KPShowHomeHint() {
   if (!announce) return;
   const int slot = device.slot;
   const int percent = device.battery;
-  [KPOverlay() toast:slot >= 0 ? [NSString stringWithFormat:@"Player %d's battery is low", slot + 1]
-                               : [NSString stringWithFormat:@"%@ battery is low", device.name]
+  [KPOverlay() toast:slot >= 0 ? [NSString stringWithFormat:@"Player %d’s battery is low", slot + 1]
+                               : [NSString stringWithFormat:@"%@’s battery is low", device.name]
               detail:[NSString stringWithFormat:@"%d%% left", percent]
               stripe:slot >= 0 ? KPPlayerColors[slot] : 0 icon:^(CGContextRef c, CGRect r) {
     KPDrawGlyph(c, KPUIGlyph::Battery, r, 0xd0342c, percent / 100.0);

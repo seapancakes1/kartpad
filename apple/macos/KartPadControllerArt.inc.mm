@@ -885,6 +885,11 @@ static void KPArtKeyboard(const KPArtCtx &a) {
 static void KPDrawControllerArt(CGContextRef c, CGRect r, KPPadFamily family, const KPArtState &state, NSString *systemName = nil) {
   const CGFloat s = std::min(r.size.width / 200, r.size.height / 124);
   if (!(s > 0)) return;
+  // A phone: the handset with the controller page on it (KartPadPhoneControllers.inc.mm).
+  if (family == KPFamilyPhone) {
+    KPDrawPhoneArt(c, CGRectInset(r, r.size.width * 0.03, r.size.height * 0.14), state.accent);
+    return;
+  }
   const bool dark = KPP == &KPDarkPalette;
   CGContextSaveGState(c);
   CGContextTranslateCTM(c, r.origin.x + (r.size.width - 200 * s) / 2, r.origin.y + (r.size.height - 124 * s) / 2);
@@ -919,4 +924,14 @@ static KPArtState KPArtStateFor(KPPadDevice *device, unsigned accent) {
     for (int axis = 0; axis < SDL_GAMEPAD_AXIS_COUNT; ++axis) state.axes[axis] = device->axes[axis];
   }
   return state;
+}
+
+// The small icon for a kind of controller, where there's no room for its drawing (toasts, HOME).
+static KPUIGlyph KPFamilyGlyph(KPPadFamily family) {
+  switch (family) {
+    case KPFamilyKeyboard: return KPUIGlyph::Keyboard;
+    case KPFamilyWiiRemote: return KPUIGlyph::WiiRemote;
+    case KPFamilyPhone: return KPUIGlyph::Phone;
+    default: return KPUIGlyph::Pad;
+  }
 }

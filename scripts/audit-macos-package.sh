@@ -30,6 +30,14 @@ test "$(plutil -extract CFBundleShortVersionString raw "${plist}")" = "${KARTPAD
 test "$(plutil -extract CFBundleVersion raw "${plist}")" = "${KARTPAD_EXPECTED_BUILD:-${release_build}}"
 test "$(plutil -extract NSBluetoothAlwaysUsageDescription raw "${plist}")" = \
   "KartPad uses Bluetooth to pair controllers, including Wii Remotes."
+for usage_key in NSLocalNetworkUsageDescription NSDownloadsFolderUsageDescription \
+  NSDesktopFolderUsageDescription NSDocumentsFolderUsageDescription \
+  NSRemovableVolumesUsageDescription NSNetworkVolumesUsageDescription NSHumanReadableCopyright; do
+  if [[ -z "$(plutil -extract "${usage_key}" raw "${plist}" 2>/dev/null)" ]]; then
+    echo "Info.plist lacks ${usage_key}" >&2
+    exit 65
+  fi
+done
 test -x "${executable}"
 test -f "${contents}/Resources/${icon_name%.icns}.icns"
 cmp "${contents}/Resources/${icon_name%.icns}.icns" "${repo_root}/branding/exports/KartPad.icns"
@@ -46,6 +54,19 @@ if [[ ! -f "${contents}/Resources/initial_pipeline_cache.db" ]]; then
   exit 66
 fi
 test -d "${contents}/Resources/Runtime/wii_bootstrap/shared2/wc24"
+licenses="${contents}/Resources/Licenses"
+for license_file in LICENSE THIRD_PARTY_NOTICES.md RIGHTS_AND_LICENSES.md LICENSES/GPL-3.0.txt; do
+  if ! cmp -s "${licenses}/${license_file}" "${repo_root}/${license_file}"; then
+    echo "package lacks current license file: Licenses/${license_file}" >&2
+    exit 66
+  fi
+done
+for component in WiiCompiled aurora libdatachannel libjuice usrsctp plog mbedtls; do
+  if [[ -z "$(ls -A "${licenses}/ThirdParty/${component}" 2>/dev/null)" ]]; then
+    echo "package lacks the license for ${component}" >&2
+    exit 66
+  fi
+done
 if [[ "$(file -b "${executable}")" != *"Mach-O 64-bit executable arm64"* ]]; then
   echo "main executable is not arm64 Mach-O" >&2
   exit 65
@@ -105,8 +126,8 @@ done
 executable_strings="$(strings "${executable}")"
 for shell_contract in \
   "KartPad Settings" \
-  "KartPad Controls" \
-  "Original Mario Kart Wii" \
+  "Keyboard Controls" \
+  "useOriginalGame:" \
   "Retro Rewind" \
   "chooseRetroRewindData:" \
   "RMCP01-r0-retro-rewind" \
@@ -115,14 +136,14 @@ for shell_contract in \
   "Rename License" \
   "Licenses without a Mii" \
   "Duplicate Mii" \
-  "Save for Next Launch" \
-  "Experimental Wii Remote + Nunchuk" \
+  "showPrivateServer:" \
+  "Pair Wii Remote" \
   "Wii Remote + Nunchuk (Experimental)" \
   "Use item" \
   "Left Shift (Classic L)" \
   "Select / minus" \
   "showControls:" \
-  "Render resolution" \
+  "Picture quality" \
   "ControllerProfiles.json" \
   "Graphics & Display" \
   "Controller Compatibility Tools" \
@@ -138,14 +159,13 @@ for shell_contract in \
   "reviewWarning=Review this report before sharing. Arbitrary runtime text may still require review." \
   "KartPad only supports the PAL version (RMCP01)." \
   "80d18895b39c63bd80f457398bfcbb91b7d16ac116a41a88967e954080155b05" \
-  "Show KartPad Data" \
-  "Show KartPad Cache" \
+  "Show KartPad Files" \
   "Save Diagnostics Report" \
   "privacy=personal paths are replaced; game data, translated code, save contents, credentials, device identifiers, signing material, and unbounded logs are omitted"; do
   # These selectors/preferences are compiled only into the dual launcher.
   if [[ "${product}" != dual ]]; then
     case "${shell_contract}" in
-      "chooseRetroRewindData:"|"KartPadRuntimeProfile") continue ;;
+      "chooseRetroRewindData:"|"useOriginalGame:"|"KartPadRuntimeProfile") continue ;;
     esac
   fi
   if ! rg -F -q "${shell_contract}" <<<"${executable_strings}"; then

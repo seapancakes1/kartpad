@@ -10,7 +10,8 @@
 
 typedef NS_ENUM(NSInteger, KPPadFamily) {
   KPFamilyKeyboard, KPFamilyXbox, KPFamilyPlayStation, KPFamilySwitch, KPFamilyJoyCon,
-  KPFamilyWiiRemote, KPFamilyGameCube, KPFamilyGeneric
+  KPFamilyWiiRemote, KPFamilyGameCube, KPFamilyGeneric,
+  KPFamilyPhone  // a phone playing through KartPad's controller page (KartPadPhoneControllers.inc.mm)
 };
 
 static constexpr int KPPlayerCount = 4;
@@ -43,11 +44,13 @@ static NSString *KPHex(NSData *data) {
 @property(nonatomic) NSTimeInterval lastInput, connectedAt;
 @property(nonatomic) NSInteger rawCount;  // SDL joystick without a gamepad mapping
 - (BOOL)isKeyboard;
+- (BOOL)isPhone;  // family KPFamilyPhone
 - (SDL_Gamepad *)gamepad;
 @end
 
 @implementation KPPadDevice
 - (BOOL)isKeyboard { return self.joystick == 0; }
+- (BOOL)isPhone { return self.family == KPFamilyPhone; }
 - (SDL_Gamepad *)gamepad { return self.joystick ? SDL_GetGamepadFromID(self.joystick) : nullptr; }
 @end
 
@@ -56,6 +59,8 @@ static BOOL KPIsWiiRemoteName(const char *name) { return name != nullptr && strn
 static KPPadFamily KPFamilyFor(SDL_Gamepad *pad) {
   const char *name = SDL_GetGamepadName(pad);
   if (KPIsWiiRemoteName(name)) return KPFamilyWiiRemote;
+  // Phones' virtual pads are named "Phone 1"–"Phone 4" (KPPhoneServer seatPhone:then:).
+  if (name && strncmp(name, "Phone ", 6) == 0 && SDL_IsJoystickVirtual(SDL_GetGamepadID(pad))) return KPFamilyPhone;
   const Uint16 vendor = SDL_GetGamepadVendor(pad), product = SDL_GetGamepadProduct(pad);
   if (name && (strstr(name, "GameCube") || strstr(name, "Gamecube"))) return KPFamilyGameCube;
   if (vendor == 0x057e && (product == 0x0337 || product == 0x2073)) return KPFamilyGameCube;
@@ -98,6 +103,7 @@ static NSString *KPFriendlyName(SDL_Gamepad *pad, KPPadFamily family) {
       return @"Wii Remote";
     case KPFamilyGameCube: return @"GameCube controller";
     case KPFamilyKeyboard: return @"Keyboard";
+    case KPFamilyPhone: return name.length ? name : @"Phone";
     case KPFamilyGeneric:
       if (SDL_GetGamepadVendor(pad) == 0x2dc8) return @"8BitDo controller";
       return name.length && name.length <= 24 && ![name isEqualToString:@"Controller"] ? name : @"Controller";
@@ -115,6 +121,7 @@ static NSString *KPHomeButtonName(KPPadFamily family) {
     case KPFamilyJoyCon:
     case KPFamilyWiiRemote: return @"HOME";
     case KPFamilyGameCube: return @"Start";  // held
+    case KPFamilyPhone:
     case KPFamilyGeneric: return @"HOME";
   }
   return @"HOME";
@@ -127,6 +134,33 @@ static int KPKeyboardPort() {
     if (PADGetKeyButtonBindings(port, &count) != nullptr) return port;
   }
   return -1;
+}
+
+// As Player 1 the keyboard plays as a Classic Controller (runtime kpad.cpp, Wii channel 0), with
+// keys of its own; on another player it's a GameCube controller with Aurora's key bindings. The
+// Buttons screen changes the Classic keys; they're kept here, {scancode: Classic buttons} for the
+// keys that differ from the game's start.
+static NSString *const KPKeyboardClassicKeysKey = @"KartPadKeyboardClassicKeys";
+extern "C" uint32_t KartPadKeyboardClassicButtons(int scancode);         // runtime kpad.cpp
+extern "C" uint32_t KartPadDefaultKeyboardClassicButtons(int scancode);
+extern "C" void KartPadSetKeyboardClassicButtons(int scancode, uint32_t buttons);
+static void KPSaveKeyboardClassicKeys() {
+  NSMutableDictionary<NSString *, NSNumber *> *changed = [NSMutableDictionary dictionary];
+  for (int code = 0; code < SDL_SCANCODE_COUNT; ++code) {
+    const uint32_t buttons = KartPadKeyboardClassicButtons(code);
+    if (buttons != KartPadDefaultKeyboardClassicButtons(code)) changed[@(code).stringValue] = @(buttons);
+  }
+  NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+  if (changed.count) [defaults setObject:changed forKey:KPKeyboardClassicKeysKey];
+  else [defaults removeObjectForKey:KPKeyboardClassicKeysKey];
+}
+static void KPLoadKeyboardClassicKeys() {
+  NSDictionary *saved = [NSUserDefaults.standardUserDefaults dictionaryForKey:KPKeyboardClassicKeysKey];
+  for (NSString *key in saved) {
+    NSNumber *buttons = saved[key];
+    if ([key isKindOfClass:NSString.class] && [buttons isKindOfClass:NSNumber.class])
+      KartPadSetKeyboardClassicButtons(key.intValue, buttons.unsignedIntValue);
+  }
 }
 
 // Pads on a GameCube port. Wii Remotes have one too (Aurora gives every controller a port; the
@@ -169,6 +203,8 @@ static void KPFixBareWiiRemoteMapping(SDL_JoystickID id) {
 @property(nonatomic, strong) KPPadDevice *lastActive;
 @property(nonatomic, strong) NSHashTable<id<KPRosterListener>> *listeners;
 @property(nonatomic) BOOL quiet;  // the Controllers screen animates changes itself; no toasts meanwhile
+// The controller announceGone: is reporting, while it does (the disconnected card draws it).
+@property(nonatomic, strong) KPPadDevice *leaving;
 // Controllers someone took out with Stop playing: pressing a button doesn't bring them back in
 // (KPAutoJoinTick) until they're given a player again. Until they disconnect, by identifier.
 @property(nonatomic, strong) NSMutableSet<NSString *> *benched;
@@ -299,6 +335,7 @@ static void KPHintDeviceChanged();  // KartPadHints.inc.mm
   if (!_started) {
     _started = YES;
     _startedAt = now;
+    KPLoadKeyboardClassicKeys();
   }
   NSMutableArray<KPPadDevice *> *pads = [NSMutableArray array];
   NSMutableSet<NSString *> *seen = [NSMutableSet set];
@@ -441,7 +478,11 @@ static void KPHintDeviceChanged();  // KartPadHints.inc.mm
   const BOOL announce = !self.quiet && now - _startedAt > 4;
   if (announce) {
     for (KPPadDevice *pad in added) [self announceConnected:pad];
-    for (KPPadDevice *pad in gone) [self announceGone:pad];
+    for (KPPadDevice *pad in gone) {
+      self.leaving = pad;
+      [self announceGone:pad];
+      self.leaving = nil;
+    }
   }
   for (KPPadDevice *pad in pads) [self checkBattery:pad announce:announce];
   if (changed)

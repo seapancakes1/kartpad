@@ -5,7 +5,8 @@
 // New glyphs go at the end: some code stores them as ints.
 enum class KPUIGlyph {
   Home, Play, Swap, Mii, Pad, Gear, Power, Speaker, SpeakerOff, Window, FullScreen, Plus, Keyboard,
-  Restart, Find, Move, Close, Chevron, Back, WiiRemote, Bluetooth, Check, Buttons, Battery, Disc, Order, Search, Ghost, Export
+  Restart, Find, Move, Close, Chevron, Back, WiiRemote, Bluetooth, Check, Buttons, Battery, Disc, Order, Search, Ghost, Export,
+  Phone, Download, Folder, Picture, Game, Advanced
 };
 
 static void KPGlyphPath(CGContextRef c, CGPathRef path, bool fill) {
@@ -376,6 +377,88 @@ static void KPDrawGlyph(CGContextRef c, KPUIGlyph glyph, CGRect rect, unsigned i
       KPGlyphRing(c, 17.5, 17.5, 10);
       CGContextSetLineWidth(c, 4.4);
       KPLine(c, 25.2, 25.2, 33, 33);
+      break;
+    }
+    case KPUIGlyph::Phone: {
+      // A phone held upright: wider than a remote, with a notch and a home bar.
+      CGContextSetLineWidth(c, 3.2);
+      KPGlyphRounded(c, CGRectMake(10.5, 3.5, 19, 33), 5, false);
+      KPGlyphRounded(c, CGRectMake(16.5, 7, 7, 2.6), 1.3, true);
+      CGContextSetLineWidth(c, 2.8);
+      KPLine(c, 16.5, 31.5, 23.5, 31.5);
+      break;
+    }
+    case KPUIGlyph::Download: {
+      // An arrow down into a tray: bring a copy here. Export's opposite.
+      CGMutablePathRef p = CGPathCreateMutable();
+      CGPathMoveToPoint(p, nullptr, 8, 22);
+      CGPathAddLineToPoint(p, nullptr, 8, 34);
+      CGPathAddLineToPoint(p, nullptr, 32, 34);
+      CGPathAddLineToPoint(p, nullptr, 32, 22);
+      KPGlyphPath(c, p, false);
+      CGPathRelease(p);
+      KPGlyphArrow(c, CGPointMake(20, 5), CGPointMake(20, 27), 7);
+      break;
+    }
+    case KPUIGlyph::Folder: {
+      // A folder with a tab: choose a folder or a file.
+      CGContextSetLineWidth(c, 3.2);
+      CGMutablePathRef p = CGPathCreateMutable();
+      CGPathMoveToPoint(p, nullptr, 4, 20);
+      CGPathAddArcToPoint(p, nullptr, 4, 8, 15, 8, 3);
+      CGPathAddLineToPoint(p, nullptr, 15, 8);
+      CGPathAddLineToPoint(p, nullptr, 19, 12);
+      CGPathAddArcToPoint(p, nullptr, 36, 12, 36, 33, 3);
+      CGPathAddArcToPoint(p, nullptr, 36, 33, 4, 33, 3);
+      CGPathAddArcToPoint(p, nullptr, 4, 33, 4, 8, 3);
+      CGPathCloseSubpath(p);
+      KPGlyphPath(c, p, false);
+      CGPathRelease(p);
+      KPLine(c, 4, 18, 36, 18);
+      break;
+    }
+    case KPUIGlyph::Picture: {
+      // A landscape photo: hills and a sun in a frame.
+      CGContextSetLineWidth(c, 3.2);
+      CGPathRef frame = CGPathCreateWithRoundedRect(CGRectMake(4, 7, 32, 26), 5, 5, nullptr);
+      CGContextSaveGState(c);
+      CGContextAddPath(c, frame);
+      CGContextClip(c);
+      CGMutablePathRef hills = CGPathCreateMutable();
+      CGPathMoveToPoint(hills, nullptr, 4, 33);
+      CGPathAddLineToPoint(hills, nullptr, 4, 30);
+      CGPathAddLineToPoint(hills, nullptr, 15, 19);
+      CGPathAddLineToPoint(hills, nullptr, 22.5, 26.5);
+      CGPathAddLineToPoint(hills, nullptr, 27, 22);
+      CGPathAddLineToPoint(hills, nullptr, 36, 31);
+      CGPathAddLineToPoint(hills, nullptr, 36, 33);
+      CGPathCloseSubpath(hills);
+      KPGlyphPath(c, hills, true);
+      CGPathRelease(hills);
+      CGContextRestoreGState(c);
+      KPGlyphPath(c, frame, false);
+      CGPathRelease(frame);
+      CGContextFillEllipseInRect(c, CGRectMake(24, 11.5, 6, 6));
+      break;
+    }
+    case KPUIGlyph::Game: {
+      // A steering wheel: the game's own settings.
+      KPGlyphRing(c, 20, 20, 15);
+      KPLine(c, 5.5, 19, 34.5, 19);
+      KPLine(c, 20, 21, 20, 34.5);
+      CGContextFillEllipseInRect(c, CGRectMake(14.5, 14, 11, 11));
+      break;
+    }
+    case KPUIGlyph::Advanced: {
+      // Three sliders set at different points: fine-tuning.
+      CGContextSetLineWidth(c, 3);
+      const CGFloat knobs[3][2] = {{12, 9}, {27, 20}, {17, 31}};
+      for (const auto &k : knobs) {
+        const CGFloat x = k[0], y = k[1];
+        KPLine(c, 4.5, y, x - 5.5, y);
+        KPLine(c, x + 5.5, y, 35.5, y);
+        KPGlyphRing(c, x, y, 3.8);
+      }
       break;
     }
   }
