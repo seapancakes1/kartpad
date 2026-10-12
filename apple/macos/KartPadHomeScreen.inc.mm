@@ -1,8 +1,9 @@
 // HOME: what the HOME / Guide / PS button (or Esc) opens over the game, in the spirit of the Wii's
 // HOME Menu. The game holds still underneath (dimmed), a bar slides down from the top and the
 // players' strip up from the bottom, and the big tiles in between do the everyday things: carry on,
-// Miis, controllers. The volume has a row of its own (left and right only ever change it); the other
-// game, full screen, Settings and Quit sit in the top bar, with a pending restart beside them.
+// Miis, controllers. The volume has a row of its own (left and right only ever change it); full
+// screen, Settings and Quit sit in the top bar, with a pending restart beside them, and the game
+// that's playing, beside the title, switches to the other.
 // Included by KartPadMacShell.mm after the overlay.
 
 extern "C" bool Network_HLE_HasOpenSockets();
@@ -205,10 +206,10 @@ static KPScreen *KPMakeMiisScreen();
   self.resume.label = @"Resume";
   self.resume.sound = KPUISound::Confirm;
 
-  // The other game, in the top bar: switching is rare, so it isn't a tile. The pill names the game A
-  // switches to, as Full Screen does.
+  // The other game: switching is rare, so it's a small pill beside the title, naming the game that's
+  // playing, with the swap arrows.
   self.switchGame = [self button:CGRectZero face:^(CGContextRef c, CGRect r, KPUIState state) {
-    KPDrawPill(c, r, state, KPStyle::Plain, KPUIGlyph::Disc, KPGameTitle(KPOtherProfile()));
+    KPDrawPill(c, r, state, KPStyle::Plain, KPUIGlyph::Swap, KPGameTitle(KPRunningProfile()));
   } action:^{ [weakSelf askToSwitch]; }];
   self.switchGame.label = [NSString stringWithFormat:@"Switch to %@", KPGameTitle(KPOtherProfile())];
   self.switchGame.hidden = !KPCanSwitchGames();
@@ -342,7 +343,8 @@ static KPScreen *KPMakeMiisScreen();
   [self place:self.topBar at:CGRectMake(0, 0, stage.width, topHeight + 14)];
   [self place:self.bottomBar at:CGRectMake(0, bottomTop - 14, stage.width, stage.height - bottomTop + 14)];
 
-  // The top bar, from the right: Quit, Settings, full screen, the other game, and a waiting restart.
+  // The top bar, from the right: Quit, Settings, full screen and a waiting restart; on the left, after
+  // the title, the game switch.
   const BOOL restart = KPRestartWaiting();
   self.restart.hidden = !restart;
   CGFloat right = CGRectGetMaxX(s) - 52;
@@ -353,11 +355,10 @@ static KPScreen *KPMakeMiisScreen();
   [self place:self.displayToggle at:CGRectMake(right - 210, s.origin.y + 22, 210, 58)];
   right -= 210 + 14;
   if (KPCanSwitchGames()) {
-    // Sized to the game's name, with the same margins as the other pills' words.
+    // Sized to the game's name (a 24-point icon at this height), centred on the house (y 49).
     const CGFloat width =
-        std::ceil(30 + 10 + KPTextSize(KPGameTitle(KPOtherProfile()), 21, NSFontWeightSemibold).width + 64);
-    [self place:self.switchGame at:CGRectMake(right - width, s.origin.y + 22, width, 58)];
-    right -= width + 14;
+        std::ceil(24 + 10 + KPTextSize(KPGameTitle(KPRunningProfile()), 21, NSFontWeightSemibold).width + 40);
+    [self place:self.switchGame at:CGRectMake(s.origin.x + 252, s.origin.y + 24, width, 50)];
   }
   const CGFloat restartWidth = std::ceil(50 + KPTextSize(KPHomeRestartTitle, 19, NSFontWeightSemibold).width + 24);
   [self place:self.restart at:CGRectMake(right - restartWidth, s.origin.y + 22, restartWidth, 58)];
@@ -512,9 +513,9 @@ static KPScreen *KPMakeMiisScreen();
   KPFill(c, CGRectMake(0, height - 4, size.width, 4), KPP->accentBottom);
   KPFill(c, CGRectMake(0, height - 4, size.width, 1.5), KPP->accentTop, 0, 0.8);
   KPDrawGlyph(c, KPUIGlyph::Home, CGRectMake(s.origin.x + 52, s.origin.y + 26, 46, 46), KPP->accentBottom);
-  // Beside the title, what's playing; under it while the bar's buttons (a waiting restart, with the
-  // other game's pill) leave no room beside.
-  NSString *playing = self.canPause ? KPGameTitle(KPRunningProfile()) : nil;
+  // Beside the title, what's playing (the game switch shows it, where there is one); under it while
+  // the bar's buttons leave no room beside.
+  NSString *playing = self.canPause && !KPCanSwitchGames() ? KPGameTitle(KPRunningProfile()) : nil;
   const CGFloat room = self.barButtonsLeft - 18;
   const BOOL beside = playing && s.origin.x + 260 + KPTextSize(playing, 20, NSFontWeightMedium).width <= room;
   if (playing && !beside) {

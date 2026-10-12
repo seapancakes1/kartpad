@@ -26,13 +26,13 @@ underneath (online the race keeps going, and HOME says so). HOME has:
 - **Resume**, and HOME or B again closes it.
 - **Miis** and **Controllers**.
 - **Volume** on a row of its own: left and right change it, A mutes (the level stays, greyed), and the pointer drags it along the track.
-- Along the top: the other game to switch to (Mario Kart Wii ⇄ Retro Rewind),
-  **Full Screen** (or **Window**), the ⚙ button for
+- Along the top: **Full Screen** (or **Window**), the ⚙ button for
   **Settings**, **Quit**, and **Restart to apply** when a change needs one
-  (switching games, Mii changes, new game files, display settings). KartPad
+  (switching games, Mii changes, new game files, display settings). Beside the
+  HOME title is the game that's playing; in the two-game build it's a small
+  ⇄ button that switches to the other (Mario Kart Wii ⇄ Retro Rewind). KartPad
   restarts to switch games, but its window shows a "Starting Retro Rewind" card
-  the whole time, so it doesn't look like the app closed. Beside the HOME title
-  is the game that's playing.
+  the whole time, so it doesn't look like the app closed.
 - **Players** along the bottom: each player's colour, Mii, controller and
   battery. X on a player makes their controller buzz and flash; A opens
   Controllers on them, and on an empty player goes straight to "Press Ⓐ on the
