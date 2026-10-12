@@ -111,7 +111,7 @@ the companion action. Never replace rating files while the game runs, edit
 ratings, reset identity or publish saves, Miis or friend codes. Automatic
 Syncthing/two-way folder synchronization is not implemented.
 
-On Mac, **Data → Show KartPad Data** opens KartPad's support directory. Quit
+On Mac, **Data → Show KartPad Files** opens KartPad's support directory. Quit
 the game before backing it up. On Apple TV, use
 [`backup-tvos-state.sh`](../scripts/backup-tvos-state.sh) as described in the
 [testing guide](TVOS-TESTING.md); its cache storage can be purged by tvOS.

@@ -103,7 +103,7 @@ picker ([#380](https://github.com/chrissotraidis/kartpad/issues/380)) and auto-h
 Separate music and game-sound volume, including muting the game to play your
 own music ([#411](https://github.com/chrissotraidis/kartpad/issues/411)), is in
 progress: ••• → **Sound…** on Android and iPhone/iPad, in the next release. On
-the Mac it's already in **Game → Game Settings… → Audio**.
+the Mac it's already in **KartPad → Settings… → Sound**.
 
 Ghost import/export ([#295](https://github.com/chrissotraidis/kartpad/issues/295)), older iOS and macOS versions ([#300](https://github.com/chrissotraidis/kartpad/issues/300)),
 AirPlay and external displays ([#100](https://github.com/chrissotraidis/kartpad/issues/100)), DSU controller apps ([#91](https://github.com/chrissotraidis/kartpad/issues/91)) and

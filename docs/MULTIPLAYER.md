@@ -1,8 +1,8 @@
 # Multiplayer and controllers
 
-Open **••• → Multiplayer…** on iPhone/iPad, **Controls → Multiplayer…** on
+Open **••• → Multiplayer…** on iPhone/iPad, **Controls → Multiplayer** on
 Mac, or **Multiplayer…** on the Apple TV game chooser. The menu covers
-Original Mario Kart Wii and Retro Rewind; available online guidance depends on
+Mario Kart Wii and Retro Rewind; available online guidance depends on
 the game profile. Apple mobile menu names below follow 0.4.10 and later.
 
 ## iPhone and iPad touch and motion controls
@@ -49,8 +49,8 @@ reconnect. These tests do not establish a physical three-controller race.
 ## Phones as controllers (Mac)
 
 Guests can play on a Mac with their own phone and nothing to install. Choose
-**Controls → Add Phone Controller…** (or **HOME → Controllers → Connect a
-Controller → Phone**), scan the QR code with the phone's camera, open the link
+**Controls → Add Phone Controller…** (or **HOME → Controllers → Connect →
+Phone**), scan the QR code with the phone's camera, open the link
 and tap **Join**. Builds that publish the tilt page (see
 [The tilt page](#the-tilt-page)) open that: a second tab opens for a moment to
 link the phone to the Mac, then closes, and **Use Tilt** steers by turning the
@@ -63,12 +63,16 @@ from the game:
 - **Menus** (and a paused race, or one that player has finished): a D-pad, **A**
   and **B**.
 - **A race:** **Drift** under the right thumb, with **B**, **A+B** and
-  **Trick** beside it, and **Item** on the left. With tilt, Item sits alone
-  under the left thumb and a wheel shows the steering (a sharp shake also does a
-  trick). With the stick, drag anywhere on the left to steer; Item is above it.
-- **Item** aims like up or down on the stick: press or slide to its top to
-  throw forward, its bottom to throw back, the middle to use it as normal. Hold
-  it to keep the item trailing; it's thrown when you let go.
+  **Trick** beside it. With tilt, **Item** sits alone under the left thumb and a
+  wheel shows the steering. With the stick, drag anywhere on the left to steer;
+  Item is on the right, between Drift and B. A thumb on the edge between Item
+  and Drift presses both, to hold an item behind while drifting.
+- **Item** aims like up or down on the stick: press its top to throw forward,
+  its bottom to throw back, the middle to use it as normal, or flick up or down
+  from where you pressed. Hold it to keep the item trailing; it's thrown when
+  you let go.
+- **Shake for Trick:** on the tilt page a sharp shake does a trick, with tilt or
+  the stick.
 - **Accelerating:** from GO the phone accelerates by itself, so there's no A
   button. Hold **B** to brake and reverse; let go to drive on. Hold **A+B** when
   stopped (after a hit, say) to charge a standstill mini-turbo, then let go to
@@ -88,13 +92,13 @@ More:
 - **Tilt** works like KartPad's iPhone motion steering: it follows the phone's
   angle (from the phone's gyro-steadied gravity), not how hard it's moved, so
   swinging or jolting the phone doesn't steer. Straight is level, like a Wii
-  Wheel, so there's nothing to calibrate; **Straight: Set Here** makes the
+  Wheel, so there's nothing to calibrate; **Center: Current Angle** makes the
   current angle straight instead, for playing lying down. **⚙** also has
   sensitivity (0.5×, 1×, 2×), direction, shake for Trick, accelerating, the
   hand (**Left** mirrors the controls) and the link's delay.
 - A hard turn can make the phone turn its screen to portrait; the controller
   carries on drawn sideways, but **Rotation Lock** (in Control Centre) keeps the
-  screen still. With rotation lock on, tap **Rotation Lock Is On** when the page
+  screen still. With rotation lock on, tap **Show Sideways** when the page
   asks for the phone to be turned (and **Screen: Flip** in **⚙** if it comes out
   upside down).
 - The tilt page is published over HTTPS (browsers only give motion to such
@@ -188,7 +192,7 @@ After a successful service login, exchange friend codes, create a room, and
 join through the friend roster. Exact production login and races still need
 acceptance for the distributed KartPad build.
 
-Original Nintendo WFC is closed. Original Mario Kart Wii's Multiplayer menu
+Nintendo WFC is closed. Mario Kart Wii's Multiplayer menu
 therefore has no private friend-room instruction action in 0.4.10. The
 experimental server setting below does not restore that service by itself.
 
@@ -218,12 +222,12 @@ and legacy HTTP on 80. A generic web server or another player's app IP is not
 sufficient. A backend requiring a downloaded PowerPC patch or a different
 signature/payload is not automatically compatible: KartPad does not compile or
 execute new downloaded game code. In particular, entering a WiiLink/Wiimmfi
-address alone does not establish Original Mario Kart Wii compatibility.
+address alone does not establish Mario Kart Wii compatibility.
 
 The new routing path has host validation, destination-scope and compiled Apple
 transport coverage. Login, a hosted/joined friend room, complete races and
 reconnect on an exact compatible backend still require acceptance, especially
-for Original Mario Kart Wii. Do not describe this setting as verified private
+for Mario Kart Wii. Do not describe this setting as verified private
 online gameplay or MeleePad parity.
 
 ## Android and Razer Kishi

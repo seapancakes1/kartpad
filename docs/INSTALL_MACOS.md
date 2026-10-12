@@ -17,6 +17,9 @@ iPhone/iPad.
    open **System Settings → Privacy & Security** and choose **Open Anyway**.
    The app isn't notarized by Apple, which is why macOS asks. Don't turn off
    Gatekeeper.
+   If macOS says **KartPad is damaged**, the app's signature broke, usually
+   because it was copied through iCloud Drive. Build it again, or copy it from
+   a local folder, rather than turning off Gatekeeper.
 3. When KartPad asks for game data, choose your extracted Mario Kart Wii
    `DATA` folder (PAL **RMCP01**, revision 0). To make it, in
    [Dolphin](https://dolphin-emu.org) right-click the game, choose
@@ -32,7 +35,7 @@ exact pack this KartPad was built for (about 2 GB), checks it and installs it
 in KartPad's data folder while you keep playing. When it's ready, switch to it
 from **HOME**. To use a pack you already have, choose **Use a Folder** there
 (or **Data → Choose Retro Rewind Data…**) and select its `RetroRewind6` folder.
-**Game → Original Mario Kart Wii** switches back.
+**Game → Mario Kart Wii** switches back.
 
 KartPad needs the exact Retro Rewind version it was built for. If it says the
 data is unsupported, use the version it names; a newer pack needs a KartPad
@@ -44,7 +47,7 @@ update. A Mac app you build yourself can instead
 Press **HOME** on a controller (the Xbox button, the PS button, or HOME on a
 Pro Controller, Joy-Con or Wii Remote) or **esc** on the keyboard for KartPad's
 menus over the game. The game holds still underneath (online it keeps going).
-From HOME: carry on, switch between Mario Kart Wii and Retro Rewind, Miis,
+From HOME: resume, switch between Mario Kart Wii and Retro Rewind, Miis,
 Controllers, volume, window or full screen, Settings and Quit. Holding
 **Menu** (Start, +) for a second also opens HOME, on any controller. Everything works with
 a controller, the keyboard or the mouse. See
@@ -54,20 +57,21 @@ The first time KartPad opens it walks you through finding your game files.
 
 ## Menus and input
 
-- **Game** switches the game and opens display and audio settings. Changes
-  that need a restart (switching games, game data, VSync, the online
-  service) offer **Restart Now**; choose **Later** and **Game → Restart
-  KartPad to Apply Changes** stays until you do.
+- **Game** opens HOME, switches the game and opens **Miis…** (⇧⌘M; also
+  **HOME → Miis**). **KartPad → Settings…** (⌘,) or **HOME → Settings** opens
+  Settings. Changes that need a restart (switching games, game data, VSync,
+  the online service) offer **Restart**; choose **Not Now** and **Game →
+  Restart to Apply** stays until you do.
 - **Control-Command-F** (or **Window → Enter Full Screen**, Option-Return or
   the green window button) switches between a window and full screen.
   KartPad remembers which for the next launch.
 - The game pauses while another app is in front, except while it loads and
-  while you're online. Turn this off in **Settings → Game & Data** to keep
-  playing with a controller behind another app.
-- **Data** changes the game data folders, manages Miis and opens the data and
-  cache folders.
-- **Controls → Controller Settings…** detects and maps controllers for up to
-  four players. **Control Reference…** lists every keyboard binding.
+  while you're online. Turn off **Settings → Game → Pause when you switch
+  apps** to keep playing with a controller behind another app.
+- **Data** changes the game data folders, opens **Time Trial Ghosts…** and shows
+  KartPad's files in Finder.
+- **Controls → Controllers…** detects and maps controllers for up to four
+  players. **Keyboard Controls** (⌘/) lists every keyboard binding.
 - Keyboard defaults: `WASD` to steer, `U` or Return to accelerate and
   confirm, `M` or Delete to brake and go back, `E` to drift, Left Shift for
   items, arrow keys for tricks, Space to pause and Tab for select.
@@ -77,8 +81,8 @@ The first time KartPad opens it walks you through finding your game files.
   HOME. The D-pad moves around Settings, left and right change a choice or
   slider, A presses, LB and RB change tab, and B closes it.
 - Controllers that can vibrate do when the game rumbles. **Settings →
-  Controllers → Vibration** sets the strength (Off, Light, Medium or Strong)
-  and **Test Vibration** checks a controller.
+  Controls → Vibration** sets the strength (Off, Light, Medium or Strong) and
+  **Test vibration** checks a controller.
 
 Settings and saves are in `~/Library/Application Support/KartPad`, graphics
 caches in `~/Library/Caches/KartPad`. Replacing the app keeps both.
@@ -92,8 +96,8 @@ firewall is on, allow KartPad to accept incoming connections when asked.
 
 ## Experimental Wii Remote and Nunchuk
 
-In **HOME → Controllers → Connect a Controller → Wii Remote** (or **Controls →
-Pair Wii Remote…**), press the red **SYNC** button on the Wii Remote to pair,
+In **HOME → Controllers → Connect → Wii Remote** (or **Controls → Pair Wii
+Remote…**), press the red **SYNC** button on the Wii Remote to pair,
 then attach the Nunchuk. It works with an
 original `RVL-CNT-01` or Wii Remote Plus `RVL-CNT-01-TR`, without a
 DolphinBar. It uses private macOS Bluetooth interfaces and needs more hardware

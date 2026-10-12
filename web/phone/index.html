@@ -323,7 +323,7 @@ html.turned.back { --stripeDir: to right; }
       <div class="col" id="tiltSettings">
         <div class="setting"><span>Sensitivity</span><div class="seg" data-pref="sensitivity"><button data-value="0.5">0.5×</button><button data-value="1">1×</button><button data-value="2">2×</button></div></div>
         <div class="setting"><span>Direction</span><div class="seg" data-pref="inverted"><button data-value="false">Normal</button><button data-value="true">Inverted</button></div></div>
-        <div class="setting"><span>Straight</span><div class="seg" id="straight"><button data-value="level">Level</button><button data-value="here">Set Here</button></div></div>
+        <div class="setting"><span>Center</span><div class="seg" id="straight"><button data-value="level">Level</button><button data-value="here">Current Angle</button></div></div>
       </div>
     </div>
     <p id="delay"></p>
@@ -331,7 +331,8 @@ html.turned.back { --stripeDir: to right; }
   </div></div>
   <div class="sheet hidden" id="turn"><div class="card">
     <h1>Turn your phone sideways</h1>
-    <button class="btn" id="forceTurn">Rotation Lock Is On</button>
+    <p>Rotation Lock on?</p>
+    <button class="btn" id="forceTurn">Show Sideways</button>
   </div></div>
 </div>
 <script>
@@ -709,7 +710,8 @@ window.addEventListener("message", async (event) => {
   if (event.data.t === "link-error") {
     if (event.data.why === "version") return mismatch(event.data.v);
     if (event.data.why === "expired") return goodbye("expired");
-    return failed("KartPad couldn’t link this phone (" + event.data.why + ").");
+    console.log("KartPad: link error", event.data.why);
+    return failed("KartPad couldn’t link this phone.");
   }
   if (event.data.t !== "answer") return;
   setLive(false, "Connecting…");
@@ -762,7 +764,7 @@ function mismatch(v) {
   else if (ws) { ws.onclose = null; ws.close(); ws = null; }
   if (v > VERSION) message("This page is out of date", secure ? "Reload it, or use touch controls." : "Reload it.", "Reload", true,
                            () => location.reload());
-  else message("Update KartPad", "KartPad on the Mac is older than this page.", "Try Again", true);
+  else message("Update KartPad", "KartPad on the Mac is older than this page.", "", true);
 }
 let askedMotion = false;
 function welcome(m) {
@@ -788,7 +790,7 @@ function goodbye(reason) {
   else if (ws) { ws.onclose = null; ws.close(); ws = null; }
   if (reason === "full") message("Four phones are already playing", "Ask someone to leave, then try again.");
   else if (reason === "replaced") message("Opened somewhere else", "This controller is now in another tab or window.", "Use It Here");
-  else if (reason === "removed") { store(phoneKey, null); message("Removed", "", "Join Again"); }
+  else if (reason === "removed") { store(phoneKey, null); message("Removed from KartPad", "", "Join Again"); }
   else if (reason === "left") { store(phoneKey, null); show("join"); }
   else if (reason === "version") mismatch(macVersion);
   else if (reason === "expired") message("Link expired", "Scan the code in KartPad again.", "");
@@ -857,7 +859,7 @@ function answerPing(id) {
   pings.delete(id);
   rtts.push(performance.now() - t);
   if (rtts.length > 60) rtts.shift();
-  $("delay").textContent = "Link: " + middleDelay() + " ms (worst " + Math.round(Math.max(...rtts)) + " ms)";
+  $("delay").textContent = "Delay: " + middleDelay() + " ms";
 }
 
 // Screen wake locks are for HTTPS pages only. The plain-HTTP page has no good stand-in: a tiny muted
@@ -886,7 +888,7 @@ document.addEventListener("visibilitychange", () => {
 // the wheel angle is the direction of gravity in the screen's plane, from the phone's gyro-fused
 // gravity estimate, so swinging or jolting the phone doesn't steer. Browsers give it as
 // accelerationIncludingGravity minus acceleration (the motion the phone itself makes). Straight is
-// level, like a Wii Wheel: no calibrating. Set Here makes the current angle straight instead, for
+// level, like a Wii Wheel: no calibrating. Center: Current Angle makes the current angle straight instead, for
 // playing lying down.
 const DEAD_ZONE = 0.045, FULL_LOCK = 0.70;           // radians, at 1× sensitivity
 const SHAKE_REARM = 0.35, SHAKE_TRIGGER = 1.35, SHAKE_COOLDOWN = 0.45;  // g, g, seconds
@@ -1240,14 +1242,14 @@ show("join");
 applyLayout();
 if (!mac || !key) {
   $("joinButton").classList.add("hidden");
-  $("joinNote").textContent = "Scan the code in KartPad: HOME › Controllers › Connect a controller › Phone.";
+  $("joinNote").textContent = "Scan the code in KartPad: HOME › Controllers › Connect › Phone.";
 } else if (!secure) {
   ready(true);
 } else if (!window.RTCPeerConnection) {
   message("Tilt isn’t available here", "This browser doesn’t support tilt. Touch controls still work.", "Try Again", true);
   $("messageButton").classList.add("hidden");
 } else {
-  prepare().catch((e) => { $("joinNote").textContent = "Couldn’t get ready: " + e; });
+  prepare().catch((e) => { console.log("KartPad: couldn’t get ready", e); $("joinNote").textContent = "Couldn’t get ready. Reload the page to try again."; });
 }
 </script>
 </body>

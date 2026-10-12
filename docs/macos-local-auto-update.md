@@ -1,6 +1,6 @@
 # Local Mac Retro Rewind updates
 
-A Mac app you build yourself can keep Retro Rewind current on its own. When the official feed has a newer pack, a helper downloads it, rebuilds KartPad for it on your Mac and installs the result at the next launch. This is separate from **Help → Check for Updates…**, which reports new KartPad releases.
+A Mac app you build yourself can keep Retro Rewind current on its own. When the official feed has a newer pack, a helper downloads it, rebuilds KartPad for it on your Mac and installs the result at the next launch. It updates only the Retro Rewind pack, not KartPad itself.
 
 It is opt-in. Only apps packaged with `Contents/Resources/LocalUpdater` (the helper, the maintainers' pinning script it reuses and your settings) do any of this; public builds and ordinary self-builds don't. Builds with it don't offer the in-app Retro Rewind download, because the updater manages the pack.
 
@@ -47,7 +47,7 @@ KartPad's maintainers publish a reviewed pin for each Retro Rewind version they 
 - Every downloaded archive whose URL the review pins has the pinned size and SHA-256. This is checked before it is unpacked.
 - After all patches and the official delete list are applied, and before anything is translated or compiled, `Code.pul` and the Riivolution XML have the pinned size and SHA-256.
 
-Otherwise nothing is built. The banner says **Retro Rewind VERSION isn't reviewed yet** (the feed is ahead of the review; it installs by itself once the review catches up) or **Retro Rewind VERSION wasn't installed** (files differ from the review). **Install anyway** asks for confirmation and records the approval for that version and download only (`approved.json`); the checks still run and their results are kept in the build's profile, but no longer stop it. Deletions from the official delete list are applied only in a verified update or after that approval.
+Otherwise nothing is built. The banner says **Retro Rewind VERSION isn’t reviewed yet** (the feed is ahead of the review; it installs by itself once the review catches up) or **Retro Rewind VERSION wasn’t installed** (files differ from the review). **Install Anyway** asks for confirmation and records the approval for that version and download only (`approved.json`); the checks still run and their results are kept in the build's profile, but no longer stop it. Deletions from the official delete list are applied only in a verified update or after that approval.
 
 A mismatch is remembered against that review, so automatic checks don't download it again until the feed or the review changes; **Retro Rewind Updates…** tries again.
 
@@ -55,7 +55,7 @@ A mismatch is remembered against that review, so automatic checks don't download
 
 - Trusted: GitHub and the reviewed profile on the configured branch (fetched over HTTPS, redirects confined to `raw.githubusercontent.com`); the official feed at `update.rwfc.net` for which versions exist; your checkout, toolchain, settings file and disc image.
 - Checked, not trusted: archives from `cdn.update.rwfc.net` (HTTPS only, size and extraction limits, safe paths, pinned hashes when pinned), the resulting program code and patch list (pinned hashes), the rebuilt app (it must contain the new pins, be signed and pass the package audit; its digest is checked again before it is installed).
-- Not covered by a pin: other assets from intermediate patches when your pack is more than one release behind the review, and everything after **Install anyway**.
+- Not covered by a pin: other assets from intermediate patches when your pack is more than one release behind the review, and everything after **Install Anyway**.
 
 ## Checking
 
@@ -67,7 +67,7 @@ Failures don't repeat on every launch:
 
 - **Offline:** automatic checks back off, starting at 10 minutes and doubling to at most 6 hours.
 - **Not enough space:** the check runs again at the next launch.
-- **Build, verification or configuration failure:** remembered for that feed version and download URL. Automatic checks skip it until the feed changes or the player chooses **Try again**.
+- **Build, verification or configuration failure:** remembered for that feed version and download URL. Automatic checks skip it until the feed changes or the player chooses **Try Again**.
 
 ## Preparing an update
 
@@ -79,7 +79,7 @@ The helper then checks the resulting version and the reviewed hashes. Download a
 
 ## Installing
 
-The ready banner offers **Restart game** and disappears after five seconds. Restart asks the player to finish their race first. A helper waits for KartPad to exit, installs the update, and reopens the updated app once. If the player quits normally instead, KartPad installs the update at the next launch, before opening game files, and reopens itself.
+The ready banner offers **Restart** and disappears after five seconds. Restart warns that unsaved progress will be lost and offers **Keep Playing**. A helper waits for KartPad to exit, installs the update, and reopens the updated app once. If the player quits normally instead, KartPad installs the update at the next launch, before opening game files, and reopens itself.
 
 Installation carries the player's saves across, moves the app bundles, rewrites the config and updates the state files as one journaled step. If it is interrupted, the next launch puts every piece back as it was. A pending build that can't be installed (failed integrity check, missing files, an unusable config) is discarded and recorded, so it can't block later updates. A build that only ran out of space stays pending for the next attempt.
 
@@ -97,7 +97,7 @@ An app the updater didn't install, such as one you packaged by hand at the insta
 
 A newly installed app is on trial until it has run for 90 seconds or ends a session cleanly. If two launches end without either, the next launch restores the previous app and game files, reopens KartPad and explains what happened. Automatic checks then skip that version.
 
-**Game → Go Back to Retro Rewind VERSION…** does the same on demand. Afterwards, **Retro Rewind Updates…** shows the skipped version with **Install anyway**. Going back changes only the `retro_rewind_root` line of the config, so settings changed since the update are kept.
+**Game → Go Back to Retro Rewind VERSION…** does the same on demand. Afterwards, **Retro Rewind Updates…** shows the skipped version with **Install Anyway**. Going back changes only the `retro_rewind_root` line of the config, so settings changed since the update are kept.
 
 ## Disk use
 

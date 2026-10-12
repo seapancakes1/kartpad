@@ -62,7 +62,7 @@ updates on iPhone, iPad and Mac (only Android updates itself).
   connections; Wi-Fi or a VPN works. Not fixable in KartPad without a relay.
 - **Sound levels (#411):** in progress. Android has ••• → **Sound…** (merged,
   #419); iPhone/iPad is in #420 and needs a tap-through on the iPad; the Mac
-  already has Game → Game Settings… → Audio. Ships in the next 0.7.x release
+  already has KartPad → Settings… → Sound. Ships in the next 0.7.x release
   once heard on a device.
 - **Controllers:** ipega and similar fixed in 0.7.6 to 0.7.8, awaiting
   confirmation (#378); single Joy-Cons (#324); Mac Wii Remote with Classic

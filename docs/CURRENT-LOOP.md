@@ -238,8 +238,8 @@ and waits for one tap-through there. A remote check isn't possible: the iPhone/i
 runtime rejects launch arguments ("does not accept command-line options"), so the
 game can't be started on the iPad without a tap. For the second pass: SDL's default iOS
 audio session ducks other apps' music while KartPad plays, so Spotify keeps
-playing but quieter. F3 Mac: already there as **Game → Game Settings… →
-Audio** (master, music, effects, menu sounds, voices, mute; applies live).
+playing but quieter. F3 Mac: already there as **KartPad → Settings… →
+Sound** (master, music, effects, menu sounds, voices, mute; applies live).
 
 ## Track G: the full game-file check at import (5 October)
 

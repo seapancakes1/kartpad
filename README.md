@@ -307,7 +307,7 @@ Yes. Pair controllers in the operating system, choose Multiplayer in the game an
 <details>
 <summary>Can KartPad set my player name or import a custom Mii?</summary>
 
-On iPhone/iPad, **••• → Game Data & Saves → Player Identity…** manages names and exact license slots. Restart to apply edits. Standard 74-byte `.mii` appearance import is experimental, not a full Wii Mii editor. Renaming a Mii and renaming one license are different actions. See [identity instructions](docs/INSTALL_IPA.md#player-identity). Android save/rating transfer does not include the Mii database.
+Yes, on iPhone, iPad and Mac. The Miis screen (iPhone/iPad: **••• → Game Data & Saves → Player Identity…**; Mac: **Game → Miis…** or **HOME → Miis**) creates and edits Miis in a Wii-style editor, imports and exports standard 74-byte `.mii` files, and renames Miis and licenses. Changes apply after a restart. Renaming a Mii and renaming one license are different actions. See [the Mii editor](docs/mii-builder.md) and [identity instructions](docs/INSTALL_IPA.md#player-identity). Android save/rating transfer does not include the Mii database.
 
 </details>
 
@@ -423,9 +423,8 @@ Aedan Pilkington contributed the native macOS controller and settings
 enhancements, including controller assignment and remapping, persistent
 profiles, keyboard remapping, settings shortcuts, and fullscreen/notch
 integration. See the [macOS controller and settings guide](docs/MACOS_CONTROLLER_OVERHAUL.md)
-for implementation details and source-build testing instructions. These are
-source-build enhancements; they should not be read as features of the
-published Mac release until a corresponding release is published.
+for implementation details and source-build testing instructions. They are
+part of the Mac app that PadMint builds from source.
 
 KartPad is free software under [GPLv3](LICENSE), including its WiiCompiled
 modifications and the integrated application where GPLv3 requires. GPL rights
