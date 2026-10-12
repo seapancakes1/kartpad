@@ -93,42 +93,43 @@ include it and we can't provide it. Without a key, use the extracted folder.
 
 ## Playing
 
-Open **•••** during a game for Controls, Display, Game Data & Saves,
-Multiplayer and **Report a Problem…**; the full menu is in
-[mobile settings](SETTINGS.md). Hold **A** for one second to lock acceleration,
+Tap **•••** during a game (or hold **Menu** on a controller) for HOME: Miis,
+Controllers, the volume and **Settings**, which has picture, sound, controls,
+saves, multiplayer and **Report a problem**. The game holds still while HOME is
+open; see [HOME and controllers](ios-home-and-controllers.md). Hold **A** for one second to lock acceleration,
 tap it again to release. Controllers, touch layouts and motion steering are
 covered in [controls and multiplayer](MULTIPLAYER.md).
 
-**••• → Return to KartPad Menu** pauses the game; **Resume** continues it. To
-switch between Original and Retro Rewind, choose **Use on Next Launch**, then
+**HOME → Settings → Game → KartPad menu** opens the KartPad menu; **Resume**
+continues the game. To switch between Original and Retro Rewind, use the game
+switch beside **HOME** (or **Use on Next Launch** in the KartPad menu), then
 close KartPad from the app switcher and open it again.
 
 ## Player identity
 
-To rename an online name, open **••• → Game Data & Saves → Player Identity… →
-Rename or Delete Licenses…**, choose the Original or Retro Rewind profile and
-the license slot, then **Rename License…**. The license keeps its friend code,
+To rename an online name, open **••• → Miis**, choose the Mii, then the
+license's **⋯ → Rename License…**. The license keeps its friend code,
 records and progress.
 
 **Delete License…** removes the license's friend code, records and progress;
 read the confirmation carefully. Either change applies after you close KartPad
 from the app switcher and reopen it. KartPad backs up the save first.
 
-**Edit Mii Name…** renames a Mii and the licenses linked to it. **Import Mii
-Appearance…** takes a standard 74-byte `.mii` file. To make a new license,
+**Rename…** renames a Mii and the licenses linked to it. **Import…** takes a
+standard 74-byte `.mii` file. To make a new license,
 choose **New** in the game and pick your Mii.
 
 ## Files and saves
 
 In the Files app, **On My iPhone/iPad → KartPad** is KartPad's Documents
 folder: put `common-key.bin` or a disc image there. Saves, Retro Rewind and
-Miis live in KartPad's private storage instead. Use **••• → Game Data & Saves →
-Manage Saves…** to back up or restore a save. Deleting KartPad deletes them, so
+Miis live in KartPad's private storage instead. Use **••• → Settings → Game →
+Saves** to back up or restore a save. Deleting KartPad deletes them, so
 update in place and back up before changing tools or Apple IDs.
 
 ## Report a problem
 
-Open **••• → Report a Problem… → Save or Share Report…**. Review it before
+Open **••• → Settings → Advanced → Report a problem → Save or Share Report…**. Review it before
 attaching; never attach game files, saves or keys. The
 [reporting guide](REPORTING.md) says what to include. Online play has its own
 [status page](ONLINE.md).

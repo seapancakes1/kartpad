@@ -18,7 +18,7 @@ and observations named in them.
 | --- | --- |
 | Install or update | [Android](INSTALL_ANDROID.md), [iPhone/iPad](INSTALL_IPA.md), [Mac](INSTALL_MACOS.md), [Apple TV](INSTALL_TVOS.md) |
 | Transfer saves, collect diagnostics or report a problem | [Support](SUPPORT.md) |
-| Set up controllers or multiplayer | [Multiplayer](MULTIPLAYER.md), [Mac HOME, Controllers and Settings](macos-home-and-controllers.md) |
+| Set up controllers or multiplayer | [Multiplayer](MULTIPLAYER.md), [Mac HOME, Controllers and Settings](macos-home-and-controllers.md), [iPhone/iPad HOME and controllers](ios-home-and-controllers.md) |
 | Make and edit Miis | [Mii editor](mii-builder.md) |
 | Keep Retro Rewind current on a self-built Mac app | [Local Mac Retro Rewind updates](macos-local-auto-update.md) |
 | Check support and limitations | [Current status](STATUS.md), [known issues](KNOWN-ISSUES.md), [online](ONLINE.md) |

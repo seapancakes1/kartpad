@@ -134,7 +134,7 @@ full cups on 0.7.10), the hourly update notice ([#377](https://github.com/chriss
 ## Feature requests
 
 Separate music and game-sound volume ([#411](https://github.com/chrissotraidis/kartpad/issues/411)) is in ••• → **Sound…** on
-Android (0.7.14) and iPhone/iPad (0.7.15), and in **KartPad → Settings… →
+Android (0.7.14), in ••• → **Settings → Sound** on iPhone/iPad, and in **KartPad → Settings… →
 Sound** on Mac.
 
 iPhone, iPad and Mac can't update themselves: each new KartPad, and almost

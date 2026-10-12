@@ -311,7 +311,7 @@ Yes. Pair controllers in the operating system, choose Multiplayer in the game an
 <details>
 <summary>Can KartPad set my player name or import a custom Mii?</summary>
 
-Yes, on iPhone, iPad and Mac. The Miis screen (iPhone/iPad: **••• → Game Data & Saves → Player Identity…**; Mac: **Game → Miis…** or **HOME → Miis**) creates and edits Miis in a Wii-style editor, imports and exports standard 74-byte `.mii` files, and renames Miis and licenses. Changes apply after a restart. Renaming a Mii and renaming one license are different actions. See [the Mii editor](docs/mii-builder.md) and [identity instructions](docs/INSTALL_IPA.md#player-identity). Android save/rating transfer does not include the Mii database.
+Yes, on iPhone, iPad and Mac. The Miis screen (iPhone/iPad: **••• → Miis**; Mac: **Game → Miis…** or **HOME → Miis**) creates and edits Miis in a Wii-style editor, imports and exports standard 74-byte `.mii` files, and renames Miis and licenses. Changes apply after a restart. Renaming a Mii and renaming one license are different actions. See [the Mii editor](docs/mii-builder.md) and [identity instructions](docs/INSTALL_IPA.md#player-identity). Android save/rating transfer does not include the Mii database.
 
 </details>
 

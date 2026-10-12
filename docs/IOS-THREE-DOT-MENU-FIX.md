@@ -1,5 +1,9 @@
 # Stable iOS three-dot menu buttons
 
+KartPad's own button no longer opens a menu: a tap opens HOME
+([HOME and controllers](ios-home-and-controllers.md)). The appearance repair below still
+applies to it; the menu lifecycle notes apply to other overlays that keep a `UIMenu`.
+
 This note documents the reusable repair for a UIKit `UIButton` that opens a
 `UIMenu` with `showsMenuAsPrimaryAction`. The defect has appeared in multiple
 Apple game-port overlays: dismissing the menu can briefly remove the ellipsis,

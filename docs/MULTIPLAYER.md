@@ -1,6 +1,7 @@
 # Multiplayer and controllers
 
-Open **••• → Multiplayer…** on iPhone/iPad, **Controls → Multiplayer** on
+Open **••• → Settings → Game → Multiplayer** on iPhone/iPad (HOME's
+**Controllers** shows who plays with which controller), **Controls → Multiplayer** on
 Mac, or **Multiplayer…** on the Apple TV game chooser. The menu covers
 Mario Kart Wii and Retro Rewind; available online guidance depends on
 the game profile. Apple mobile menu names below follow 0.4.10 and later.
@@ -13,7 +14,7 @@ These instructions describe the Apple touch interface. Android has its own
 - **Acceleration lock:** hold A continuously for one second until it turns cyan.
   Release your finger to keep accelerating; tap A to unlock. Opening a modal,
   hiding touch or handing Player 1 to a controller clears the lock.
-- **Layout:** open **••• → Controls → Touch Control Settings** to move, resize, hide or
+- **Layout:** open **••• → Settings → Controls → Touch controls** to move, resize, hide or
   restore controls. The D-pad is hidden by default and can be enabled for tricks
   and wheelies. Existing custom visibility choices are preserved. Phone and
   tablet layouts are stored separately; **Back** returns to touch settings.
@@ -22,7 +23,7 @@ These instructions describe the Apple touch interface. Android has its own
 - **Controller handoff:** the first extended gamepad takes Player 1, clears held
   touch input and hides touch controls by default. Disconnecting restores touch;
   additional controllers retain their Player 2–4 slots.
-- **Motion steering:** **••• → Controls → Motion Steering…** is off by default. It provides
+- **Motion steering:** **••• → Settings → Controls → Motion steering** is off by default. It provides
   recenter, inversion and 0.5×/1×/2× sensitivity. Touch can override motion;
   physical controllers take priority, and backgrounding clears live motion state.
 

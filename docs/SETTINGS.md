@@ -1,6 +1,8 @@
 # Mobile settings
 
-Android and iPhone/iPad use the same hierarchy for shared controls. The table describes current source; Android shake input and the separate Shake to Trick entry are not yet released in 0.7.14. Open **•••** (top right) while a game is running.
+On Android, open **•••** (top right) while a game is running; the table below is its menu. The table describes current source; Android shake input and the separate Shake to Trick entry are not yet released in 0.7.14.
+
+iPhone and iPad have HOME instead: **•••** (or holding Menu on a controller) opens HOME, and its Settings has the same options in five categories. See [HOME and controllers on iPhone and iPad](ios-home-and-controllers.md). The sections below name the Android menu; on iPhone and iPad the same items are under HOME › Settings (Game › Time Trial ghosts, Game › Saves, Controls › Touch controls, Advanced › Report a problem).
 
 | Menu | Options, in order |
 | --- | --- |

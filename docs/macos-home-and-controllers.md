@@ -1,5 +1,7 @@
 # KartPad on Mac: HOME, Controllers and Settings
 
+iPhone and iPad have the same screens, built from these files: see [HOME and controllers on iPhone and iPad](ios-home-and-controllers.md).
+
 KartPad's own screens on Mac work the way a console's do: they open inside the
 game window, look like the Mii editor (silver buttons, pinstripes, Wii-blue
 focus, the game's own menu sounds) and can be used with only a controller. The
