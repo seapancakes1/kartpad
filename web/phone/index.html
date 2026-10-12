@@ -136,10 +136,10 @@ html.turned.back { --stripeDir: to right; }
   width: calc(var(--u) * 20); height: calc(var(--u) * 20); }
 
 /* A race, with the stick or tilt: Drift under the right thumb, B beside it with A+B above (hold it
-   stopped to charge a mini-turbo), Trick over Drift. With the stick, Item sits between Drift and B;
-   with tilt, it's on the left. With Auto, A only shows for the start and after a fall, in Drift's
-   place, since accelerating is then the player's. With Hold, A sits beside Drift all race, and the
-   seams press two buttons. */
+   stopped to charge a mini-turbo), Trick over Drift. With the stick, Item sits between Drift and B,
+   with a seam to Drift; with tilt, it's on the left. With Auto, A only shows for the start and after
+   a fall, in Drift's place, since accelerating is then the player's. With Hold, A sits beside Drift
+   all race. Seams press two buttons. */
 .race .k-drift { inset-inline-end: calc(var(--ie) + var(--u) * 5); bottom: calc(var(--sb) + var(--u) * 7);
   width: calc(var(--u) * 36); height: calc(var(--u) * 30); }
 .race .k-a { inset-inline-end: calc(var(--ie) + var(--u) * 8); bottom: calc(var(--sb) + var(--u) * 7);
@@ -194,6 +194,10 @@ html.turned.back { --stripeDir: to right; }
 #raceStick .k-ab { inset-inline-end: calc(var(--ie) + var(--u) * 77); }
 #stage.hold #raceStick .k-item { inset-inline-end: calc(var(--ie) + var(--u) * 70); height: calc(var(--u) * 48); }
 #stage.hold #raceStick .k-b { inset-inline-end: calc(var(--ie) + var(--u) * 44.5); }
+/* Between Item and Drift: holds an item behind while drifting (it only aims by flicking). */
+#raceStick .s-item-drift { display: block; inset-inline-end: calc(var(--ie) + var(--u) * 39.5); bottom: calc(var(--sb) + var(--u) * 10);
+  width: calc(var(--u) * 7); height: calc(var(--u) * 24); }
+#stage.hold #raceStick .s-item-drift, #stage.amoment #raceStick .s-item-drift { display: none; }
 
 /* Tilt: Item alone under the left thumb, the wheel in the middle. */
 #raceTilt .k-item { inset-inline-start: calc(var(--is) + var(--u) * 5); bottom: calc(var(--sb) + var(--u) * 7);
@@ -258,6 +262,7 @@ html.turned.back { --stripeDir: to right; }
     <div class="key round primary k-a" data-key="a" data-bit="1">A<span class="auto">AUTO</span></div>
     <div class="seam s-drift-a" data-bit="33"></div>
     <div class="seam s-a-b" data-bit="3"></div>
+    <div class="seam s-item-drift" data-bit="48"></div>
   </div>
   <div class="layer race hidden" id="raceTilt">
     <svg id="wheel" viewBox="-50 -50 100 100"><g><circle r="43"/><circle r="9"/><path d="M-43 0H-9M9 0H43M0 9V43"/></g><g><path class="mark" d="M0-47V-36"/></g></svg>
@@ -514,7 +519,7 @@ function applyLayout() {
   $("layoutKey").textContent = manualRace ? "Menus" : "Race";
   // Fingers on controls that just went away let go.
   for (const [id, finger] of fingers) {
-    if (finger.el && finger.el.offsetParent === null) { fingers.delete(id); if (finger.kind === "item") showAim(finger.el, 0); }
+    if (finger.el && finger.el.offsetParent === null) { fingers.delete(id); if (finger.kind === "item") showAim(finger.item, 0); }
     if (finger.kind === "stick" && (now !== "race" || tilted)) { fingers.delete(id); stick = null; stickX = stickY = 0; }
   }
   restStick();
@@ -1032,10 +1037,12 @@ function pressKey(id, k, x, y) {
   // A seam with A presses it, but only A itself switches accelerating off.
   if (bits === 1 && !pressA()) { fingers.set(id, {kind: "unlock", bits: 0, el: k}); return; }
   if (bits !== 1 && (bits & 1) && !aLocked) pressA();
-  if (k.classList.contains("k-item")) {
-    const aim = aimAt(k, x, y);
-    fingers.set(id, {kind: "item", bits, el: k, aim, startAim: aim, startY: toStage(x, y).y, at: performance.now()});
-    showAim(k, aim);
+  if (bits & 16) {
+    // Item, or the seam with Drift: there it starts unaimed, for holding an item behind.
+    const item = k.classList.contains("k-item") ? k : k.parentElement.querySelector(".k-item");
+    const aim = item === k ? aimAt(k, x, y) : 0;
+    fingers.set(id, {kind: "item", bits, el: k, item, aim, startAim: aim, startY: toStage(x, y).y, at: performance.now()});
+    showAim(item, aim);
   } else {
     fingers.set(id, {kind: "key", bits, el: k});
   }
@@ -1065,7 +1072,7 @@ function itemAim() {
   return performance.now() < aimUntil ? aimHeld : 0;
 }
 function letGoOfItem(finger) {
-  showAim(finger.el, 0);
+  showAim(finger.item, 0);
   const now = performance.now();
   itemUntil = Math.max(itemUntil, finger.at + ITEM_MIN_MS);
   if (itemUntil > now) setTimeout(() => { render(); send(); }, itemUntil - now + 10);
@@ -1153,7 +1160,7 @@ document.addEventListener("pointermove", (e) => {
   } else if (finger.kind === "item") {
     // Held until let go, wherever the finger slides; sliding only aims it.
     const aim = flickAim(finger, e.clientX, e.clientY);
-    if (aim !== finger.aim) { finger.aim = aim; showAim(finger.el, aim); buzz(6); }
+    if (aim !== finger.aim) { finger.aim = aim; showAim(finger.item, aim); buzz(6); }
   } else {
     const k = keyAt(e.clientX, e.clientY);
     if (k && k !== finger.el && k.id !== "home" && k.closest(".layer, .bar") === finger.el.closest(".layer, .bar")) {
