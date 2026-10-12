@@ -793,7 +793,7 @@ static constexpr CGFloat KPMiiRing=0;
         canvas.gridCard=CGRectMake(m,top,w-2*m,gridH);
         canvas.detailCard=CGRectMake(m,top+gridH+10,w-2*m,std::max(CGFloat(120),available-gridH-10));
     }else{
-        CGFloat detailW=hosted?440:std::clamp(w*.4,CGFloat(300),CGFloat(390)),gap=hosted?24:m;
+        CGFloat detailW=hosted?468:std::clamp(w*.4,CGFloat(300),CGFloat(390)),gap=hosted?24:m;
         canvas.gridCard=CGRectMake(ax+m,top,aw-2*m-gap-detailW,bottom-top);
         canvas.detailCard=CGRectMake(ax+aw-m-detailW,top,detailW,bottom-top);
     }
@@ -913,8 +913,8 @@ static constexpr CGFloat KPMiiRing=0;
     }
     NSUInteger slot=[record[@"slot"] unsignedIntegerValue];NSArray *linked=[self licensesForRecord:record];
 
-    // Portrait beside the name, slot, creator and favorite color.
-    CGFloat side=std::min((k>1?118:150)*k,std::floor(dw*.42));
+    // Portrait beside the name, favorite color and Edit Mii.
+    CGFloat side=std::min(std::floor((k>1?100:112)*k),std::floor(dw*.4)),gap=8*k;
     KPMiiPaintView *portrait=[[KPMiiPaintView alloc]initWithFrame:CGRectMake(p,y,side,side)];
     portrait.paint=^(CGContextRef c,CGRect b){KPDrawPortrait(c,b,record);};
 #if TARGET_OS_OSX
@@ -926,79 +926,62 @@ static constexpr CGFloat KPMiiRing=0;
 #endif
     [document addSubview:portrait];self.detailPortrait=portrait;
     CGFloat ix=p+side+14*k,iw=dw-side-14*k;
-    CGFloat iy=[self note:record[@"name"] in:document x:ix y:y+2 width:iw size:22*k bold:YES secondary:NO]+4*k;
-    // The creator is worth showing only for a Mii made elsewhere, such as on a Wii.
-    NSString *creator=record[@"creator"];
-    if(creator.length&&![creator isEqual:@"Unknown"]&&![creator isEqual:@"KartPad"])
-        iy=[self note:[@"Created by " stringByAppendingString:creator] in:document x:ix y:iy width:iw size:13*k bold:NO secondary:YES]+4*k;
-    iy+=6*k;CGFloat chipSide=18*k;
+    CGFloat iy=[self note:record[@"name"] in:document x:ix y:y width:iw size:22*k bold:YES secondary:NO]+6*k,chipSide=18*k;
     KPMiiPaintView *chip=[[KPMiiPaintView alloc]initWithFrame:CGRectMake(ix,iy,chipSide,chipSide)];unsigned hex=KPFavoriteHex(record);
     chip.paint=^(CGContextRef c,CGRect b){KPFill(c,b,hex,5*k);KPStroke(c,b,0x000000,1,5*k,.18);};[document addSubview:chip];
     iy=std::max(iy+chipSide,[self note:KPFavoriteName(record) in:document x:ix+chipSide+8*k y:iy width:iw-chipSide-8*k size:13*k
-        bold:NO secondary:NO])+8*k;
+        bold:NO secondary:NO])+6*k;
     if(KPMiiPortraitProblem&&![KPMiiPortraits() objectForKey:record[@"mii"]]){
         iy=[self note:[NSString stringWithFormat:@"Portraits unavailable: %@",KPMiiPortraitProblem] in:document x:ix
             y:iy width:iw size:11*k bold:NO secondary:YES]+6*k;
         self.problemShown=YES;
     }
-    y=std::max(y+side,iy)+(k>1?12:16)*k;
-
-    // Actions: Edit first, then the rest two by two. A Mii no license races as (a new one, say)
-    // offers Use for a License… straight after Edit, since that is its next step.
-    NSArray *others=self.licenseError?@[]:[self licensesToLink:record];BOOL promote=!linked.count&&others.count;
-    CGFloat rowH=44*k,step=rowH+8*k;
-    [document addSubview:[self button:@"Edit Mii" frame:CGRectMake(p,y,dw,48*k) style:KPStyle::Primary enabled:editable
+    CGFloat editH=44*k,editY=std::max(y+side-editH,iy);
+    [document addSubview:[self button:@"Edit Mii" frame:CGRectMake(ix,editY,iw,editH) style:KPStyle::Primary enabled:editable
             action:^(KPMiiBrowserButton *b){
         [weak editSlot:slot];
     }]];
-    y+=58*k;
-    if(promote){
-        [document addSubview:[self button:@"Use for a License…" frame:CGRectMake(p,y,dw,rowH) style:KPStyle::Plain
-                enabled:editable action:^(KPMiiBrowserButton *b){
-            [weak chooseLicenseFor:record from:b];
-        }]];
-        y+=step;
-    }
-    CGFloat half=(dw-8*k)/2;
-    [document addSubview:[self button:@"Rename…" frame:CGRectMake(p,y,half,rowH) style:KPStyle::Plain enabled:editable
-            action:^(KPMiiBrowserButton *b){
-        [weak rename:record];
-    }]];
-    [document addSubview:[self button:@"Duplicate" frame:CGRectMake(p+half+8*k,y,half,rowH) style:KPStyle::Plain
-            enabled:editable&&self.records.count<kartpad::mii::kMaximumMiiSlots action:^(KPMiiBrowserButton *b){
-        [weak duplicate:record];
-    }]];
-    y+=step;
-    [document addSubview:[self button:@"Export…" frame:CGRectMake(p,y,half,rowH) style:KPStyle::Plain enabled:YES
-            action:^(KPMiiBrowserButton *b){
-        [weak exportRecord:record from:b];
-    }]];
-    [document addSubview:[self button:@"Remove" frame:CGRectMake(p+half+8*k,y,half,rowH) style:KPStyle::Plain
-            enabled:editable action:^(KPMiiBrowserButton *b){
-        [weak remove:record];
-    }]];
-    y+=rowH+(k>1?12:16)*k;
+    y=std::max(y+side,editY+editH)+12*k;
 
-    // Licenses that race as this Mii, and linking another license to it.
-    y=[self note:@"Licenses" in:document x:p+2 y:y width:dw-4 size:15*k bold:YES secondary:NO]+8*k;
-    if(self.licenseError)y=[self note:self.licenseError in:document x:p+2 y:y width:dw-4 size:12*k bold:NO secondary:YES]+8*k;
-    else{
-        for(NSDictionary *license in linked){
-            [document addSubview:[self licenseRow:license frame:CGRectMake(p,y,dw,56*k)]];y+=64*k;
-        }
-        if(!linked.count)
-            y=[self note:@"No license races as this Mii yet." in:document x:p+2 y:y width:dw-4 size:13*k bold:NO secondary:YES]+10*k;
-        if(!promote&&others.count){
-            [document addSubview:[self button:@"Use for a License…" frame:CGRectMake(p,y,dw,rowH) style:KPStyle::Plain
-                    enabled:editable action:^(KPMiiBrowserButton *b){
-                [weak chooseLicenseFor:record from:b];
-            }]];
-            y+=step;
+    // The other actions in one row when their titles fit, two by two otherwise.
+    struct Action{NSString *title;BOOL enabled;void(^run)(KPMiiBrowserButton *b);};
+    const Action actions[]={
+        {@"Rename…",editable,^(KPMiiBrowserButton *b){[weak rename:record];}},
+        {@"Duplicate",editable&&self.records.count<kartpad::mii::kMaximumMiiSlots,^(KPMiiBrowserButton *b){[weak duplicate:record];}},
+        {@"Export…",YES,^(KPMiiBrowserButton *b){[weak exportRecord:record from:b];}},
+        {@"Remove",editable,^(KPMiiBrowserButton *b){[weak remove:record];}},
+    };
+    CGFloat rowH=40*k,widest=0;
+    for(const Action &action:actions)
+        widest=std::max(widest,[action.title sizeWithAttributes:@{NSFontAttributeName:KPStyleFont(14*k,NSFontWeightSemibold)}].width);
+    // A button's title runs 1 point inside its face and 8 more inside that (button:frame:...).
+    NSUInteger across=(dw-3*gap)/4-18>=widest?4:2;CGFloat aw=(dw-(across-1)*gap)/across;
+    for(NSUInteger i=0;i<4;i++)
+        [document addSubview:[self button:actions[i].title
+            frame:CGRectMake(p+(i%across)*(aw+gap),y+(i/across)*(rowH+gap),aw,rowH) style:KPStyle::Plain
+            enabled:actions[i].enabled action:actions[i].run]];
+    y+=(4/across)*(rowH+gap)-gap+14*k;
+
+    // Licenses that race as this Mii, then Use for a License… for the others: one to a row, or two
+    // when that would run past the bottom of the card.
+    NSArray *others=self.licenseError?@[]:[self licensesToLink:record];
+    if(self.licenseError||linked.count||others.count){
+        y=[self note:@"Licenses" in:document x:p+2 y:y width:dw-4 size:15*k bold:YES secondary:NO]+8*k;
+        if(self.licenseError)y=[self note:self.licenseError in:document x:p+2 y:y width:dw-4 size:12*k bold:NO secondary:YES]+8*k;
+        else{
+            NSUInteger cells=linked.count+(others.count?1:0);CGFloat cellH=48*k,room=[scroll frame].size.height-p-y;
+            NSUInteger columns=cells>1&&cells*(cellH+gap)-gap>room?2:1;CGFloat cw=(dw-(columns-1)*gap)/columns;
+            for(NSUInteger i=0;i<cells;i++){
+                CGRect cell=CGRectMake(p+(i%columns)*(cw+gap),y+(i/columns)*(cellH+gap),cw,cellH);
+                if(i<linked.count){[document addSubview:[self licenseRow:linked[i] frame:cell]];continue;}
+                [document addSubview:[self button:@"Use for a License…" frame:cell style:KPStyle::Plain enabled:editable
+                        action:^(KPMiiBrowserButton *b){
+                    [weak chooseLicenseFor:record from:b];
+                }]];
+            }
+            y+=((cells+columns-1)/columns)*(cellH+gap)-gap;
         }
     }
-    if(!linked.count)
-        y=[self note:@"To start a new license, choose New on the game’s license screen and pick this Mii." in:document
-            x:p+2 y:y width:dw-4 size:12*k bold:NO secondary:YES]+8*k;
     [self finish:scroll height:y+p];
 }
 - (KPMiiBrowserButton*)licenseRow:(NSDictionary*)license frame:(CGRect)frame{
@@ -1008,12 +991,13 @@ static constexpr CGFloat KPMiiRing=0;
     row.paint=^(CGContextRef c,CGRect b,BOOL pressed,BOOL hovered){
         BOOL on=weakRow.enabled;CGRect r=CGRectInset(b,1,1);KPButtonFace(c,r,KPStyle::Plain,NO,on,pressed,hovered);
         CGContextSaveGState(c);if(!on)CGContextSetAlpha(c,.42);if(pressed)CGContextTranslateCTM(c,0,2);
-        CGFloat textW=r.size.width-60*k,x=r.origin.x+13*k,y=r.origin.y;
-        KPText(license[@"name"]?:@"Unnamed",CGRectMake(x,y+7*k,textW,22*k),15*k,KPP->text,YES,NSTextAlignmentLeft);
-        KPText(pending?[NSString stringWithFormat:@"%@ · %@",title,pending]:title,CGRectMake(x,y+28*k,textW,18*k),12*k,
+        // Two lines centred in the face; the More glyph only when the row is wide enough to spare it.
+        BOOL more=r.size.width>=260*k;CGFloat textW=r.size.width-(more?60:26)*k,x=r.origin.x+13*k,y=r.origin.y+(r.size.height-3-40*k)/2;
+        KPText(license[@"name"]?:@"Unnamed",CGRectMake(x,y+1*k,textW,22*k),15*k,KPP->text,YES,NSTextAlignmentLeft);
+        KPText(pending?[NSString stringWithFormat:@"%@ · %@",title,pending]:title,CGRectMake(x,y+22*k,textW,18*k),12*k,
             pending?KPP->cautionInk:KPP->secondaryText,NO,NSTextAlignmentLeft);
         CGFloat icon=26*k;
-        KPControlIcon(c,CGRectMake(CGRectGetMaxX(r)-icon-14*k,y+(r.size.height-3-icon)/2,icon,icon),KPGlyph::More,0,KPP->icon);
+        if(more)KPControlIcon(c,CGRectMake(CGRectGetMaxX(r)-icon-14*k,r.origin.y+(r.size.height-3-icon)/2,icon,icon),KPGlyph::More,0,KPP->icon);
         CGContextRestoreGState(c);
     };
     NSArray *(^entries)(void)=^NSArray*{
