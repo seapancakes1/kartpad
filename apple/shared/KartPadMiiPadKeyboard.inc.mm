@@ -11,7 +11,15 @@
 static NSArray<NSString*> *KPPadKeyRows(NSUInteger page){
     return page?@[@"!?&#@()\":;",@"àáâäãåæçèé",@"êëìíîïñòóô",@"öõøœùúûüßÿ"]:@[@"1234567890",@"qwertyuiop",@"asdfghjkl'",@"zxcvbnm,.-"];
 }
-static constexpr CGFloat KPPadKeyW=50,KPPadKeyH=46,KPPadKeyGap=6,KPPadKeyMargin=20,KPPadKeyTop=104;
+static constexpr CGFloat KPPadKeyW=50,KPPadKeyH=46,KPPadKeyGap=6,KPPadKeyMargin=20,KPPadKeyHeader=30,
+    KPPadKeyTop=104+KPPadKeyHeader;
+
+// Borderless, so it sits on the Mii window as part of it rather than as a window of its own.
+@interface KPPadKeyboardPanel : NSPanel
+@end
+@implementation KPPadKeyboardPanel
+- (BOOL)canBecomeKeyWindow{return YES;}
+@end
 
 @interface KPPadKeyButton : KPMiiBrowserButton
 @end
@@ -30,7 +38,9 @@ static constexpr CGFloat KPPadKeyW=50,KPPadKeyH=46,KPPadKeyGap=6,KPPadKeyMargin=
 @property(nonatomic,strong) KPPadKeyboardView *canvas;
 @property(nonatomic,strong) NSMutableArray<KPPadKeyButton*> *keys;
 @property(nonatomic,weak) NSTextField *field;
-@property(nonatomic,copy) NSString *original,*problem;
+// The window it is attached to: the field's, or the one the field's alert belongs to.
+@property(nonatomic,weak) NSWindow *parent;
+@property(nonatomic,copy) NSString *original,*problem,*title;
 @property(nonatomic) BOOL required,shift,capsLock;
 @property(nonatomic) NSUInteger page;
 @property(nonatomic,copy) void(^done)(BOOL ok);
@@ -52,12 +62,14 @@ static KPPadKeyboard *KPPadActiveKeyboard;
     CGFloat w=self.bounds.size.width,h=self.bounds.size.height;KPPadKeyboard *keyboard=self.keyboard;
     KPFill(c,self.bounds,KPP->background);
     KPSetInk(c,KPP->stripe);CGContextSetLineWidth(c,1);for(CGFloat y=1.5;y<h;y+=4)KPLine(c,0,y,w,y);
+    KPStroke(c,CGRectInset(self.bounds,0.5,0.5),KPP->panelStroke,1,14);
+    KPText(keyboard.title?:@"",CGRectMake(KPPadKeyMargin,14,w-2*KPPadKeyMargin,20),15,KPP->text,YES,NSTextAlignmentLeft);
     // The name in a well, with a caret after it, and its count or what is wrong with it below.
-    CGRect well=CGRectMake(KPPadKeyMargin,18,w-2*KPPadKeyMargin,52);
+    CGRect well=CGRectMake(KPPadKeyMargin,18+KPPadKeyHeader,w-2*KPPadKeyMargin,52);
     KPFill(c,well,KPP->panel,12);KPStroke(c,well,keyboard.problem?0xd93a2b:KPP->panelStroke,keyboard.problem?2:1,12);
     NSString *text=keyboard.field.stringValue?:@"";
     KPCenteredText([text stringByAppendingString:@"|"],CGRectInset(well,16,0),24,KPP->text,NO,NSTextAlignmentLeft);
-    KPText(keyboard.problem?:KPMiiNameCount(text),CGRectMake(KPPadKeyMargin+4,76,w-2*KPPadKeyMargin-8,18),12,
+    KPText(keyboard.problem?:KPMiiNameCount(text),CGRectMake(KPPadKeyMargin+4,76+KPPadKeyHeader,w-2*KPPadKeyMargin-8,18),12,
         keyboard.problem?0xd93a2b:KPP->secondaryText,NO,NSTextAlignmentLeft);
     KPText(@"A  Type     B  Delete     X  Shift     Y  Space     LB / RB  Symbols     Start  OK",
         CGRectMake(KPPadKeyMargin,h-26,w-2*KPPadKeyMargin,16),11,KPP->secondaryText,NO,NSTextAlignmentCenter);
@@ -101,11 +113,14 @@ static KPPadKeyboard *KPPadActiveKeyboard;
     __weak KPPadKeyboard *weak=self;
     const CGFloat gridW=10*KPPadKeyW+9*KPPadKeyGap,w=gridW+2*KPPadKeyMargin,
         bottomY=KPPadKeyTop+4*(KPPadKeyH+KPPadKeyGap),h=bottomY+KPPadKeyH+40;
-    self.panel=[[NSPanel alloc]initWithContentRect:NSMakeRect(0,0,w,h)
-        styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable backing:NSBackingStoreBuffered defer:NO];
+    self.panel=[[KPPadKeyboardPanel alloc]initWithContentRect:NSMakeRect(0,0,w,h)
+        styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
     self.panel.releasedWhenClosed=NO;self.panel.hidesOnDeactivate=YES;self.panel.delegate=self;
+    self.panel.opaque=NO;self.panel.backgroundColor=NSColor.clearColor;self.panel.hasShadow=YES;
     self.panel.collectionBehavior=NSWindowCollectionBehaviorFullScreenAuxiliary|NSWindowCollectionBehaviorMoveToActiveSpace;
-    self.canvas=[[KPPadKeyboardView alloc]initWithFrame:NSMakeRect(0,0,w,h)];self.canvas.keyboard=self;self.panel.contentView=self.canvas;
+    self.canvas=[[KPPadKeyboardView alloc]initWithFrame:NSMakeRect(0,0,w,h)];self.canvas.keyboard=self;
+    self.canvas.wantsLayer=YES;self.canvas.layer.cornerRadius=14;self.canvas.layer.masksToBounds=YES;
+    self.panel.contentView=self.canvas;
     self.keys=[NSMutableArray array];
     for(NSUInteger row=0;row<4;row++)for(NSUInteger column=0;column<10;column++){
         NSString *(^character)(void)=^NSString*{
@@ -177,7 +192,7 @@ static KPPadKeyboard *KPPadActiveKeyboard;
     }
     void(^done)(BOOL)=self.done;self.done=nil;
     if(self.closing)[NSNotificationCenter.defaultCenter removeObserver:self.closing];self.closing=nil;
-    [self.panel orderOut:nil];
+    [self.parent removeChildWindow:self.panel];self.parent=nil;[self.panel orderOut:nil];
     if(alive){[window makeKeyAndOrderFront:nil];[self editor];}
     KPPlay(ok?KPSound::Confirm:KPSound::Close);
     // Released on the next turn, since this can run inside one of the panel's own events.
@@ -197,13 +212,15 @@ static void KPPadKeyboardOpen(NSTextField *field,NSString *title,BOOL required,v
     [KPPadActiveKeyboard finish:NO];
     KPPadKeyboard *keyboard=[KPPadKeyboard new];[keyboard build];KPPadActiveKeyboard=keyboard;
     keyboard.field=field;keyboard.original=field.stringValue;keyboard.required=required;keyboard.done=done;
-    keyboard.shift=!field.stringValue.length;keyboard.panel.title=title;
+    keyboard.shift=!field.stringValue.length;keyboard.title=title;keyboard.panel.title=title;
     // Over the bottom of the window the field is in (an alert's parent), above it and its alerts.
     NSWindow *parent=field.window.sheetParent?:field.window;NSRect frame=keyboard.panel.frame,area=parent.frame;
     if(frame.size.width>area.size.width||frame.size.height>area.size.height)area=parent.screen.visibleFrame;
     frame.origin=NSMakePoint(NSMidX(area)-frame.size.width/2,
         area.origin.y+std::max(CGFloat(16),std::min(CGFloat(40),area.size.height-frame.size.height)));
     [keyboard.panel setFrame:frame display:NO];
+    // A child of that window, so it moves with it and isn't listed or switched to on its own.
+    keyboard.parent=parent;[parent addChildWindow:keyboard.panel ordered:NSWindowAbove];
     keyboard.panel.level=std::max(parent.level,field.window.level)+1;
     __weak KPPadKeyboard *weak=keyboard;
     keyboard.closing=[NSNotificationCenter.defaultCenter addObserverForName:NSWindowWillCloseNotification object:parent

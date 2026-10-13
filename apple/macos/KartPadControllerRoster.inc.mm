@@ -40,6 +40,7 @@ static NSString *KPHex(NSData *data) {
 @property(nonatomic) int slot;          // 0–3, -1 when not playing
 @property(nonatomic) int battery;       // percent, -1 unknown
 @property(nonatomic) BOOL charging, wired, canRumble, hasLight, twin;
+@property(nonatomic) BOOL canShake;  // KPCanShake: Shake for Trick
 @property(nonatomic) uint64_t buttons;  // SDL gamepad buttons held (bits), keyboard: game keys held
 @property(nonatomic) NSTimeInterval lastInput, connectedAt;
 @property(nonatomic) NSInteger rawCount;  // SDL joystick without a gamepad mapping
@@ -363,6 +364,7 @@ static void KPHintDeviceChanged();  // KartPadHints.inc.mm
       SDL_PropertiesID props = SDL_GetGamepadProperties(pad);
       device.canRumble = SDL_GetBooleanProperty(props, SDL_PROP_GAMEPAD_CAP_RUMBLE_BOOLEAN, false);
       device.hasLight = SDL_GetBooleanProperty(props, SDL_PROP_GAMEPAD_CAP_RGB_LED_BOOLEAN, false);
+      device.canShake = KPCanShake(pad);
       _known[identifier] = device;
     }
     [seen addObject:identifier];

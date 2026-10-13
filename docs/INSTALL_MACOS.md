@@ -85,6 +85,9 @@ The first time KartPad opens it walks you through finding your game files.
 - Controllers that can vibrate do when the game rumbles. **Settings →
   Controls → Vibration** sets the strength (Off, Light, Medium or Strong) and
   **Test vibration** checks a controller.
+- On a controller with motion sensors (DualSense, DualShock 4, Switch Pro,
+  Joy-Con), **Shake for Trick** in its player's menu on HOME → Controllers makes
+  a sharp shake do a trick (D-pad up). It's off until you turn it on.
 
 Settings and saves are in `~/Library/Application Support/KartPad`, graphics
 caches in `~/Library/Caches/KartPad`. Replacing the app keeps both.

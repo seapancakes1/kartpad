@@ -139,6 +139,41 @@ static void KPApplyPortVibration(int port, SDL_Gamepad *pad) {
   sent[port] = strength;
   PAD_HLE_SetPortRumbleStrength((uint32_t)port, strength);
 }
+
+// Shake for Trick: a sharp shake presses D-pad up (runtime controller_shake.cpp). Each controller's
+// own choice, by profile key, off until it's turned on.
+static NSString *const KPControllerShakeKey = @"KartPadControllerShakeTricks";
+extern "C" void PAD_HLE_SetPortShakeTricks(uint32_t chan, bool enabled);
+static NSDictionary *KPControllerShakes;  // read once, kept up to date by KPSetShakeTricks
+static BOOL KPShakeTricksFor(NSString *profileKey) {
+  if (KPControllerShakes == nil)
+    KPControllerShakes = [NSUserDefaults.standardUserDefaults dictionaryForKey:KPControllerShakeKey] ?: @{};
+  NSNumber *on = profileKey ? KPControllerShakes[profileKey] : nil;
+  return [on isKindOfClass:NSNumber.class] && on.boolValue;
+}
+static void KPSetShakeTricks(NSString *profileKey, BOOL on) {
+  if (profileKey == nil) return;
+  NSMutableDictionary *map = [KPControllerShakes ?: @{} mutableCopy];
+  map[profileKey] = @(on);
+  KPControllerShakes = map.copy;
+  [NSUserDefaults.standardUserDefaults setObject:KPControllerShakes forKey:KPControllerShakeKey];
+}
+// A controller with an accelerometer, other than a Wii Remote (the game reads a remote's shakes itself).
+static BOOL KPCanShake(SDL_Gamepad *pad) {
+  const char *name = pad ? SDL_GetGamepadName(pad) : nullptr;
+  if (pad == nullptr || (name && strncmp(name, "Nintendo Wii Remote", 19) == 0)) return NO;
+  return SDL_GamepadHasSensor(pad, SDL_SENSOR_ACCEL) || SDL_GamepadHasSensor(pad, SDL_SENSOR_ACCEL_R) ||
+         SDL_GamepadHasSensor(pad, SDL_SENSOR_ACCEL_L);
+}
+// Tells the runtime which players shake for tricks (KPControllerSettings tick).
+static void KPApplyPortShake(int port, SDL_Gamepad *pad) {
+  static int sent[4] = {-1, -1, -1, -1};
+  if (port < 0 || port >= 4) return;
+  const int on = KPCanShake(pad) && KPShakeTricksFor(KPProfileKey(pad));
+  if (sent[port] == on) return;
+  sent[port] = on;
+  PAD_HLE_SetPortShakeTricks((uint32_t)port, on);
+}
 // A short buzz on every connected controller that can vibrate, at its own strength. Returns how
 // many buzzed; silenced counts the ones that could but have vibration off.
 static int KPTestVibration(int *silenced) {
@@ -574,6 +609,7 @@ static int KPTestVibration(int *silenced) {
     int index=PADGetIndexForPort(port);
     SDL_Gamepad *pad=index<0?nullptr:PADGetSDLGamepadForIndex(index);
     KPApplyPortVibration(port,pad);
+    KPApplyPortShake(port,pad);
     if(!pad)continue;
     NSNumber *identifier=@(SDL_GetGamepadID(pad));
     NSString *stamp=[NSString stringWithFormat:@"%@:%d",KPProfileKey(pad),port];

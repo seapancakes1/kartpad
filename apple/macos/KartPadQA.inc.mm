@@ -4,7 +4,7 @@
 // it with KARTPAD_MUTED=1 KARTPAD_BACKGROUND=1 so it stays silent and never takes the focus.
 //   home | close | screen settings|controllers|miis|ghosts|pair-wii|pair-phone | pad up|down|left|right|a|b|x|y|lb|rb|start
 //   shot NAME | resize W H | fullscreen | appearance light|dark|system | restart | quit | wait SECONDS
-//   focus LABEL | click LABEL | drag FROM TO LABEL | where | navmap | roster | vpad add|press|release|remove | key NAME
+//   focus LABEL | click LABEL | drag FROM TO LABEL | where | navmap | roster | vpad add [motion]|press|release|shake|remove | key NAME
 //   move IDENTIFIER|vpadN SLOT | phone start|stop|status|background-input|remove N
 //   dropfile PATH (as if dropped on the game window) | droptypes (what the game window takes in a drag)
 // Included by KartPadMacShell.mm at the end.
@@ -241,6 +241,12 @@ static void KPQARun(NSString *line) {
       desc.naxes = SDL_GAMEPAD_AXIS_COUNT;
       desc.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
       desc.name = "KartPad QA Pad";
+      // vpad add motion: with an accelerometer and gyroscope, for Shake for Trick (vpad shake N).
+      static const SDL_VirtualJoystickSensorDesc sensors[] = {{SDL_SENSOR_ACCEL, 60}, {SDL_SENSOR_GYRO, 60}};
+      if (words.count >= 3 && [words[2] isEqualToString:@"motion"]) {
+        desc.nsensors = 2;
+        desc.sensors = sensors;
+      }
       // Logs each vibration it's sent (KartPad's tests, the game's motor), from whichever thread.
       desc.Rumble = [](void *, Uint16 low, Uint16 high) -> bool {
         dispatch_async(dispatch_get_main_queue(), ^{ KPQALog([NSString stringWithFormat:@"vpad rumble low=%u high=%u", low, high]); });
@@ -257,6 +263,19 @@ static void KPQARun(NSString *line) {
       const SDL_JoystickID id = pads[words[2].integerValue].unsignedIntValue;
       if ([argument isEqualToString:@"remove"]) {
         SDL_DetachVirtualJoystick(id);
+      } else if ([argument isEqualToString:@"shake"]) {
+        // Held still for half a second, a 2 g jolt sideways for a tenth, then still again.
+        auto send = [id](float x) {
+          SDL_Joystick *joystick = SDL_GetJoystickFromID(id);
+          const float accel[3] = {x, SDL_STANDARD_GRAVITY, 0}, gyro[3] = {};
+          SDL_SendJoystickVirtualSensorData(joystick, SDL_SENSOR_ACCEL, SDL_GetTicksNS(), accel, 3);
+          SDL_SendJoystickVirtualSensorData(joystick, SDL_SENSOR_GYRO, SDL_GetTicksNS(), gyro, 3);
+        };
+        for (int step = 0; step <= 60; ++step)
+          dispatch_after(dispatch_time(DISPATCH_TIME_NOW, step * 16 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+            send(step >= 30 && step < 36 ? 2 * SDL_STANDARD_GRAVITY : 0);
+          });
+        KPQALog([NSString stringWithFormat:@"vpad shake %@", words[2]]);
       } else if (words.count >= 4 && buttons[words[3].lowercaseString]) {
         SDL_SetJoystickVirtualButton(SDL_GetJoystickFromID(id), buttons[words[3].lowercaseString].intValue,
                                      [argument isEqualToString:@"press"]);

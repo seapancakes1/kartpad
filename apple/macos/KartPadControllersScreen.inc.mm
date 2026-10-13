@@ -13,6 +13,7 @@
 static void KPSetUpButtons(KPPadDevice *device);
 static void KPChooseMii(KPPadDevice *device);
 static void KPChooseVibration(KPPadDevice *device);
+static void KPChooseShakeTricks(KPPadDevice *device);
 static KPScreen *KPMakeConnectScreen();
 
 // Which controller made the latest press: a pad (by joystick), or the keyboard.
@@ -512,6 +513,11 @@ enum : unsigned { KPPressConfirm = 1, KPPressBack = 2, KPPressStart = 4 };
   if (device.canRumble)
     [menu add:@"Vibration" detail:KPVibrationNames()[KPVibrationFor(device.profileKey)] glyph:(int)KPUIGlyph::Pad enabled:YES
           run:^{ KPChooseVibration(device); }];
+#if TARGET_OS_OSX
+  if (device.canShake)
+    [menu add:@"Shake for Trick" detail:KPShakeTricksFor(device.profileKey) ? @"On" : @"Off" glyph:(int)KPUIGlyph::Pad
+        enabled:YES run:^{ KPChooseShakeTricks(device); }];
+#endif
   if (!device.isKeyboard)
     [menu add:@"Find" detail:nil glyph:(int)KPUIGlyph::Find enabled:YES run:^{
       [roster identify:device];
@@ -1140,6 +1146,22 @@ static void KPChooseVibration(KPPadDevice *device) {
       }
     }];
   }];
+  [KPOverlay() present:menu];
+}
+
+// Shake for Trick, kept for the controller by profile key (KPSetShakeTricks).
+static void KPChooseShakeTricks(KPPadDevice *device) {
+  KPMenuScreen *menu = [[KPMenuScreen alloc] initWithFrame:NSZeroRect];
+  menu.heading = [NSString stringWithFormat:@"Shake for Trick · %@", device.name];
+  menu.chosen = KPShakeTricksFor(device.profileKey) ? 0 : 1;
+  menu.chosenGlyph = (int)KPUIGlyph::Check;
+  NSString *profileKey = device.profileKey;
+  for (NSNumber *on in @[@YES, @NO]) {
+    [menu add:on.boolValue ? @"On" : @"Off" detail:nil glyph:-1 enabled:YES run:^{
+      KPSetShakeTricks(profileKey, on.boolValue);
+      AppendSessionLine([NSString stringWithFormat:@"controllerShakeTricks=%@; on=%d", device.name, on.boolValue]);
+    }];
+  }
   [KPOverlay() present:menu];
 }
 

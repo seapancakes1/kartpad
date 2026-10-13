@@ -264,7 +264,9 @@ mouse click on a control: what the window's hit test finds, then the click),
 width; logs the audio levels after),
 `where` (the focused control), `navmap` (where each direction leads from every
 control on the screen), `vpad add|press N BUTTON|release N BUTTON|remove N`
-(SDL virtual controllers, to check choosing controllers by pressing and joining),
+(SDL virtual controllers, to check choosing controllers by pressing and joining;
+`vpad add motion` gives one an accelerometer and gyroscope, and `vpad shake N`
+shakes it once for Shake for Trick),
 `move IDENTIFIER|vpadN SLOT` (put a controller on a player, or take it off with
 -1, without benching it), `phone start|status|background-input|remove N` (phone
 controllers: start the server, log the touch and tilt links and each phone's
