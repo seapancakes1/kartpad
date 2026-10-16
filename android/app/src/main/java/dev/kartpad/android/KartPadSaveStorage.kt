@@ -44,6 +44,7 @@ internal object KartPadSaveStorage {
         require(!KartPadIdentityStorage.hasPending(filesDir)) { "Apply pending identity edits before restoring a save." }
         require(!hasPending(filesDir, profile)) { "Restart to apply this profile's pending restore first." }
         require(!KartPadRatingStorage.hasPending(filesDir)) { "Restart to apply the pending rating restore first." }
+        require(!KartPadMiiStorage.hasPending(filesDir)) { "Restart to apply the pending Mii changes first." }
         validate(data)
         val file = pending(filesDir, profile)
         check(file.parentFile?.let { it.isDirectory || it.mkdirs() } == true) {

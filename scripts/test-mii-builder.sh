@@ -9,6 +9,8 @@ clang++ -O2 -std=c++20 -UNDEBUG -I "$repo/runtime/include" "$repo/runtime/tests/
 "$work/history"
 clang++ -O2 -std=c++20 -UNDEBUG -I "$repo/runtime/include" "$repo/runtime/tests/mii_database_tests.cpp" -o "$work/database"
 "$work/database"
+clang++ -O2 -std=c++20 -UNDEBUG -I "$repo/runtime/include" "$repo/runtime/tests/mii_pending_changes_tests.cpp" -o "$work/pending"
+"$work/pending"
 # Sound archive reader: synthetic archives always; every editor sound from a real
 # files/sound/revo_kart.brsar when given as the third argument.
 clang++ -O2 -std=c++20 -UNDEBUG -I "$repo/runtime/include" "$repo/runtime/tests/audio_sound_archive_tests.cpp" -o "$work/sounds"
