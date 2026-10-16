@@ -15,6 +15,9 @@ internal object KartPadSoundSettings {
     private const val ENABLED = "custom_levels"
     private const val MUSIC = "music_percent"
     private const val SOUNDS = "sounds_percent"
+    // HOME's volume and Settings' Sound switch, over both (KartPad's screens).
+    private const val MASTER = "master_percent"
+    private const val MUTED = "muted"
 
     private fun preferences(context: Context) =
         context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
@@ -33,9 +36,24 @@ internal object KartPadSoundSettings {
             .apply()
     }
 
-    /** The levels the game should play at now, 0 to 1: full volume unless the toggle is on. */
-    fun effective(context: Context): Pair<Float, Float> =
-        if (enabled(context)) musicPercent(context) / 100f to soundsPercent(context) / 100f else 1f to 1f
+    fun masterPercent(context: Context): Int = preferences(context).getInt(MASTER, 100).coerceIn(0, 100)
+
+    fun muted(context: Context): Boolean = preferences(context).getBoolean(MUTED, false)
+
+    fun setMaster(context: Context, percent: Int, muted: Boolean) {
+        preferences(context).edit().putInt(MASTER, percent.coerceIn(0, 100)).putBoolean(MUTED, muted).apply()
+    }
+
+    /**
+     * The levels the game should play at now, 0 to 1: full volume unless the toggle is on, times the
+     * volume, and nothing while the sound is off.
+     */
+    fun effective(context: Context): Pair<Float, Float> {
+        if (muted(context)) return 0f to 0f
+        val master = masterPercent(context) / 100f
+        return if (enabled(context)) musicPercent(context) / 100f * master to soundsPercent(context) / 100f * master
+            else master to master
+    }
 
     /**
      * Saves the levels in Config.toml's [audio] table, which the runtime applies at every start.

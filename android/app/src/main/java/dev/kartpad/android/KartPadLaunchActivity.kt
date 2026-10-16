@@ -47,6 +47,7 @@ open class KartPadChooserActivity : Activity() {
     private var exportSession: String? = null
     private lateinit var preferredLaunch: KartPadPreferredLaunch
     private var darkMode = true
+    private var waitedForGame = 0
     private lateinit var preferenceButton: Button
     private var updateLink: Button? = null
     private var updateAfterSettings: KartPadUpdateCheck.Update? = null
@@ -267,6 +268,14 @@ open class KartPadChooserActivity : Activity() {
         if (KartPadGamePack.required && !KartPadGamePack.isInstalled(this)) {
             pendingProfile = profile
             askForGamePack()
+            return
+        }
+        // Restarting from KartPad's screens: the game's process must be gone before it starts again (its
+        // runtime can't restart in place), so wait for it, up to a few seconds.
+        val waitPid = intent.getIntExtra(EXTRA_WAIT_PID, 0)
+        if (waitPid > 0 && File("/proc/$waitPid").exists() && waitedForGame < 60) {
+            waitedForGame++
+            window.decorView.postDelayed({ launch(profile) }, 50)
             return
         }
         requestedProfileFile().delete()
@@ -871,6 +880,8 @@ open class KartPadChooserActivity : Activity() {
 
     companion object {
         const val EXTRA_SKIP_PREFERRED_GAME = "dev.kartpad.android.SKIP_PREFERRED_GAME"
+        // Restarting from KartPad's screens: the game process to wait for before starting the game again.
+        const val EXTRA_WAIT_PID = "dev.kartpad.android.WAIT_PID"
         private const val STATE_PREFERRED_CONSUMED = "preferred_launch_consumed"
         private const val LOG_TAG = "KartPadLauncher"
         private const val EXTRA_DEBUG_RETRO_NOT_INSTALLED =

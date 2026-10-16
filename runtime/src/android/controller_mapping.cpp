@@ -19,6 +19,8 @@ constexpr uint64_t Pack(const ControllerButtonMapping& mapping) noexcept {
 
 std::atomic<uint64_t> g_mapping{Pack(kDefaultControllerButtonMapping)};
 std::atomic<bool> g_autoAccelerate{false};
+std::atomic<bool> g_vibration{true};
+std::atomic<bool> g_nintendoLayout{false};
 std::array<kartpad::input::AutoAccelerateLatch, 4> g_autoAccelerateLatches{};
 
 }  // namespace
@@ -38,6 +40,34 @@ ControllerButtonMapping ReadControllerButtonMapping() noexcept {
   }
   return IsValidControllerButtonMapping(mapping)
       ? mapping : kDefaultControllerButtonMapping;
+}
+
+void PublishControllerVibration(const bool enabled) noexcept {
+  g_vibration.store(enabled, std::memory_order_release);
+}
+
+bool ControllerVibrationEnabled() noexcept { return g_vibration.load(std::memory_order_acquire); }
+
+void PublishNintendoLayout(const bool enabled) noexcept {
+  g_nintendoLayout.store(enabled, std::memory_order_release);
+}
+
+RawGamepadState ApplyNintendoLayout(RawGamepadState input, const uint16_t vendor,
+                                    const uint16_t product) noexcept {
+  // Pro Controller, Joy-Cons in the charging grip or combined, Wii U Pro Controller; not the
+  // GameCube-style pad (0x2073), whose A is its own big button.
+  const bool labelled = vendor == kNintendoVendorId &&
+      (product == 0x2009 || product == 0x200e || product == 0x2008 || product == 0x0330);
+  if (!labelled || !g_nintendoLayout.load(std::memory_order_acquire) ||
+      ReadControllerButtonMapping() != kDefaultControllerButtonMapping) {
+    return input;
+  }
+  const uint32_t buttons = input.buttons;
+  const auto moved = [buttons](uint32_t from, uint32_t to) { return (buttons & from) != 0 ? to : 0u; };
+  constexpr uint32_t faces = kGamepadSouth | kGamepadEast | kGamepadWest | kGamepadNorth;
+  input.buttons = (buttons & ~faces) | moved(kGamepadEast, kGamepadSouth) | moved(kGamepadSouth, kGamepadEast) |
+      moved(kGamepadNorth, kGamepadWest) | moved(kGamepadWest, kGamepadNorth);
+  return input;
 }
 
 void PublishControllerAutoAccelerate(const bool enabled) noexcept {

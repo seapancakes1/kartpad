@@ -36,6 +36,43 @@ inline unsigned FeaturePage(unsigned field, unsigned value) {
     auto ids=FeatureIds(field); auto found=std::find(ids.begin(),ids.end(),value);
     return found==ids.end()?0:unsigned(found-ids.begin())/12;
 }
+// How each feature category edits (Face 2 … Glasses 9, EditorCategories order), as the Apple editor
+// lays it out: its colour field, the two grids a two-part switch names, its on/off toggle, and its
+// adjustments, each spelling out both directions for screen readers and tooltips.
+struct EditorMode { unsigned field; const char *title; };
+struct EditorAdjustment { unsigned field; const char *title, *less, *more; };
+inline constexpr unsigned NoField = 99;
+inline unsigned CategoryColorField(unsigned category) {
+    switch (category) {
+    case 2: return 8; case 3: return 12; case 4: return 22; case 5: return 17;
+    case 7: return 30; case 8: return 39; case 9: return 34; default: return NoField;
+    }
+}
+inline std::vector<EditorMode> CategoryModes(unsigned category) {
+    if (category == 2) return {{7, "Shape"}, {9, "Details"}};
+    if (category == 8) return {{37, "Mustache"}, {38, "Beard"}};
+    return {};
+}
+// Flip hair (Hair) and Mole (Facial hair); NoField elsewhere.
+inline unsigned CategoryToggleField(unsigned category) { return category == 3 ? 13 : category == 8 ? 42 : NoField; }
+inline const char *CategoryToggleTitle(unsigned category) { return category == 3 ? "Flip hair" : category == 8 ? "Mole" : ""; }
+inline std::vector<EditorAdjustment> CategoryAdjustments(unsigned category, const Appearance &a) {
+    const char *up = "Move up", *down = "Move down", *smaller = "Smaller", *larger = "Larger";
+    const char *tiltDown = "Tilt outer ends down", *tiltUp = "Tilt outer ends up";
+    switch (category) {
+    case 4: return {{24, "Position", up, down}, {23, "Size", smaller, larger}, {21, "Tilt", tiltDown, tiltUp},
+                    {25, "Spacing", "Closer together", "Farther apart"}};
+    case 5: return {{16, "Position", up, down}, {18, "Size", smaller, larger}, {15, "Tilt", tiltDown, tiltUp},
+                    {19, "Spacing", "Closer together", "Farther apart"}};
+    case 6: return {{28, "Position", up, down}, {27, "Size", smaller, larger}};
+    case 7: return {{32, "Position", up, down}, {31, "Size", smaller, larger}};
+    case 8: return a.Get(42) ? std::vector<EditorAdjustment>{{44, "Mole position", up, down}, {43, "Mole size", smaller, larger},
+                                                             {45, "Mole sideways", "Move left", "Move right"}}
+                             : std::vector<EditorAdjustment>{{41, "Position", up, down}, {40, "Size", smaller, larger}};
+    case 9: return {{36, "Position", up, down}, {35, "Size", smaller, larger}};
+    default: return {};
+    }
+}
 class DraftHistory {
     std::vector<Appearance> undo_, redo_;
     bool grouping_=false, captured_=false;

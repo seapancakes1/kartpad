@@ -114,8 +114,15 @@ if(KARTPAD_GAME_RUNTIME_SOURCE)
     kartpad_touch_input_jni.cpp
     kartpad_runtime_settings_jni.cpp
     kartpad_controller_slots_jni.cpp
+    kartpad_ghosts_jni.cpp
     kartpad_mii_jni.cpp
+    kartpad_mii_render_jni.cpp
+    kartpad_mii_editor_jni.cpp
+    kartpad_mii_preview_gl.cpp
+    kartpad_ui_sounds_jni.cpp
+    kartpad_screens_jni.cpp
     retro_rewind_archive_jni.cpp
+    "${KARTPAD_REPO_ROOT}/runtime/src/android/host_screens.cpp"
     "${KARTPAD_REPO_ROOT}/runtime/src/android/touch_input.cpp"
     "${KARTPAD_REPO_ROOT}/runtime/src/android/runtime_settings.cpp"
     "${KARTPAD_REPO_ROOT}/runtime/src/android/controller_mapping.cpp"
@@ -128,7 +135,7 @@ if(KARTPAD_GAME_RUNTIME_SOURCE)
   target_include_directories(${KARTPAD_GAME_RUNTIME_TARGET} PRIVATE
     "${KARTPAD_REPO_ROOT}/runtime/include")
   target_link_libraries(${KARTPAD_GAME_RUNTIME_TARGET} PRIVATE
-    MINIZIP::minizip mbedtls)
+    MINIZIP::minizip mbedtls jnigraphics GLESv3 log)
 else()
   add_library(main SHARED
     fixture_main.cpp
@@ -139,6 +146,10 @@ else()
     fiber_switch_android.S
     kartpad_controller_slots_fixture_jni.cpp
     kartpad_runtime_settings_fixture_jni.cpp
+    kartpad_screens_jni.cpp
+    kartpad_ghosts_jni.cpp
+    kartpad_mii_editor_jni.cpp
+    host_screens_fixture.cpp
     kartpad_touch_input_jni.cpp
     retro_rewind_archive_jni.cpp
     "${KARTPAD_REPO_ROOT}/runtime/src/android/touch_input.cpp"

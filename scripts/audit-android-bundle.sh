@@ -114,6 +114,8 @@ asset_members="$(printf '%s\n' "$members" | grep '^base/assets/.' | sort)"
 expected_asset_members="$(printf '%s\n' \
   base/assets/ThirdPartyLicenses/Mbed-TLS.txt \
   base/assets/ThirdPartyLicenses/Minizip-NG.txt \
+  base/assets/ThirdPartyLicenses/Nunito.txt \
+  base/assets/fonts/Nunito.ttf \
   base/assets/dsp/dsp_coef.bin \
   base/assets/pipeline/initial_pipeline_cache.db \
   base/assets/wii/README.md \

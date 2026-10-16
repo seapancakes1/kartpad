@@ -589,12 +589,17 @@ class AndroidTouchOverlayContractTests(unittest.TestCase):
         storage = (REPO / "android/app/src/main/java/dev/kartpad/android/KartPadMiiStorage.kt").read_text()
         native = (REPO / "android/app/src/main/cpp/kartpad_mii_jni.cpp").read_text()
         cmake = (REPO / "android/app/src/main/cpp/CMakeLists.txt").read_text()
-        self.assertIn("saveRestoreStartupError = saveRestoreStartupError ?: KartPadMiiStorage.applyPending(filesDir)", activity)
+        # The launch applies older single-change files, then the Mii change queue.
+        self.assertIn("saveRestoreStartupError = saveRestoreStartupError ?: KartPadMiiChanges.applyAtLaunch(filesDir)", activity)
         self.assertIn("saveRestoreStartupError?.let { throw IllegalStateException(it) }", activity)
         self.assertLess(
-            activity.index("KartPadMiiStorage.applyPending(filesDir)"),
+            activity.index("KartPadMiiChanges.applyAtLaunch(filesDir)"),
             activity.index("super.onCreate(savedInstanceState)"),
         )
+        changes = (REPO / "android/app/src/main/java/dev/kartpad/android/KartPadMiiChanges.kt").read_text()
+        self.assertIn("KartPadMiiStorage.applyPending(files)", changes)
+        self.assertIn("KartPadIdentityStorage.applyPending(files)", changes)
+        self.assertIn("mii::ParseQueue", native)
         self.assertIn("showMiiManager()", activity)
         self.assertIn("Intent.ACTION_OPEN_DOCUMENT", activity)
         self.assertIn("nativeImportMii", activity)

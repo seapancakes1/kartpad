@@ -118,11 +118,15 @@ asset_members="$(printf '%s\n' "$members" | grep '^assets/.' | sort || true)"
 if [[ -n "$asset_members" ]]; then
   expected_asset_members="$(printf '%s\n' \
     assets/ThirdPartyLicenses/Mbed-TLS.txt \
-    assets/ThirdPartyLicenses/Minizip-NG.txt | sort)"
+    assets/ThirdPartyLicenses/Minizip-NG.txt \
+    assets/ThirdPartyLicenses/Nunito.txt \
+    assets/fonts/Nunito.ttf | sort)"
   if printf '%s\n' "$asset_members" | grep -Fxq assets/dsp/dsp_coef.bin; then
     expected_asset_members="$(printf '%s\n' \
     assets/ThirdPartyLicenses/Mbed-TLS.txt \
     assets/ThirdPartyLicenses/Minizip-NG.txt \
+    assets/ThirdPartyLicenses/Nunito.txt \
+    assets/fonts/Nunito.ttf \
     assets/dsp/dsp_coef.bin \
     assets/pipeline/initial_pipeline_cache.db \
     assets/wii/README.md \

@@ -51,6 +51,16 @@ void PublishControllerButtonMapping(
     const ControllerButtonMapping& mapping) noexcept;
 ControllerButtonMapping ReadControllerButtonMapping() noexcept;
 
+// Vibration (KartPad's Settings): the game's rumble reaches controllers only while it's on.
+void PublishControllerVibration(bool enabled) noexcept;
+bool ControllerVibrationEnabled() noexcept;
+
+// Nintendo button layout (KartPad's Settings): a Pro Controller, Joy-Cons in the grip or a Wii U Pro
+// Controller plays with the letters printed on it, A on the right and B at the bottom, while the
+// button mapping is the default (a saved mapping wins). Android hands these pads over by position.
+void PublishNintendoLayout(bool enabled) noexcept;
+RawGamepadState ApplyNintendoLayout(RawGamepadState input, uint16_t vendor, uint16_t product) noexcept;
+
 // Controller auto-accelerate (off by default; the touch A button has its own).
 // Apply runs on the guest input thread with the mapped Classic buttons.
 void PublishControllerAutoAccelerate(bool enabled) noexcept;

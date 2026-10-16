@@ -44,8 +44,10 @@ import kotlin.math.roundToInt
 import org.libsdl.app.KartPadJoystickHandler
 import org.libsdl.app.SDLActivity
 import org.libsdl.app.SDLSurface
+import dev.kartpad.android.screens.KartPadScreens
+import dev.kartpad.android.screens.KartPadScreensHost
 
-class KartPadActivity : SDLActivity() {
+class KartPadActivity : SDLActivity(), KartPadScreensHost {
     private lateinit var kartPadOverlay: KartPadOverlayView
     private lateinit var menuButton: Button
     private lateinit var editorBar: LinearLayout
@@ -124,7 +126,7 @@ class KartPadActivity : SDLActivity() {
             RetroRewindInstallStorage.recoverForLaunch(filesDir, requestedRuntimeProfile())
             if (!identityStartupChecked) {
                 saveRestoreStartupError = KartPadSaveStorage.applyPending(filesDir)
-                saveRestoreStartupError = saveRestoreStartupError ?: KartPadMiiStorage.applyPending(filesDir)
+                saveRestoreStartupError = saveRestoreStartupError ?: KartPadMiiChanges.applyAtLaunch(filesDir)
             }
             KartPadRuntimeResources.install(this)
             configureRuntimeProfile()
@@ -351,11 +353,17 @@ class KartPadActivity : SDLActivity() {
         mLayout.bringChildToFront(kartPadOverlay)
         if (::menuButton.isInitialized) mLayout.bringChildToFront(menuButton)
         if (::editorBar.isInitialized) mLayout.bringChildToFront(editorBar)
+        // KartPad's screens over the game (HOME, Controllers, Settings, Miis); the fixture app has them
+        // too, with no game under them, for the automated checks.
+        if (BuildConfig.GAME_RUNTIME || BuildConfig.DEBUG) KartPadScreensSetup.install(this, mLayout)
         Log.i(TAG, "A0 SDLActivity shell created")
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         val device = event.device
+        if (KartPadScreens.active && KartPadScreens.dispatchKey(
+                event, KartPadControllerKeys.sdlReadsDevice(event.deviceId, device != null, device?.sources ?: 0))
+        ) return true
         val external = device != null && !device.isVirtual &&
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && device.isExternal
         val routed = KartPadControllerKeys.routes(
@@ -547,7 +555,7 @@ class KartPadActivity : SDLActivity() {
                 setColor(Color.argb(190, 20, 20, 20))
                 setStroke(dp(1), Color.argb(100, 255, 255, 255))
             }
-            setOnClickListener { showKartPadMenu() }
+            setOnClickListener { if (KartPadScreens.homeFactory != null) KartPadScreens.toggleHome() else showKartPadMenu() }
         }
         val params = RelativeLayout.LayoutParams(dp(44), dp(44)).apply {
             addRule(RelativeLayout.ALIGN_PARENT_END)
@@ -955,14 +963,6 @@ class KartPadActivity : SDLActivity() {
         )
     }
 
-    private fun applyDisplaySettings() {
-        nativeApplyDisplaySettings(
-            KartPadTouchSettings.showFps(this),
-            KartPadTouchSettings.fpsSize(this),
-            KartPadTouchSettings.aspectMode(this),
-            KartPadTouchSettings.resolutionScale(this),
-        )
-    }
 
     private fun showAspectRatioSettings() {
         val labels = arrayOf(
@@ -1243,10 +1243,6 @@ class KartPadActivity : SDLActivity() {
         dialog.show()
     }
 
-    private fun applyControllerMapping() {
-        nativeApplyControllerMapping(KartPadControllerMapping.load(this))
-        nativeApplyControllerAutoAccelerate(KartPadTouchSettings.controllerAutoAccelerate(this))
-    }
 
     private fun showShakeTricks() {
         val content = LinearLayout(this).apply {
@@ -1754,6 +1750,12 @@ class KartPadActivity : SDLActivity() {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_SCREENS_DOCUMENT) {
+            val done = screensDocumentDone
+            screensDocumentDone = null
+            done?.invoke(if (resultCode == RESULT_OK) data?.data else null)
+            return
+        }
         if (requestCode == REQUEST_MANAGE_GAME_DATA && resultCode == RESULT_OK) {
             AlertDialog.Builder(this)
                 .setTitle("Game Data Changed")
@@ -2593,6 +2595,8 @@ class KartPadActivity : SDLActivity() {
     private external fun nativeGhostTransfer(save: ByteArray, ghost: ByteArray?, license: Int, slot: Int, downloaded: Boolean): ByteArray?
     private external fun nativeApplyControllerMapping(mapping: IntArray)
     private external fun nativeApplyControllerAutoAccelerate(enabled: Boolean)
+    private external fun nativeApplyControllerVibration(enabled: Boolean)
+    private external fun nativeApplyNintendoLayout(enabled: Boolean)
     private external fun nativeControllerDevices(): Array<String>
     private external fun nativeAssignControllerPlayer(instance: Long, player: Int): Boolean
     private external fun nativeClearControllerPlayer(player: Int): Boolean
@@ -2600,6 +2604,134 @@ class KartPadActivity : SDLActivity() {
     private external fun nativeListMiis(database: ByteArray): Array<String>
     private external fun nativeImportMii(database: ByteArray, mii: ByteArray): ByteArray
     private external fun nativeRemoveMii(database: ByteArray, slot: Int): ByteArray
+
+    // MARK: KartPad's screens (dev.kartpad.android.screens)
+
+    override val gameProfile: String get() = runtimeProfile
+    // Every Android build carries both games (the chooser offers Retro Rewind once it's installed).
+    override val dualGame: Boolean get() = BuildConfig.GAME_RUNTIME
+    override val gameSurface: android.view.SurfaceView? get() = mSurface
+
+    override fun onDestroy() {
+        if (KartPadScreens.overlay != null && KartPadScreens.activity === this) KartPadScreens.destroy()
+        super.onDestroy()
+    }
+
+    // While a screen is open the touch controls, the ⋯ button and motion steering step aside, and nothing
+    // stays held from before it.
+    override fun screensShown(shown: Boolean) {
+        if (!::kartPadOverlay.isInitialized) return
+        kartPadOverlay.clearTouchInput()
+        routedControllerButtons = 0
+        kartPadOverlay.setControllerKeyButtons(0)
+        kartPadOverlay.visibility = if (shown || !BuildConfig.GAME_RUNTIME) View.GONE else View.VISIBLE
+        if (::menuButton.isInitialized) menuButton.visibility = if (shown) View.INVISIBLE else View.VISIBLE
+        if (::motionSteering.isInitialized) {
+            if (shown) motionSteering.stop() else if (hasWindowFocus()) motionSteering.start()
+        }
+    }
+
+    // A restart goes through the game chooser in its own process, which waits for this one to end and
+    // starts the requested game; pending Mii, save and ghost changes apply as it starts.
+    override fun restart(profile: String?) {
+        val target = profile ?: runtimeProfile
+        val file = File(filesDir, "KartPad/RequestedRuntimeProfile")
+        file.parentFile?.mkdirs()
+        val atomic = android.util.AtomicFile(file)
+        runCatching {
+            val output = atomic.startWrite()
+            try {
+                output.write(target.toByteArray())
+                atomic.finishWrite(output)
+            } catch (error: Throwable) {
+                atomic.failWrite(output)
+                throw error
+            }
+        }.onFailure { Log.w(TAG, "The game to restart into was not saved", it) }
+        if (::kartPadOverlay.isInitialized) kartPadOverlay.clearTouchInput()
+        startActivity(Intent(this, KartPadChooserActivity::class.java).apply {
+            putExtra(KartPadChooserActivity.EXTRA_SKIP_PREFERRED_GAME, true)
+            putExtra(KartPadChooserActivity.EXTRA_WAIT_PID, android.os.Process.myPid())
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        })
+        window.decorView.postDelayed({ kotlin.system.exitProcess(0) }, SELECTOR_RESTART_DELAY_MS)
+    }
+
+    override fun returnToChooser() = restartToGameSelector()
+
+    private var screensDocumentDone: ((Uri?) -> Unit)? = null
+
+    override fun pickDocument(create: Boolean, name: String?, mime: String, done: (Uri?) -> Unit) {
+        screensDocumentDone?.invoke(null)
+        screensDocumentDone = done
+        val intent = Intent(if (create) Intent.ACTION_CREATE_DOCUMENT else Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = mime
+            if (create && name != null) putExtra(Intent.EXTRA_TITLE, name)
+        }
+        runCatching { startActivityForResult(intent, REQUEST_SCREENS_DOCUMENT) }.onFailure {
+            screensDocumentDone = null
+            done(null)
+        }
+    }
+
+    override fun applyDisplaySettings() {
+        nativeApplyDisplaySettings(
+            KartPadTouchSettings.showFps(this),
+            KartPadTouchSettings.fpsSize(this),
+            KartPadTouchSettings.aspectMode(this),
+            KartPadTouchSettings.resolutionScale(this),
+        )
+        hideGameSystemBars()
+    }
+
+    override fun applySoundLevels() = applySoundLevels(persist = true)
+
+    override fun applyControllerMapping() {
+        val screens = getSharedPreferences("kartpad_screens", MODE_PRIVATE)
+        dev.kartpad.android.screens.KartPadPads.mapping = KartPadControllerMapping.load(this)
+        dev.kartpad.android.screens.KartPadPads.nintendoLayout = screens.getBoolean("nintendo_layout", false)
+        if (!BuildConfig.GAME_RUNTIME) return
+        nativeApplyControllerMapping(KartPadControllerMapping.load(this))
+        nativeApplyControllerAutoAccelerate(KartPadTouchSettings.controllerAutoAccelerate(this))
+        nativeApplyControllerVibration(screens.getBoolean("vibration", true))
+        nativeApplyNintendoLayout(screens.getBoolean("nintendo_layout", false))
+    }
+
+    /** Android's own sheets behind Settings rows; the screens stay open (and the game held) under them. */
+    override fun openSheet(name: String) {
+        when (name) {
+            "controller_players" -> showControllerPlayers()
+            "controller_mapping" -> showControllerMapping()
+            "touch_settings" -> showTouchControlSettings()
+            "touch_editor" -> {
+                KartPadScreens.overlay?.closeAll()
+                kartPadOverlay.post { showTouchControlSettings(debugEditorFlow = true) }
+            }
+            "shake" -> showShakeTricks()
+            "motion" -> showMotionSteering()
+            "wiimote" -> showParityBoundary(
+                "Experimental Wii Remote + Nunchuk",
+                "Direct Wii Remote pairing is not available in this Android build. Android-supported Bluetooth and USB gamepads still work through the controller layer.",
+            )
+            "multiplayer" -> showMultiplayer()
+            "saves" -> showSaveManager()
+            "identity" -> showPlayerIdentity()
+            "retro_rewind" -> startActivity(Intent(this, RetroRewindInstallActivity::class.java))
+            "import_folder" -> openGameDataManager(KartPadGameDataActivity.ACTION_IMPORT_FOLDER)
+            "import_disc" -> openGameDataManager(KartPadGameDataActivity.ACTION_IMPORT)
+            "remove_data" -> openGameDataManager(KartPadGameDataActivity.ACTION_REMOVE)
+            "private_server" -> KartPadPrivateServerSettings.show(this)
+            "graphics_diagnostics" -> KartPadCharacterGraphicsTestDialog.show(this)
+            "report" -> showReportProblem()
+            "app_icon" -> showAppIconSettings()
+            "crash_test" -> AlertDialog.Builder(this).setTitle("Test Native Crash?")
+                .setMessage("This intentionally closes KartPad to test crash reporting. Finish your race first. Reopen KartPad afterward and export the test session. Unsaved progress may be lost.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Crash Test") { _, _ -> nativeTestDiagnosticCrash() }.show()
+            else -> Log.w(TAG, "No sheet named $name")
+        }
+    }
 
     companion object {
         private var identityStartupChecked = false
@@ -2613,6 +2745,7 @@ class KartPadActivity : SDLActivity() {
         private const val REQUEST_EXPORT_SAVE = 4_303
         private const val REQUEST_IMPORT_SAVE = 4_304
         private const val REQUEST_IMPORT_RATINGS = 4_305
+        private const val REQUEST_SCREENS_DOCUMENT = 4_330
         private const val MII_FILE_BYTES = 74
         const val EXTRA_RUNTIME_PROFILE = "dev.kartpad.android.RUNTIME_PROFILE"
         private const val TAG = "KartPadFixture"

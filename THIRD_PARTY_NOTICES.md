@@ -35,6 +35,7 @@ WorkManager (Apache-2.0), rather than Apple's Metal/GameController host paths.
 | Mbed TLS (Mac) | `3.6.7` | Apache-2.0 OR GPL-2.0-or-later; DTLS for the Mac phone link |
 | [MiiJS](https://github.com/Stewared/MiiJS), by Stewared | no pin recorded | Mii Channel tile order (`data.js` `lookupTables.pages`), used as the feature-ID tables in `runtime/include/kartpad/mii/editor.h`; no MiiJS code is included. Its `package.json` declares ISC; the repository has no license file. |
 | Minizip-NG | Dolphin-pinned source | zlib; tvOS Retro Rewind archive extraction |
+| [Nunito](https://github.com/googlefonts/nunito), by the Nunito Project Authors | Google Fonts `ofl/nunito/Nunito[wght].ttf`, SHA-256 `bb55a5ca5c2042335b3991af27c4d0705d0ef41cac6164ac737fd8f2a1e85207` | SIL OFL 1.1; the rounded type of KartPad's screens on Android (`android/app/src/main/assets/fonts/Nunito.ttf`, license in `assets/ThirdPartyLicenses/Nunito.txt`) |
 | WiimotePairPlus | `8e7f9b12db2da520e4f868305c4861cdf58fa15f` | GPL-2.0-or-later; experimental macOS Wii Remote Bluetooth pairing flow derived from Dolphin WiimotePair |
 | Abseil, Dear ImGui, fmt, FreeType, libpng, Tracy, xxHash, zstd | exact package-build inputs | Their included upstream license files apply |
 
