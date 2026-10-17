@@ -51,6 +51,9 @@ void PADSetKeyboardActive(u32 p,BOOL active){testKeyboardActive[p]=active;}
 void PADSerializeMappings(){++testKeyboardSaves;}
 #undef BOOL
 }
+// The runtime's per-port rumble strength and Shake for Trick (hle/input/pad.cpp).
+extern "C" void PAD_HLE_SetPortRumbleStrength(uint32_t,float){}
+extern "C" void PAD_HLE_SetPortShakeTricks(uint32_t,bool){}
 namespace Wup028Adapter { void SetPortAssignment(uint32_t,int){} }
 static void TestModifierCapture(KPControllerSettings* panel) {
  auto flagsEvent=[](unsigned short code, NSEventModifierFlags flags) {

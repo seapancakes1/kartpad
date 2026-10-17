@@ -16,6 +16,8 @@ class MacPackageContractTests(unittest.TestCase):
         self.assertTrue(markers)
         sources = sorted((ROOT / "apple/macos").glob("*.mm"))
         sources += sorted((ROOT / "apple/macos").glob("*.h"))
+        # Screens shared with iPhone and iPad that the Mac shell compiles in (the Miis screens).
+        sources += sorted((ROOT / "apple/shared").glob("*.mm"))
         sources.append(ROOT / "vendor/runtimes/macos/runtime/src/settings_overlay.cpp")
         native = "\n".join(source.read_text() for source in sources)
         for marker in markers:
