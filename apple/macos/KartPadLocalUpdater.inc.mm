@@ -36,11 +36,38 @@ static NSString *KPLocalUpdateInstalledPath() {
   return [path isKindOfClass:NSString.class] && path.length ? path : nil;
 }
 
-// A backup or another copy of KartPad leaves updates alone (as the helper's other_copy does).
+static NSString *SHA256ForFile(NSString *path, NSError **error);  // KartPadMacShell.mm
+
+// The installed app moved or renamed (as the helper's moved()): the same build, with no app left
+// where it was recorded. Not a copy in the Trash, one macOS runs from a temporary place, or a
+// backup in the state folder; settings that name the app keep it where they say.
+static BOOL KPLocalUpdateIsMovedInstall(NSDictionary *settings, NSDictionary *record, NSString *bundle,
+                                        NSString *executable) {
+  NSString *recorded = record[@"app"], *digest = record[@"runtimeSha256"], *state = settings[@"state"];
+  if (settings[@"app"] != nil || ![recorded isKindOfClass:NSString.class] || ![digest isKindOfClass:NSString.class] ||
+      [NSFileManager.defaultManager fileExistsAtPath:[recorded stringByAppendingPathComponent:@"Contents/MacOS/KartPad"]])
+    return NO;
+  NSString *real = bundle.stringByResolvingSymlinksInPath;
+  for (NSString *part in real.pathComponents)
+    if ([@[@".Trash", @".Trashes", @"AppTranslocation"] containsObject:part]) return NO;
+  if ([state isKindOfClass:NSString.class] &&
+      [real hasPrefix:[state.stringByResolvingSymlinksInPath stringByAppendingString:@"/"]]) return NO;
+  return [SHA256ForFile(executable, nil) isEqualToString:digest];
+}
+
+// A backup or another copy of KartPad leaves updates alone (as the helper's other_copy does); the
+// installed app still updates after a move, and its next check records the new place.
 static BOOL KPLocalUpdateIsInstalledCopy() {
   NSString *installed = KPLocalUpdateInstalledPath();
-  return installed == nil || [installed.stringByResolvingSymlinksInPath
-      isEqualToString:NSBundle.mainBundle.bundlePath.stringByResolvingSymlinksInPath];
+  if (installed == nil || [installed.stringByResolvingSymlinksInPath
+      isEqualToString:NSBundle.mainBundle.bundlePath.stringByResolvingSymlinksInPath]) return YES;
+  static BOOL moved;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    moved = KPLocalUpdateIsMovedInstall(KPLocalUpdateSettings(), KPLocalUpdateRead(@"installed.json"),
+                                        NSBundle.mainBundle.bundlePath, NSBundle.mainBundle.executablePath);
+  });
+  return moved;
 }
 
 static NSPanel *kpUpdatePanel;
@@ -57,6 +84,7 @@ static NSWindow *kpUpdateParent;
 static id kpUpdateResizeObserver;
 static NSString *kpUpdatePhase;
 static NSString *kpUpdateVersion;  // of the status on screen
+static NSDate *kpUpdateLastCheck;
 static BOOL kpUpdateDismissed;
 // Checks the player asked for show every result; automatic ones only show news.
 static BOOL kpUpdateInteractive;
@@ -250,6 +278,9 @@ static void KPRenderUpdateStatus(NSDictionary *status) {
     } else if ([kind isEqualToString:@"verification"]) {
       title = @"Update wasn’t installed";
       detail = @"The new files didn’t pass validation.";
+    } else if ([kind isEqualToString:@"checkout"]) {
+      detail = [NSString stringWithFormat:@"Retro Rewind %@ needs a newer KartPad checkout.", version];
+      footnote = @"Tries again after the checkout updates";
     }
     KPUpdateNotice(title, detail, NO);
     KPUpdateNoticeIcon(@"exclamationmark.circle", NSColor.systemOrangeColor, @"Update failed");
@@ -356,6 +387,7 @@ static void KPCheckLocalUpdates(BOOL interactive, NSArray<NSString *> *options) 
   if (![task launchAndReturnError:&error]) {
     NSLog(@"[KartPad] local update check unavailable: %@", error.localizedDescription); return;
   }
+  kpUpdateLastCheck = started;
   kpUpdateInteractive = interactive;
   if (interactive) {
     kpUpdateDismissed = NO;
@@ -406,6 +438,11 @@ static void KPStartLocalUpdates() {
     }
   });
   KPCheckLocalUpdates(NO, @[]);
+  // KartPad left open, or asleep with the Mac, checks again every few hours.
+  [NSTimer scheduledTimerWithTimeInterval:30 * 60 repeats:YES block:^(NSTimer *timer) {
+    if (!kpUpdateTimer.valid && kpUpdateLastCheck && -kpUpdateLastCheck.timeIntervalSinceNow >= 4 * 60 * 60)
+      KPCheckLocalUpdates(NO, @[]);
+  }];
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 90 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
     KPConfirmLocalUpdate();
   });

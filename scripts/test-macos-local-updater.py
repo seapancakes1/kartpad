@@ -358,6 +358,27 @@ class Updates(unittest.TestCase):
         self.assertEqual(self.main(copy),(0,False));self.assertFalse((state/'installed.json').exists())
         self.assertEqual(self.main(app),(0,False))
         self.assertEqual(u.load(state/'installed.json')['app'],str(app))
+    def test_moved_app_keeps_updating(self):
+        state,app,config=self.world();self.assertEqual(self.main(app),(0,False))
+        moved=self.root/'Apps/Games/KartPad 2.app';moved.parent.mkdir();os.replace(app,moved)
+        self.assertTrue(u.other_copy(state,self.settings,moved))
+        self.assertEqual(self.main(moved),(0,False))
+        self.assertEqual(u.load(state/'installed.json')['app'],str(moved))
+        self.assertFalse(u.other_copy(state,self.settings,moved));self.assertTrue(u.recognised(state,moved,'6.13.1'))
+        self.app=moved;self.pending();self.assertTrue(self.activate())  # an update installs where it now is
+        self.assertEqual((moved/'Contents/MacOS/KartPad').read_text(),'new');self.assertFalse(app.exists())
+        self.assertEqual(u.load(state/'installed.json')['app'],str(moved))
+    def test_copies_the_trash_and_other_builds_are_not_followed(self):
+        state,app,config=self.world();self.main(app);record=u.load(state/'installed.json')
+        copy=self.root/'Games/KartPad.app';copy.parent.mkdir();u.clone(app,copy)
+        self.assertEqual(self.main(copy),(0,False))  # the installed app is still where it was
+        trash=self.root/'.Trash/KartPad.app';trash.parent.mkdir();os.replace(app,trash)
+        self.assertEqual(self.main(trash),(0,False))
+        (copy/'Contents/MacOS/KartPad').write_text('another build');self.main(copy)
+        self.assertEqual(u.load(state/'installed.json'),record)
+        (copy/'Contents/MacOS/KartPad').write_text('old');self.settings['app']=str(app)
+        self.main(copy);self.assertEqual(u.load(state/'installed.json'),record)  # settings pin the place
+        del self.settings['app'];self.main(copy);self.assertEqual(u.load(state/'installed.json')['app'],str(copy))
     def test_first_launch_records_the_installed_app(self):
         state,app,config=self.world();self.pending();original=config.read_text()
         self.assertTrue(u.other_copy(state,self.settings,app) is False)
@@ -447,6 +468,26 @@ class Updates(unittest.TestCase):
         self.assertEqual((profile['version'],profile['codePul']['sha256'],profile['updateArchive']),('6.13.2',sha('new code'),review()['retroRewind']['updateArchive']))
         self.assertTrue(u.load(Path(pending['profile']))['localBuildUpdates'][-1]['reviewed'])
         self.assertEqual(calls,[u.FEED,u.REVIEWED,u.DELETIONS,u.CDN+'6.13.2.zip'])
+    def test_release_whose_pack_reports_an_older_version(self):
+        """Retro Rewind 6.13.3 shipped a version.txt reading 6.13.2; the review pins it as packVersion."""
+        state,app,config=self.world()
+        pin=review('6.13.3');pin['retroRewind']['updateArchive']['url']=u.CDN+'6.13.3.zip'
+        def fetch(url,limit,offset=0):
+            if url==u.FEED:return Response(('6.13.3 '+u.CDN+'6.13.3.zip /6.13.3.zip Assets').encode())
+            if url==u.DELETIONS:return Response(b'')
+            if url==u.REVIEWED:return Response(json.dumps(pin).encode())
+            if url==u.CDN+'6.13.3.zip':return Response(PATCH)
+            raise AssertionError('unexpected download '+url)
+        with self.assertRaises(u.VerificationError):self.run_check(fetch)  # without the pin it's a mismatch
+        pin['retroRewind']['packVersion']='6.13.2';self.run_check(fetch,force=True)
+        pending=u.load(state/'pending.json')
+        self.assertEqual((pending['version'],pending['packVersion'],pending['reviewed']),('6.13.3','6.13.2',True))
+        self.assertEqual(u.load(Path(pending['profile']))['retroRewind']['packVersion'],'6.13.2')
+        self.assertTrue(self.activate());self.assertEqual(u.load(state/'active.json')['packVersion'],'6.13.2')
+        with patch.object(u,'fetch',side_effect=fetch):u.check(self.settings,'6.13.3',state,app)
+        self.assertEqual(self.status()['phase'],'current')  # the installed pack passes later checks
+        self.assertEqual(u.staged_pack(state,'6.13.3')['packVersion'],'6.13.2')
+        self.assertTrue(u.rollback(state,app,config,lambda p:None,'manual'));self.assertEqual(u.configured_root(config),self.old)
     def test_rebuild_without_the_helper_is_not_installed(self):
         state,app,config=self.world();self.unbundled=True
         with self.assertRaises(u.VerificationError):self.run_check()
@@ -511,6 +552,19 @@ class Updates(unittest.TestCase):
         with self.assertRaises(u.subprocess.CalledProcessError):self.run_check(run=broken,force=True)
         self.assertEqual(self.builds,['fake-build','fake-build'])
         self.assertEqual([p.name for p in state.iterdir() if u.STAGE.fullmatch(p.name)],[])
+    def test_failed_build_on_an_older_checkout_says_so_and_retries_after_a_pull(self):
+        state,app,config=self.world();self.builds=[]
+        profile=self.root/u.CHECKOUT_PROFILE;profile.parent.mkdir(parents=True)
+        profile.write_text(json.dumps({'retroRewind':{'version':'6.13.1'}}))
+        def broken(command,settings,log):
+            self.builds.append(command[0])
+            if command[0]=='fake-build':raise u.subprocess.CalledProcessError(1,command)
+        with self.assertRaises(u.OutdatedCheckout):self.run_check(run=broken)
+        failure=u.load(state/'failure.json');self.assertEqual(u.error_kind(u.OutdatedCheckout()),'checkout')
+        self.assertEqual(failure['kind'],'checkout');self.assertIn('needs a newer KartPad checkout (it has 6.13.1)',failure['message'])
+        self.run_check(run=broken);self.assertEqual(self.builds,['fake-build'])  # not repeated as it is
+        profile.write_text(json.dumps({'retroRewind':{'version':'6.13.2'}}))  # the maintainers' support is pulled
+        self.run_check();self.assertTrue((state/'pending.json').exists())
     def test_offline_checks_back_off_until_forced(self):
         state,app,config=self.world();calls=[]
         def offline(url,limit,offset=0):

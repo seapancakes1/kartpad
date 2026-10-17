@@ -36,7 +36,7 @@ Keep the checkout, the app and the state folder on a local APFS volume, not iClo
 | `initial` | The pack the app was built for: `version`, `root` (its `RetroRewind6` folder) and `profile` (the profile kept in step 1). |
 | `buildCommand` | Argument list run to rebuild, with `{root}`, `{profile}` and `{app}` replaced. Nothing from the network is ever run as a command. |
 | `environment` | Optional variables for the build command. Apps opened from Finder have a minimal `PATH`, so give every tool the scripts need (`rg`, `dotnet`, `cmake`, `ninja`, `python3`). `scripts/macos-local-rebuild.sh` also reads `KARTPAD_LOCAL_UPDATER_SETTINGS`, `KARTPAD_DISC_IMAGE`, `KARTPAD_RUNTIME_SOURCE`, `KARTPAD_RUNTIME_BUILD`, and optionally `KARTPAD_RETRO_PAYLOAD` and `KARTPAD_TRANSLATE` (a translate script with your own .NET path). |
-| `app` | Optional: the installed app's path. Without it, the first copy that launches is taken as the installed one. |
+| `app` | Optional: the installed app's path. Without it, the first copy that launches is taken as the installed one, and it is followed when it moves (see [Which app updates](#which-app-updates)). |
 | `reviewedProfile` | Optional: where to read the maintainers' review, on `raw.githubusercontent.com` (for example a fork's). Defaults to `chrissotraidis/kartpad` `main`. |
 
 ## What gets installed: the verification model
@@ -46,6 +46,7 @@ KartPad's maintainers publish a reviewed pin for each Retro Rewind version they 
 - The feed's newest version is the reviewed version.
 - Every downloaded archive whose URL the review pins has the pinned size and SHA-256. This is checked before it is unpacked.
 - After all patches and the official delete list are applied, and before anything is translated or compiled, `Code.pul` and the Riivolution XML have the pinned size and SHA-256.
+- The pack's `version.txt` reads the reviewed version, or the review's `packVersion` when the release shipped an older one (Retro Rewind 6.13.3's says 6.13.2). The helper keeps `packVersion` with the pack and checks it again at installation, going back and later checks.
 
 Otherwise nothing is built. The banner says **Retro Rewind VERSION isn’t reviewed yet** (the feed is ahead of the review; it installs by itself once the review catches up) or **Retro Rewind VERSION wasn’t installed** (files differ from the review). **Install Anyway** asks for confirmation and records the approval for that version and download only (`approved.json`); the checks still run and their results are kept in the build's profile, but no longer stop it. Deletions from the official delete list are applied only in a verified update or after that approval.
 
@@ -59,7 +60,7 @@ A mismatch is remembered against that review, so automatic checks don't download
 
 ## Checking
 
-At each launch KartPad starts a background check at utility priority. Automatic checks are quiet: no banner appears while checking, when the game is current, or when the Mac is offline. A compact, nonactivating banner attaches to the upper-right of the game window when there is news: downloading, preparation, verification, a ready update, an unreviewed version, or a failure. Each distinct failure and each unreviewed version is shown once. Dismissing the banner doesn't cancel the update.
+At each launch KartPad starts a background check at utility priority, and checks again every 4 hours while it stays open (after the Mac wakes, within half an hour of the 4 hours passing). Automatic checks are quiet: no banner appears while checking, when the game is current, or when the Mac is offline. A compact, nonactivating banner attaches to the upper-right of the game window when there is news: downloading, preparation, verification, a ready update, an unreviewed version, or a failure. Each distinct failure and each unreviewed version is shown once. Dismissing the banner doesn't cancel the update.
 
 **Game → Retro Rewind Updates…** runs a visible check, which also reports when the game is up to date, and reopens the banner for an update in progress. It ignores the retry rules below.
 
@@ -67,7 +68,8 @@ Failures don't repeat on every launch:
 
 - **Offline:** automatic checks back off, starting at 10 minutes and doubling to at most 6 hours.
 - **Not enough space:** the check runs again at the next launch.
-- **Build, verification or configuration failure:** remembered for that feed version and download URL. Automatic checks skip it until the feed changes or the player chooses **Try Again**.
+- **Build, verification or configuration failure:** remembered for that feed version and download URL. Automatic checks skip it until the feed changes, the checkout's `builder/profiles/mkwii-rmcp01-rev0.json` changes (for example after pulling the maintainers' support for that version), or the player chooses **Try Again**.
+- **Checkout behind the release:** a rebuild that fails for a version newer than the one the checkout's own profile supports usually needs the maintainers' changes as well (6.13.3 needed new runtime helpers). The banner says **Retro Rewind VERSION needs a newer KartPad checkout**, and the next check after that profile changes tries again.
 
 ## Preparing an update
 
@@ -90,6 +92,8 @@ Retro Rewind keeps saves (`riivolution/save`) and Riivolution's option choices (
 ### Which app updates
 
 The updater records the installed app's path and runtime digest (`installed.json`). Only that app checks, installs, counts trial launches or confirms an update. A backup or another copy that opens leaves everything alone, and **Retro Rewind Updates…** in it says where updates go.
+
+Moving or renaming the installed app (into `/Applications/Games`, say) doesn't stop updates. When nothing is left at the recorded path and an app with the same runtime digest opens somewhere else, that app is the installed one: its first check records the new path, and updates install there. A copy made while the original is still in place, a different build, a copy in the Trash, one macOS runs from a temporary App Translocation path, and the backups in the state folder are never taken for a moved app. Setting `app` in the settings turns this off.
 
 An app the updater didn't install, such as one you packaged by hand at the installed path, becomes the new starting point at its next launch: any update built for the previous app is discarded, its trial ends, and if its Retro Rewind version differs, the config is pointed (saves included) at that version's pack (the original one from `initial`, or one an earlier update left), then KartPad reopens. If no pack of its version is known, the next check reports that the settings don't match the app; update `initial`.
 
@@ -128,4 +132,4 @@ Files are under `~/Library/Application Support/KartPad/LocalUpdater`:
 
 ## Validation
 
-`python3 scripts/test-macos-local-updater.py` (the stock macOS `python3` is enough) uses temporary folders and fake downloads only. It covers the ordered patch flow, the live four-column feed format and shared version parsing, delete-list selection and safety, APFS cloning and moves between volumes, resumed downloads, the reviewed, feed-ahead, archive-mismatch, `Code.pul`-mismatch and approved paths, the staged background rebuild, integrity rejection, discarding unusable builds, backups outside Applications, saves carried through updates, pruning and going back, backups and other copies leaving state alone, adopting hand-built packages, failure memory and network backoff, declined versions, trial rollback, manual rollback, unsafe ZIP paths, lock contention, offline behavior and interrupted-installation recovery at every step, including saves. `python3 -m unittest discover -s tests -p 'test_macos_retro_download_recovery.py'` covers the in-app download's recovery after an interrupted install.
+`python3 scripts/test-macos-local-updater.py` (the stock macOS `python3` is enough) uses temporary folders and fake downloads only. It covers the ordered patch flow, the live four-column feed format and shared version parsing, delete-list selection and safety, APFS cloning and moves between volumes, resumed downloads, the reviewed, feed-ahead, archive-mismatch, `Code.pul`-mismatch and approved paths, the staged background rebuild, integrity rejection, discarding unusable builds, backups outside Applications, saves carried through updates, pruning and going back, backups and other copies leaving state alone, following a moved app (and not a copy, another build or one in the Trash), a pack whose `version.txt` lags the feed, adopting hand-built packages, failure memory and network backoff, retrying after the checkout catches up, declined versions, trial rollback, manual rollback, unsafe ZIP paths, lock contention, offline behavior and interrupted-installation recovery at every step, including saves. `python3 -m unittest discover -s tests -p 'test_macos_retro_download_recovery.py'` covers the in-app download's recovery after an interrupted install, and `python3 -m unittest tests/test_macos_local_updater_moves.py` compiles the app's side of following a moved app.

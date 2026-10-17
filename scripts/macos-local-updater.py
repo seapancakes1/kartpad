@@ -31,8 +31,13 @@ MIN_FREE = 8_000_000_000
 TRIAL_LAUNCHES = 2  # unconfirmed launches a new app gets before it is rolled back
 RETRYABLE_HTTP = {408, 425, 429, 500, 502, 503, 504}
 # Failures that would only repeat until something changes; automatic checks skip them.
-STICKY = ('build', 'verification', 'configuration', 'unverified')
+STICKY = ('build', 'verification', 'configuration', 'unverified', 'checkout')
 STATE_FILES = ('active.json', 'pending.json', 'rollback.json', 'trial.json', 'installed.json')
+PACK = ('version', 'root', 'profile', 'packVersion')  # what a pack record keeps
+# The checkout's own profile: pulling the maintainers' support for a new Retro Rewind changes it.
+CHECKOUT_PROFILE = 'builder/profiles/mkwii-rmcp01-rev0.json'
+# Where a copy of the installed app is never taken for the app itself having moved.
+NOT_MOVED = {'.Trash', '.Trashes', 'AppTranslocation'}
 STAGE = re.compile(r'\d+(?:\.\d+){1,3}-\w+')
 BACKUPS = 'Backups.noindex'  # previous apps, out of Applications (and Spotlight)
 # What the player owns in the riivolution folder beside a pack: saves and Riivolution's option choices.
@@ -41,6 +46,8 @@ NETWORK = (urllib.error.URLError, http.client.HTTPException, TimeoutError, Conne
 
 class VerificationError(ValueError): pass
 class StorageError(Exception): pass
+class OutdatedCheckout(Exception):
+    """A rebuild failed for a version the checkout's own profile doesn't support yet."""
 class Unverified(VerificationError):
     """Files the maintainers haven't reviewed: never installed without the player's say-so."""
     def __init__(self, reason, message):
@@ -49,6 +56,14 @@ class Unverified(VerificationError):
 def version(value):
     try:return pins.version_key(value)
     except (TypeError,ValueError):raise VerificationError('Invalid pack version') from None
+
+def pack(item):
+    return {key:item[key] for key in PACK if key in item}
+
+def pack_version(item):
+    """What a pack's version.txt says: its feed version, unless the release shipped a stale one
+    (Retro Rewind 6.13.3's says 6.13.2), which the maintainers' review pins as packVersion."""
+    return item.get('packVersion') or item['version']
 
 def atomic_json(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -277,6 +292,7 @@ def run(command, settings, log):
 def error_kind(error):
     if isinstance(error,NETWORK):return 'network'
     if isinstance(error,StorageError) or getattr(error,'errno',None)==errno.ENOSPC:return 'storage'
+    if isinstance(error,OutdatedCheckout):return 'checkout'
     if isinstance(error,subprocess.CalledProcessError):return 'build'
     if isinstance(error,Unverified):return 'unverified'
     if isinstance(error,(VerificationError,zipfile.BadZipFile)):return 'verification'
@@ -367,6 +383,20 @@ def identity(app, version):
     if key not in _digests: _digests[key]=digest(binary)
     return {'app':str(app),'version':version,'runtimeSha256':_digests[key]}
 
+def moved(state, settings, app):
+    """Whether app is the installed app moved or renamed: the same build, with no app left where it
+    was recorded. Not a copy in the Trash, one macOS runs from a temporary place, or a backup in the
+    state folder; settings that name the app keep it where they say."""
+    record=load(state/'installed.json') or {};recorded=record.get('app')
+    if settings.get('app') or not recorded or same(recorded,app) or (Path(recorded)/'Contents/MacOS/KartPad').exists(): return False
+    real=Path(os.path.realpath(app))
+    if NOT_MOVED&set(real.parts) or real.is_relative_to(os.path.realpath(state)): return False
+    return (app/'Contents/MacOS/KartPad').is_file() and identity(app,record.get('version'))['runtimeSha256']==record.get('runtimeSha256')
+
+def follow(state, settings, app):
+    """Record the installed app at its new place, so it keeps updating after a move."""
+    if moved(state,settings,app): atomic_json(state/'installed.json',{**load(state/'installed.json'),'app':str(app)})
+
 def recognised(state, app, version):
     """Whether this is the app the updater installed (or took as its starting point)."""
     record=load(state/'installed.json')
@@ -375,11 +405,13 @@ def recognised(state, app, version):
 def staged_pack(state, version):
     """A pack of this version that an earlier update left in the state folder."""
     previous=load(state/'rollback.json') or {}
-    if previous.get('version')==version and previous.get('root'): return {key:previous[key] for key in ('version','root','profile')}
+    if previous.get('version')==version and previous.get('root'): return pack(previous)
     for stage in sorted((p for p in state.iterdir() if p.is_dir() and STAGE.fullmatch(p.name)),key=lambda p:p.stat().st_mtime,reverse=True):
         root=stage/'pack/RetroRewind6'
-        if (root/'version.txt').is_file() and (root/'version.txt').read_text().strip()==version and (stage/'profile.json').is_file():
-            return {'version':version,'root':str(root),'profile':str(stage/'profile.json')}
+        if not (root/'version.txt').is_file() or not (stage/'profile.json').is_file(): continue
+        profile=load(stage/'profile.json').get('retroRewind',{})
+        found=pack({'version':version,'root':str(root),'profile':str(stage/'profile.json'),**{k:profile[k] for k in ('packVersion',) if k in profile}})
+        if profile.get('version',version)==version and (root/'version.txt').read_text().strip()==pack_version(found): return found
     return None
 
 def adopt(state, settings, app, config, version, quiet):
@@ -399,7 +431,7 @@ def adopt(state, settings, app, config, version, quiet):
         updates.update({'pending.json':None,'trial.json':None})
     if target is not current:
         updates['rollback.json']=None
-        if target is not None: updates['active.json']=None if target is initial else {key:target[key] for key in ('version','root','profile')}
+        if target is not None: updates['active.json']=None if target is initial else pack(target)
     pending=load(state/'pending.json') if 'pending.json' in updates else None
     replacement=updated_config(config.read_text(),Path(move_to['root'])) if move_to else None
     transaction(state,[],config,replacement,updates,carry_plan(riivolution(playing),riivolution(move_to['root'])) if move_to else None)
@@ -416,7 +448,7 @@ def activate(state, app, config, verify, initial):
         if digest(candidate/'Contents/MacOS/KartPad') != pending['runtimeSha256']:
             raise VerificationError('Pending app integrity check failed')
         verify(candidate)
-        if (root/'version.txt').read_text().strip()!=pending['version']:
+        if (root/'version.txt').read_text().strip()!=pack_version(pending):
             raise VerificationError('Pending pack version changed')
         profile=json.loads(Path(pending['profile']).read_text())['retroRewind']
         for key in ('codePul','riivolutionXml'):
@@ -439,9 +471,9 @@ def activate(state, app, config, verify, initial):
     saves=carry_plan(riivolution(configured_root(config) or current['root']),riivolution(root))
     try:
         transaction(state,[(app,backup),(staged,app)],config,replacement,{
-            'active.json':{'version':pending['version'],'root':pending['root'],'profile':pending['profile']},
+            'active.json':pack(pending),
             'pending.json':None,
-            'rollback.json':{'version':current['version'],'root':current['root'],'profile':current['profile'],'app':str(backup),
+            'rollback.json':{**pack(current),'app':str(backup),
                              'replaces':pending['version'],'active':previous,'installed':load(state/'installed.json')},
             'trial.json':{'version':pending['version'],'launches':0},
             'installed.json':{'app':str(app),'version':pending['version'],'runtimeSha256':pending['runtimeSha256']}},saves)
@@ -461,7 +493,7 @@ def rollback(state, app, config, verify, reason):
     if target is None: raise ValueError('No previous version is available to restore')
     backup=Path(target['app']);root=Path(target['root'])
     verify(backup)
-    if (root/'version.txt').read_text().strip()!=target['version']:
+    if (root/'version.txt').read_text().strip()!=pack_version(target):
         raise VerificationError('The previous game files changed')
     replacement=updated_config(config.read_text(),root)
     discarded=unused(app.with_name('.'+app.stem+'.rolled-back.app'))
@@ -530,6 +562,12 @@ def reviewed(settings):
 def fingerprint(pin):
     return hashlib.sha256(json.dumps(pin,sort_keys=True).encode()).hexdigest() if pin else None
 
+def checkout(settings):
+    """The Retro Rewind version the checkout's own profile supports, and that profile's digest."""
+    path=Path(settings.get('repo',''))/CHECKOUT_PROFILE
+    try: return json.loads(path.read_text())['retroRewind']['version'],digest(path)
+    except (OSError,ValueError,KeyError,TypeError): return None,None
+
 def unverified(state, version, reason, pin, message=''):
     atomic_json(state/'status.json',{'phase':'unverified','version':version,'reason':reason,'reviewed':pin and pin['version'],'message':message,'checkedAt':time.time()})
 
@@ -541,7 +579,8 @@ def check(settings, installed, state, app, force=False, allow_declined=False, al
         remember(state,exc,target.get('version'),target.get('url'),pin=fingerprint(target.get('pin')))
         unverified(state,target.get('version'),exc.reason,target.get('pin'),str(exc))
     except Exception as exc:
-        remember(state,exc,target.get('version'),target.get('url'))
+        # Remembered against this checkout too: pulling a new profile is worth another try.
+        remember(state,exc,target.get('version'),target.get('url'),checkout=checkout(settings)[1])
         raise
 
 def build(settings, installed, state, app, force, allow_declined, allow_unverified, target):
@@ -554,7 +593,7 @@ def build(settings, installed, state, app, force, allow_declined, allow_unverifi
     active=load(state/'active.json') or settings['initial']
     if active['version']!=installed: raise ValueError('Updater settings do not match this app version')
     source=Path(active['root'])
-    if (source/'version.txt').read_text().strip()!=installed: raise ValueError('Installed pack does not match this app')
+    if (source/'version.txt').read_text().strip()!=pack_version(active): raise ValueError('Installed pack does not match this app')
     profile=json.loads(Path(active['profile']).read_text())
     for key in ('codePul','riivolutionXml'):
         item=profile['retroRewind'][key]
@@ -570,7 +609,7 @@ def build(settings, installed, state, app, force, allow_declined, allow_unverifi
             return
         (state/'declined.json').unlink()  # the player changed their mind
     sticky=not force and failure.get('kind') in STICKY and failure.get('version')==latest and failure.get('url') in (None,latest_url)
-    if sticky and failure['kind']!='unverified': return
+    if sticky and failure['kind']!='unverified' and failure.get('checkout') in (None,checkout(settings)[1]): return
     if allow_unverified==latest: atomic_json(state/'approved.json',{'version':latest,'url':latest_url,'at':time.time()})
     approved=decided(state,'approved.json',latest,latest_url)
     # It installs only as the maintainers reviewed it, unless the player approved this version.
@@ -595,22 +634,23 @@ def build(settings, installed, state, app, force, allow_declined, allow_unverifi
         if any(p.is_symlink() for p in source.rglob('*')):raise VerificationError('Pack contains symbolic links')
         root=pack/'RetroRewind6';clone(source,root)
         records=[]
-        for number,(pack_version,url) in enumerate(updates):
+        for number,(patch_version,url) in enumerate(updates):
             progress={'step':'downloading','patchIndex':number+1,'patchCount':len(updates)}
             status(**progress)
             archive=stage/f'patch-{number}.zip'
             download(url,archive,lambda done,size:status(**progress,downloadedBytes=done,totalBytes=size))
             status(**{**progress,'step':'extracting'})
-            records.append({'version':pack_version,'url':url,'bytes':archive.stat().st_size,'sha256':digest(archive)})
+            records.append({'version':patch_version,'url':url,'bytes':archive.stat().st_size,'sha256':digest(archive)})
             if url in archives:
                 records[-1]['reviewed']=(records[-1]['bytes'],records[-1]['sha256'])==(archives[url]['bytes'],archives[url]['sha256'])
                 if not records[-1]['reviewed']: mismatch(Path(urlparse(url).path).name+' differs from the reviewed download')
             extract(archive,pack)
             archive.unlink()
-            records[-1]['deleted']=remove(root,removals.pop(pack_version,[]))
+            records[-1]['deleted']=remove(root,removals.pop(patch_version,[]))
         # Deletions listed for a version without its own patch still apply, in version order.
-        for pack_version in sorted(removals,key=version):remove(root,removals[pack_version])
-        if (root/'version.txt').read_text().strip()!=latest:raise VerificationError('Updated pack version does not match the manifest')
+        for patch_version in sorted(removals,key=version):remove(root,removals[patch_version])
+        expected=pin.get('packVersion',latest) if pin else latest
+        if (root/'version.txt').read_text().strip()!=expected:raise VerificationError('Updated pack version does not match the manifest')
         matched=pin is not None
         if pin is not None:
             # The program code and patch list decide what gets translated: both must be the reviewed ones.
@@ -623,6 +663,8 @@ def build(settings, installed, state, app, force, allow_declined, allow_unverifi
                 if key in pin: profile['retroRewind'][key]=pin[key]
                 else: profile['retroRewind'].pop(key,None)
         profile['retroRewind']['version']=latest
+        if expected!=latest: profile['retroRewind']['packVersion']=expected
+        else: profile['retroRewind'].pop('packVersion',None)
         for key in ('codePul','riivolutionXml'):
             item=profile['retroRewind'][key];file=root/item['path']
             item.update(bytes=file.stat().st_size,sha256=digest(file))
@@ -631,7 +673,14 @@ def build(settings, installed, state, app, force, allow_declined, allow_unverifi
         candidate=stage/'KartPad.app'
         command=[arg.replace('{root}',str(root)).replace('{profile}',str(local_profile)).replace('{app}',str(candidate)) for arg in settings['buildCommand']]
         status(step='compiling')
-        with (stage/'build.log').open('w') as log:run(command,settings,log)
+        with (stage/'build.log').open('w') as log:
+            try: run(command,settings,log)
+            except subprocess.CalledProcessError as exc:
+                # A version newer than the checkout's own profile usually needs the maintainers' changes too.
+                supported=checkout(settings)[0]
+                if supported and version(supported)<version(latest):
+                    raise OutdatedCheckout(f'Retro Rewind {latest} needs a newer KartPad checkout (it has {supported})') from exc
+                raise
         status(step='verifying')
         binary=(candidate/'Contents/MacOS/KartPad').read_bytes()
         if any(profile['retroRewind'][key]['sha256'].encode() not in binary for key in ('codePul','riivolutionXml')):
@@ -642,7 +691,7 @@ def build(settings, installed, state, app, force, allow_declined, allow_unverifi
         with (stage/'build.log').open('a') as log:
             run(['/usr/bin/codesign','--force','--deep','--sign','-','--entitlements',settings['repo']+'/apple/macos/KartPad.entitlements',str(candidate)],settings,log)
             run([settings['repo']+'/scripts/audit-macos-package.sh',str(candidate),'dual'],settings,log)
-        atomic_json(state/'pending.json',{'version':latest,'url':latest_url,'root':str(root),'profile':str(local_profile),'app':str(candidate),'runtimeSha256':digest(candidate/'Contents/MacOS/KartPad'),'reviewed':matched})
+        atomic_json(state/'pending.json',{'version':latest,'url':latest_url,'root':str(root),'profile':str(local_profile),'app':str(candidate),'runtimeSha256':digest(candidate/'Contents/MacOS/KartPad'),'reviewed':matched,**({'packVersion':expected} if expected!=latest else {})})
         (state/'failure.json').unlink(missing_ok=True)
         atomic_json(state/'status.json',{'phase':'ready','version':latest,'checkedAt':time.time()})
     except Exception:
@@ -686,6 +735,7 @@ def main():
             with locked(state,wait=15) as acquired:
                 try:
                     if not acquired:raise ValueError('Another update task is still running')
+                    follow(state,settings,args.app)
                     if not other_copy(state,settings,args.app):
                         recover(state)
                         if not recognised(state,args.app,args.version):adopt(state,settings,args.app,config,args.version,True)
@@ -698,7 +748,9 @@ def main():
     with locked(state) as acquired:
         if not acquired:return 0
         try:
-            # Only the installed app acts; a backup or other copy that opens leaves everything alone.
+            # Only the installed app acts, wherever it was moved; a backup or other copy that opens
+            # leaves everything alone.
+            follow(state,settings,args.app)
             if other_copy(state,settings,args.app):return 0
             if args.action=='activate':
                 recover(state)
