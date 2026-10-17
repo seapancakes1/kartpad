@@ -66,15 +66,18 @@ are missing, KartPad tells you which ones, and you copy the folder again.
 3. When it says **Game Data Imported**, tap **Done**, then **Play Game**.
 
 For **Retro Rewind**, tap **Set Up Game** on its card. KartPad downloads and
-installs the official Retro Rewind 6.12.8 pack (about 1.7 GB).
+installs official Retro Rewind 6.13.3 (the full pack, about 1.9 GB). Moving
+up from an earlier Retro Rewind downloads the full pack again; your Retro saves
+and ghosts stay.
 
 ### Using a disc image instead
 
 **Import or Reimport Wii Disc Image…** reads an ISO, WBFS or RVZ directly, but
 it needs your own Wii's 16-byte common key saved as `common-key.bin` (for
 example from a BootMii NAND backup). KartPad doesn't include it and we can't
-provide it. If KartPad asks you for a key and you don't have one, use the
-extracted folder above instead.
+provide it. If the dialog is **Disc Images Need Your Wii's Key**, or **Game
+Data Import Failed** asks for `common-key.bin`, and you don't have a key, tap
+**Use Extracted Folder…** or go back and import the extracted folder above.
 
 ## Updating
 

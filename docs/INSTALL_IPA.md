@@ -79,10 +79,16 @@ the folder again and reimport.
 2. Choose **Import from Extracted Folder…** and pick the folder in the Files
    window. KartPad copies the game data into its own storage and leaves your
    folder untouched.
+   If the dialog is **Game Data Import Failed** and tells you to save
+   `common-key.bin` in **On My iPhone/iPad → KartPad**, you picked an ISO or
+   WBFS. Tap OK. You do not need that key; go back and choose **Import from
+   Extracted Folder…**.
 3. Tap **Play Game**.
 
 For **Retro Rewind**, tap **Set Up Game** on its card. KartPad downloads and
-installs the official Retro Rewind 6.12.8 pack (about 1.7 GB).
+installs official Retro Rewind 6.13.3 (the full pack, about 1.9 GB). Moving
+up from an earlier Retro Rewind downloads the full pack again; your Retro saves
+and ghosts stay.
 
 ### Using a disc image instead
 

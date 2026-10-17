@@ -998,9 +998,13 @@ static NSString *const kKartPadPreferredGameKey = @"KartPadPreferredGame";
 
 - (UIView *)gameCard:(BOOL)retro installedVersion:(NSString *)installedVersion {
   BOOL current = self.resumingGame && self.currentRetroRewind == retro;
-  BOOL ready = self.gameDataReady && (!retro || installedVersion.length > 0);
+  // An installed pack from another Retro Rewind release needs the in-app update.
+  BOOL outdated = retro && installedVersion.length > 0 &&
+      ![installedVersion isEqualToString:KartPadRetroRewindInstaller.requiredVersion];
+  BOOL ready = self.gameDataReady && (!retro || (installedVersion.length > 0 && !outdated));
   NSString *status = current ? @"Paused" : (self.resumingGame ? @"Next launch"
-      : (ready ? @"Ready to play" : (retro && !self.gameDataReady ? @"Import Mario Kart Wii first" : @"Setup needed")));
+      : (ready ? @"Ready to play" : (retro && !self.gameDataReady ? @"Import Mario Kart Wii first"
+          : (outdated ? @"Update needed" : @"Setup needed"))));
   UILabel *title = [self label:retro ? @"Retro Rewind" : @"Mario Kart Wii" style:UIFontTextStyleTitle2 secondary:NO];
   title.accessibilityTraits |= UIAccessibilityTraitHeader;
   [self.cardTitles addObject:title];
@@ -3703,7 +3707,7 @@ static void KartPadApplySoundLevels(BOOL persist) {
 }
 
 - (void)showRetroManager {
-  NSString *version=[NSString stringWithContentsOfFile:[KartPadRetroRewindInstaller.installedRootPath stringByAppendingPathComponent:@"version.txt"] encoding:NSUTF8StringEncoding error:nil];
+  NSString *version=KartPadRetroRewindInstaller.installedVersion;
   UIAlertController *sheet=[UIAlertController alertControllerWithTitle:@"Manage Retro Rewind" message:[NSString stringWithFormat:@"Installed version: %@\nRequired version: %@\n\nReturn to the KartPad menu and choose Retro Rewind to check its pack and install or update when required.",version?:@"Not installed",KartPadRetroRewindInstaller.requiredVersion] preferredStyle:UIAlertControllerStyleAlert];
   [sheet addAction:[UIAlertAction actionWithTitle:@"Return to KartPad Menu" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){gKartPadMainMenuRequested=YES;}]];
   [sheet addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]];[self presentOverlayAlert:sheet];
@@ -3866,6 +3870,7 @@ static void KartPadApplySoundLevels(BOOL persist) {
   return KartPadDiagnosticContext(
       [KartPadRetroRewindInstaller.installedRootPath stringByAppendingPathComponent:@"version.txt"],
       KartPadRetroRewindInstaller.requiredVersion,
+      KartPadRetroRewindInstaller.requiredPackVersion,
       gKartPadRetroRewindSelected ? @"retro_rewind" : @"base",
       settings.renderScaleFloat, settings.aspectRatioMode);
 }
