@@ -61,7 +61,8 @@ html.turned { --stripeDir: to left; }
 html.turned.back { --stripeDir: to right; }
 #safe { position: fixed; visibility: hidden; pointer-events: none;
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
-/* Everything is drawn on the stage, always landscape: turned a quarter when the screen is upright. */
+/* Everything is drawn on the stage, always landscape: turned a quarter when the screen is upright, or a
+   half when it's the other landscape. */
 #stage { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; transform-origin: 0 0; overflow: hidden;
   background: repeating-linear-gradient(to bottom, var(--bg) 0, var(--bg) 2px, var(--stripe) 2px, var(--stripe) 4px); }
 .hidden { display: none !important; }
@@ -339,11 +340,6 @@ html.turned.back { --stripeDir: to right; }
     <p id="delay"></p>
     <div class="row"><button class="btn primary" id="closeSettings">Done</button><button class="btn" id="leave">Leave</button></div>
   </div></div>
-  <div class="sheet hidden" id="turn"><div class="card">
-    <h1>Turn your phone sideways</h1>
-    <p>Rotation Lock on?</p>
-    <button class="btn" id="forceTurn">Show Sideways</button>
-  </div></div>
 </div>
 <script>
 "use strict";
@@ -428,11 +424,14 @@ function toast(text) {
   toastTimer = setTimeout(() => $("toast").classList.add("hidden"), 4000);
 }
 
-// ---- The stage, always landscape. When the screen is upright (rotation lock, or Safari turning it
-// during a hard turn), it's drawn a quarter turn round: the way gravity says the phone is held when
-// tilt is on, else the way the screen last was, else as the player chose.
+// ---- The stage, always landscape, and while playing always the same way round on the phone, so a
+// hard turn never turns it. When the screen is upright (rotation lock, or Safari turning it during a
+// hard turn), it's drawn a quarter turn round; when Safari has gone to the other landscape, a half.
+// Which way round the phone is held (side: the screen's angle when landscape, 90 or 270) comes from
+// the screen when it's landscape, else gravity when the phone is sideways, else it's as last time
+// (Flip in Settings changes it). While playing, it only changes until it's first known.
 let rotation = 0, W = innerWidth, H = innerHeight;
-let forced = false, forcedRotation = pref("rotation", 90), lastLandscape = null, gravity = null;
+let side = pref("side", 90), sideKnown = false, gravity = null;
 // Which sign of gravity's x goes with a phone turned anticlockwise: +1 as the motion spec has it,
 // checked against the screen whenever it's landscape.
 let gravitySign = pref("gravitySign", 1);
@@ -440,44 +439,50 @@ function screenAngle() {
   try { if (screen.orientation && typeof screen.orientation.angle === "number") return screen.orientation.angle; } catch (e) {}
   return typeof window.orientation === "number" ? (window.orientation + 360) % 360 : 0;
 }
-// Whether the screen is upright with no way to draw the controller sideways (then it asks to be
-// turned); otherwise sets the rotation. The way the screen last was only counts mid-game.
-function wantsTurn(playing) {
-  const portrait = innerHeight > innerWidth;
-  if (!portrait) {
-    rotation = 0;
-    const angle = screenAngle();
-    if (angle === 90 || angle === 270) {
-      lastLandscape = angle;
-      if (gravity && performance.now() - gravity.t < 1000 && Math.abs(gravity.x) > 6) {
-        const sign = Math.sign(gravity.x) * (angle === 90 ? 1 : -1);
-        if (sign !== gravitySign) { gravitySign = sign; setPref("gravitySign", sign); }
-      }
-    }
-    return false;
-  }
+function playing() { return joined && sheet === null; }
+function setSide(next) {
+  sideKnown = true;
+  if (next !== side) { side = next; setPref("side", next); }
+}
+// Recent gravity, if the phone is held sideways.
+function sideways() {
   const g = gravity && performance.now() - gravity.t < 1500 ? gravity : null;
-  if (g && Math.abs(g.x) > Math.abs(g.y)) { rotation = g.x * gravitySign > 0 ? 90 : -90; return false; }
-  if (g) return true;  // held upright
-  if (forced) { rotation = forcedRotation; return false; }
-  if (playing && lastLandscape !== null) { rotation = lastLandscape === 90 ? 90 : -90; return false; }
-  return true;
+  return g && Math.abs(g.x) > Math.max(Math.abs(g.y), 2) ? g : null;
+}
+function orient() {
+  const free = !playing() || !sideKnown, angle = screenAngle();
+  if (innerWidth >= innerHeight) {
+    rotation = 0;
+    if (angle !== 90 && angle !== 270) return;
+    if (gravity && performance.now() - gravity.t < 1000 && Math.abs(gravity.x) > 6) {
+      const sign = Math.sign(gravity.x) * (angle === 90 ? 1 : -1);
+      if (sign !== gravitySign) { gravitySign = sign; setPref("gravitySign", sign); }
+    }
+    if (free) setSide(angle);
+    if (side !== angle) rotation = 180;
+    return;
+  }
+  const g = sideways();
+  if (free && g) setSide(g.x * gravitySign > 0 ? 90 : 270);
+  // A quarter one way upright, the other upside down.
+  rotation = (side === 90) === (angle !== 180) ? 90 : -90;
 }
 function placeStage() {
-  const playing = joined && sheet === null, upright = wantsTurn(playing), turn = playing && upright;
-  if (upright) rotation = 0;
-  const vw = innerWidth, vh = innerHeight;
-  W = rotation ? vh : vw;
-  H = rotation ? vw : vh;
+  orient();
+  const vw = innerWidth, vh = innerHeight, quarter = rotation === 90 || rotation === -90;
+  W = quarter ? vh : vw;
+  H = quarter ? vw : vh;
   stage.style.width = W + "px";
   stage.style.height = H + "px";
   stage.style.transform = rotation === 90 ? "rotate(90deg) translate(0," + -H + "px)"
-                        : rotation === -90 ? "rotate(-90deg) translate(" + -W + "px,0)" : "none";
-  document.documentElement.classList.toggle("turned", rotation !== 0);
+                        : rotation === -90 ? "rotate(-90deg) translate(" + -W + "px,0)"
+                        : rotation === 180 ? "rotate(180deg) translate(" + -W + "px," + -H + "px)" : "none";
+  document.documentElement.classList.toggle("turned", quarter);
   document.documentElement.classList.toggle("back", rotation === -90);
   const s = getComputedStyle($("safe"));
   const [t, r, b, l] = [s.paddingTop, s.paddingRight, s.paddingBottom, s.paddingLeft].map((v) => parseFloat(v) || 0);
-  const insets = rotation === 90 ? [r, t, b, l] : rotation === -90 ? [l, b, t, r] : [t, l, r, b];  // top, left, right, bottom
+  const insets = rotation === 90 ? [r, t, b, l] : rotation === -90 ? [l, b, t, r]
+               : rotation === 180 ? [b, r, l, t] : [t, l, r, b];  // top, left, right, bottom
   const root = document.documentElement.style;
   root.setProperty("--u", Math.min(W, H) / 100 + "px");
   root.setProperty("--W", W + "px");
@@ -485,21 +490,22 @@ function placeStage() {
   root.setProperty("--sl", insets[1] + "px");
   root.setProperty("--sr", insets[2] + "px");
   root.setProperty("--sb", insets[3] + "px");
-  $("turn").classList.toggle("hidden", !turn);
-  $("flipRow").classList.toggle("hidden", !forced);
+  // Upright, the screen can't say which way round the phone is.
+  $("flipRow").classList.toggle("hidden", !quarter);
   restStick();
 }
 // Viewport coordinates to the stage's.
 function toStage(x, y) {
   if (rotation === 90) return {x: y, y: H - x};
   if (rotation === -90) return {x: W - y, y: x};
+  if (rotation === 180) return {x: W - x, y: H - y};
   return {x, y};
 }
 let wasPortrait = innerHeight > innerWidth;
 function onResize() {
   const portrait = innerHeight > innerWidth;
   // Safari turned the screen during a race: rotation lock keeps it still.
-  if (portrait !== wasPortrait && joined && sheet === null && tilt && layout() === "race" && !pref("lockTip", false)) {
+  if (portrait !== wasPortrait && playing() && tilt && layout() === "race" && !pref("lockTip", false)) {
     setPref("lockTip", true);
     toast("Turn on Rotation Lock.");
   }
@@ -510,8 +516,12 @@ addEventListener("resize", onResize);
 // Some browsers only have the new size a moment after turning.
 addEventListener("orientationchange", () => { setTimeout(onResize, 50); setTimeout(onResize, 400); });
 if (window.visualViewport) visualViewport.addEventListener("resize", onResize);
-$("forceTurn").onclick = () => { forced = true; placeStage(); };
-$("flip").onclick = () => { forcedRotation = -forcedRotation; setPref("rotation", forcedRotation); placeStage(); };
+// The other way round. If gravity still says this way, it's read the other way too.
+$("flip").onclick = () => {
+  if (sideways()) { gravitySign = -gravitySign; setPref("gravitySign", gravitySign); }
+  setSide(side === 90 ? 270 : 90);
+  placeStage();
+};
 
 // ---- What the player is doing, as KartPad says: "menus", "start" (the course intro and countdown),
 // "race", "fall" (off the course and back with Lakitu, until just after landing), or "unknown"
@@ -695,7 +705,14 @@ const b64url = (s) => btoa(unescape(encodeURIComponent(s))).replace(/\+/g, "-").
 
 function join() {
   keepAwake();
-  try { if (!iOS && document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(() => {}); } catch (e) {}
+  // Full screen where there is one, held in the landscape it's in: a hard turn doesn't turn the screen.
+  try {
+    if (!iOS && document.documentElement.requestFullscreen)
+      document.documentElement.requestFullscreen().then(() => {
+        const type = screen.orientation.type;
+        return screen.orientation.lock(type.startsWith("landscape") ? type : "landscape");
+      }).catch(() => {});
+  } catch (e) {}
   if (!secure) {
     wanted = true; failedInARow = 0; retry = 0;
     show(null);
@@ -947,8 +964,11 @@ function onMotion(event) {
   $("wheel").classList.toggle("flat", flat);
   $("wheel").style.transform = "rotate(" + (tiltSteer * 90) + "deg)";
   if (prefs.shake && layout() === "race" && own && own.x != null) shake(Math.hypot(own.x, own.y, own.z || 0) / G, event.timeStamp / 1000);
-  // Which way round to draw, while the screen is upright.
-  if (innerHeight > innerWidth && performance.now() - lastTurnCheck > 250) { lastTurnCheck = performance.now(); placeStage(); }
+  // Which way round to draw, while the screen is upright and that can still change.
+  if (innerHeight > innerWidth && !(playing() && sideKnown) && performance.now() - lastTurnCheck > 250) {
+    lastTurnCheck = performance.now();
+    placeStage();
+  }
   send();
 }
 
@@ -1169,7 +1189,7 @@ const barKeys = {tiltKey: () => setTilt(!tilt), gear: () => { syncSettings(); sh
                  layoutKey: () => { manualRace = !manualRace; aLocked = false; applyLayout(); }};
 
 document.addEventListener("pointerdown", (e) => {
-  if (!joined || sheet !== null || !$("turn").classList.contains("hidden")) return;
+  if (!playing()) return;
   const target = document.elementFromPoint(e.clientX, e.clientY);
   const bar = target && target.closest && target.closest("#tiltKey, #gear, #layoutKey");
   // These act when let go (lift): a touch's lift, unlike its press, lets the page ask for motion access.
