@@ -34,7 +34,7 @@
 :root {
   --bg: #f2f4f5; --stripe: #e8ecee; --panel: #fbfcfc; --panelStroke: #c9d1d6; --well: #e6ecef;
   --btnTop: #ffffff; --btnBottom: #dfe5e8; --btnStroke: #b3bdc3; --ledge: #b0bbc1;
-  --selTop: #ebf8fe; --selBottom: #bde8fa;
+  --tabTop: #fafbfc; --tabBottom: #d3dade; --selTop: #ebf8fe; --selBottom: #bde8fa;
   --accTop: #5ccbf3; --accBottom: #1b9ad5; --accStroke: #1784bc; --accLedge: #14709f;
   --text: #3a4348; --dim: #6a747a; --icon: #5a646a; --off: #c3cbd0; --gloss: .9; --shadow: .2;
   --live: #30b85c; --dead: #d0342c; --player: #6a747a;
@@ -44,7 +44,7 @@
   :root {
     --bg: #15181b; --stripe: #191d20; --panel: #22272b; --panelStroke: #363d43; --well: #191d21;
     --btnTop: #3c4349; --btnBottom: #2a3035; --btnStroke: #4c555c; --ledge: #0c0e10;
-    --selTop: #1f4b5f; --selBottom: #163748;
+    --tabTop: #3f464c; --tabBottom: #2b3136; --selTop: #1f4b5f; --selBottom: #163748;
     --accTop: #4cc6f2; --accBottom: #168ac4; --accStroke: #63d0f5; --accLedge: #0d5880;
     --text: #e6ebee; --dim: #9aa5ab; --icon: #c3cbd0; --off: #4a535a; --gloss: .13; --shadow: .55;
     --dead: #ff6b5e; --player: #9aa5ab;
@@ -61,17 +61,19 @@ html.turned { --stripeDir: to left; }
 html.turned.back { --stripeDir: to right; }
 #safe { position: fixed; visibility: hidden; pointer-events: none;
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
-/* Everything is drawn on the stage, always landscape: turned a quarter when the screen is upright. */
+/* Everything is drawn on the stage, always landscape: turned a quarter when the screen is upright, or a
+   half when it's the other landscape. */
 #stage { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; transform-origin: 0 0; overflow: hidden;
   background: repeating-linear-gradient(to bottom, var(--bg) 0, var(--bg) 2px, var(--stripe) 2px, var(--stripe) 4px); }
 .hidden { display: none !important; }
 
-/* Buttons: KartPad's Wii channel faces, a gradient on a ledge with a glossy inner rim. */
+/* Buttons: KartPad's Wii channel faces, a gradient on a ledge with a glossy inner rim (KPButtonFace).
+   Blue faces dim the rim; a pressed face loses it. */
 .key { position: absolute; display: flex; align-items: center; justify-content: center; flex-direction: column;
   border-radius: calc(var(--u) * 3.4); border: 1.25px solid var(--btnStroke);
   background: linear-gradient(var(--btnTop), var(--btnBottom)); box-shadow: 0 calc(var(--u) * .9) 0 var(--ledge);
   color: var(--text); font-size: calc(var(--u) * 5); font-weight: 700; letter-spacing: .01em; }
-.key::after { content: ""; position: absolute; inset: 3px; border-radius: inherit; border: 1px solid rgba(255, 255, 255, var(--gloss));
+.key::after, .btn::after, .seg button::after { content: ""; position: absolute; inset: 3px; border-radius: inherit; border: 1px solid rgba(255, 255, 255, var(--gloss));
   -webkit-mask-image: linear-gradient(#000 45%, transparent 90%); mask-image: linear-gradient(#000 45%, transparent 90%); pointer-events: none; }
 .key.round { border-radius: 50%; }
 .key.down { transform: translateY(calc(var(--u) * .7)); box-shadow: 0 calc(var(--u) * .2) 0 var(--ledge);
@@ -79,7 +81,7 @@ html.turned.back { --stripeDir: to right; }
 .key.down::after { opacity: 0; }
 .key.primary { background: linear-gradient(var(--accTop), var(--accBottom)); border-color: var(--accStroke);
   box-shadow: 0 calc(var(--u) * .9) 0 var(--accLedge); color: #fff; }
-.key.primary::after { border-color: rgba(255, 255, 255, .4); }
+.key.primary::after, .btn.primary::after, .seg button.on::after { border-color: rgba(255, 255, 255, calc(var(--gloss) * .45)); }
 .key.primary.down { background: linear-gradient(var(--accBottom), var(--accTop)); box-shadow: 0 calc(var(--u) * .2) 0 var(--accLedge); }
 .key small { font-size: calc(var(--u) * 2.8); color: var(--dim); font-weight: 600; }
 .key svg { width: calc(var(--u) * 5.6); height: calc(var(--u) * 5.6); fill: none; stroke: currentColor; stroke-width: 2.2;
@@ -103,7 +105,12 @@ html.turned.back { --stripeDir: to right; }
 .bar .key { position: relative; height: calc(var(--u) * 11); min-height: 36px; min-width: calc(var(--u) * 13);
   padding: 0 calc(var(--u) * 3); border-radius: 99px; font-size: calc(var(--u) * 3.6); flex-direction: row; gap: calc(var(--u) * 1.4); }
 .bar .key svg { width: calc(var(--u) * 5); height: calc(var(--u) * 5); }
-.bar .key.on { background: linear-gradient(var(--selTop), var(--selBottom)); border-color: var(--accStroke); }
+/* On: the selected face, a pale blue with a thick blue rim on a blue ledge. */
+.bar .key.on { background: linear-gradient(var(--selTop), var(--selBottom)); border-color: var(--accStroke);
+  box-shadow: inset 0 0 0 1.25px var(--accStroke), 0 calc(var(--u) * .9) 0 var(--accStroke); }
+.bar .key.on::after { inset: 3.25px; }
+.bar .key.on.down { background: linear-gradient(var(--selBottom), var(--selTop));
+  box-shadow: inset 0 0 0 1.25px var(--accStroke), 0 calc(var(--u) * .2) 0 var(--accStroke); }
 #home::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: inherit; background: rgba(27, 154, 213, .35); }
 #home.holding::before { width: 100%; transition: width .5s linear; }
 #badge { position: absolute; top: calc(var(--st) + var(--u) * 3); left: 50%; transform: translateX(-50%); z-index: 3;
@@ -136,10 +143,10 @@ html.turned.back { --stripeDir: to right; }
   width: calc(var(--u) * 20); height: calc(var(--u) * 20); }
 
 /* A race, with the stick or tilt: Drift under the right thumb, B beside it with A+B above (hold it
-   stopped to charge a mini-turbo), Trick over Drift. With the stick, Item sits between Drift and B;
-   with tilt, it's on the left. With Auto, A only shows for the start and after a fall, in Drift's
-   place, since accelerating is then the player's. With Hold, A sits beside Drift all race, and the
-   seams press two buttons. */
+   stopped to charge a mini-turbo), Trick over Drift. With the stick, Item sits between Drift and B,
+   with a seam to Drift; with tilt, it's on the left. With Auto, A only shows for the start and after
+   a fall, in Drift's place, since accelerating is then the player's. With Hold, A sits beside Drift
+   all race. Seams press two buttons. */
 .race .k-drift { inset-inline-end: calc(var(--ie) + var(--u) * 5); bottom: calc(var(--sb) + var(--u) * 7);
   width: calc(var(--u) * 36); height: calc(var(--u) * 30); }
 .race .k-a { inset-inline-end: calc(var(--ie) + var(--u) * 8); bottom: calc(var(--sb) + var(--u) * 7);
@@ -194,6 +201,10 @@ html.turned.back { --stripeDir: to right; }
 #raceStick .k-ab { inset-inline-end: calc(var(--ie) + var(--u) * 77); }
 #stage.hold #raceStick .k-item { inset-inline-end: calc(var(--ie) + var(--u) * 70); height: calc(var(--u) * 48); }
 #stage.hold #raceStick .k-b { inset-inline-end: calc(var(--ie) + var(--u) * 44.5); }
+/* Between Item and Drift: holds an item behind while drifting (it only aims by flicking). */
+#raceStick .s-item-drift { display: block; inset-inline-end: calc(var(--ie) + var(--u) * 39.5); bottom: calc(var(--sb) + var(--u) * 10);
+  width: calc(var(--u) * 7); height: calc(var(--u) * 24); }
+#stage.hold #raceStick .s-item-drift, #stage.amoment #raceStick .s-item-drift { display: none; }
 
 /* Tilt: Item alone under the left thumb, the wheel in the middle. */
 #raceTilt .k-item { inset-inline-start: calc(var(--is) + var(--u) * 5); bottom: calc(var(--sb) + var(--u) * 7);
@@ -218,18 +229,28 @@ html.turned.back { --stripeDir: to right; }
   padding: .55em 1.6em; border-radius: max(10px, calc(var(--u) * 2.8)); border: 1.25px solid var(--btnStroke);
   background: linear-gradient(var(--btnTop), var(--btnBottom)); box-shadow: 0 3px 0 var(--ledge); }
 .btn.primary { background: linear-gradient(var(--accTop), var(--accBottom)); border-color: var(--accStroke); box-shadow: 0 3px 0 var(--accLedge); color: #fff; }
-.btn:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--ledge); }
-.btn.primary:active { box-shadow: 0 1px 0 var(--accLedge); }
+.btn:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--ledge); background: linear-gradient(var(--btnBottom), var(--btnTop)); }
+.btn.primary:active { box-shadow: 0 1px 0 var(--accLedge); background: linear-gradient(var(--accBottom), var(--accTop)); }
+.btn:active::after, .seg button:active::after { opacity: 0; }
 .btn:disabled { opacity: .42; }
 #settings .card { max-width: 98%; padding: max(14px, calc(var(--u) * 4)) max(16px, calc(var(--u) * 5)); gap: max(8px, calc(var(--u) * 2.4)); }
-#settings .grid { display: grid; grid-template-columns: auto auto; gap: max(8px, calc(var(--u) * 2.2)) max(18px, calc(var(--u) * 6)); }
-.setting { display: flex; align-items: center; justify-content: space-between; gap: max(10px, calc(var(--u) * 2.4)); }
-.setting > span { color: var(--dim); font-size: max(14px, calc(var(--u) * 3.6)); text-align: left; }
-.seg { display: flex; gap: 4px; }
-.seg button { font: inherit; font-size: max(14px, calc(var(--u) * 3.6)); font-weight: 700; color: var(--text); padding: .4em .8em;
-  border-radius: max(8px, calc(var(--u) * 2.2)); border: 1.25px solid var(--btnStroke); background: linear-gradient(var(--btnTop), var(--btnBottom));
+/* Settings: everyone's on the left, tilt's on the right (only with tilt), each a label and a row of
+   even buttons. */
+#settings .grid { display: flex; align-items: flex-start; }
+#settings .col { display: grid; grid-template-columns: auto auto; align-items: center;
+  gap: max(8px, calc(var(--u) * 2.2)) max(12px, calc(var(--u) * 4)); }
+#tiltSettings { margin-inline-start: max(14px, calc(var(--u) * 4.5)); padding-inline-start: max(14px, calc(var(--u) * 4.5));
+  border-inline-start: 1.25px solid var(--panelStroke); }
+.setting { display: contents; }
+.setting > span { color: var(--dim); font-size: max(14px, calc(var(--u) * 3.6)); text-align: left; white-space: nowrap; }
+.seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px; }
+/* Choices are tabs, as in KartPad's Settings: the chosen one blue. */
+.seg button { position: relative; font: inherit; font-size: max(14px, calc(var(--u) * 3.6)); font-weight: 700; color: var(--text); padding: .4em .8em;
+  border-radius: max(8px, calc(var(--u) * 2.2)); border: 1.25px solid var(--btnStroke); background: linear-gradient(var(--tabTop), var(--tabBottom));
   box-shadow: 0 2px 0 var(--ledge); }
-.seg button.on { background: linear-gradient(var(--selTop), var(--selBottom)); border-color: var(--accStroke); box-shadow: 0 2px 0 var(--accStroke); }
+.seg button.on { background: linear-gradient(var(--accTop), var(--accBottom)); border-color: var(--accStroke); box-shadow: 0 2px 0 var(--accLedge); color: #fff; }
+.seg button:active { transform: translateY(1px); box-shadow: 0 1px 0 var(--ledge); background: linear-gradient(var(--tabBottom), var(--tabTop)); }
+.seg button.on:active { box-shadow: 0 1px 0 var(--accLedge); background: linear-gradient(var(--accBottom), var(--accTop)); }
 #delay { font-size: max(13px, calc(var(--u) * 3.3)); }
 </style>
 </head>
@@ -258,6 +279,7 @@ html.turned.back { --stripeDir: to right; }
     <div class="key round primary k-a" data-key="a" data-bit="1">A<span class="auto">AUTO</span></div>
     <div class="seam s-drift-a" data-bit="33"></div>
     <div class="seam s-a-b" data-bit="3"></div>
+    <div class="seam s-item-drift" data-bit="48"></div>
   </div>
   <div class="layer race hidden" id="raceTilt">
     <svg id="wheel" viewBox="-50 -50 100 100"><g><circle r="43"/><circle r="9"/><path d="M-43 0H-9M9 0H43M0 9V43"/></g><g><path class="mark" d="M0-47V-36"/></g></svg>
@@ -289,31 +311,34 @@ html.turned.back { --stripeDir: to right; }
   </div></div>
   <div class="sheet hidden" id="message"><div class="card">
     <h1 id="messageTitle"></h1><p id="messageText"></p>
-    <div class="row"><button class="btn primary" id="messageButton">Try Again</button></div>
-    <button class="btn hidden" id="touchButton">Use Touch Controls</button>
+    <div class="row"><button class="btn primary" id="messageButton">Try Again</button><button class="btn hidden" id="touchButton">Use Touch Controls</button></div>
   </div></div>
   <div class="sheet hidden" id="tiltAsk"><div class="card">
     <h1>Steer by tilting?</h1>
     <p>Turn the phone like a steering wheel.</p>
     <div class="row"><button class="btn primary" id="useTilt">Use Tilt</button><button class="btn" id="useStick">Use the Stick</button></div>
   </div></div>
+  <div class="sheet hidden" id="shakeAsk"><div class="card">
+    <h1>Shake for Trick?</h1>
+    <div class="row"><button class="btn primary" id="shakeOn">Turn On</button><button class="btn" id="shakeOff">Leave Off</button></div>
+  </div></div>
   <div class="sheet hidden" id="settings"><div class="card">
     <div class="grid">
-      <div class="setting tilt-only"><span>Steering</span><div class="seg" data-pref="tilt"><button data-value="true">Tilt</button><button data-value="false">Stick</button></div></div>
-      <div class="setting tilt-only"><span>Sensitivity</span><div class="seg" data-pref="sensitivity"><button data-value="0.5">0.5×</button><button data-value="1">1×</button><button data-value="2">2×</button></div></div>
-      <div class="setting tilt-only"><span>Direction</span><div class="seg" data-pref="inverted"><button data-value="false">Normal</button><button data-value="true">Inverted</button></div></div>
-      <div class="setting tilt-only"><span>Straight</span><div class="seg" id="straight"><button data-value="level">Level</button><button data-value="here">Set Here</button></div></div>
-      <div class="setting tilt-only"><span>Shake for Trick</span><div class="seg" data-pref="shake"><button data-value="true">On</button><button data-value="false">Off</button></div></div>
-      <div class="setting"><span>Accelerate</span><div class="seg" data-pref="auto"><button data-value="true">Auto</button><button data-value="false">Hold</button></div></div>
-      <div class="setting"><span>Hand</span><div class="seg" data-pref="lefty"><button data-value="false">Right</button><button data-value="true">Left</button></div></div>
-      <div class="setting hidden" id="flipRow"><span>Screen</span><div class="seg"><button id="flip">Flip</button></div></div>
+      <div class="col">
+        <div class="setting tilt-only"><span>Steering</span><div class="seg" data-pref="tilt"><button data-value="true">Tilt</button><button data-value="false">Stick</button></div></div>
+        <div class="setting"><span>Accelerate</span><div class="seg" data-pref="auto"><button data-value="true">Auto</button><button data-value="false">Hold</button></div></div>
+        <div class="setting tilt-only"><span>Shake for Trick</span><div class="seg" data-pref="shake"><button data-value="true">On</button><button data-value="false">Off</button></div></div>
+        <div class="setting"><span>Hand</span><div class="seg" data-pref="lefty"><button data-value="false">Right</button><button data-value="true">Left</button></div></div>
+        <div class="setting hidden" id="flipRow"><span>Screen</span><div class="seg"><button id="flip">Flip</button></div></div>
+      </div>
+      <div class="col" id="tiltSettings">
+        <div class="setting"><span>Sensitivity</span><div class="seg" data-pref="sensitivity"><button data-value="0.5">0.5×</button><button data-value="1">1×</button><button data-value="2">2×</button></div></div>
+        <div class="setting"><span>Direction</span><div class="seg" data-pref="inverted"><button data-value="false">Normal</button><button data-value="true">Inverted</button></div></div>
+        <div class="setting"><span>Center</span><div class="seg" id="straight"><button data-value="level">Level</button><button data-value="here">Current Angle</button></div></div>
+      </div>
     </div>
     <p id="delay"></p>
     <div class="row"><button class="btn primary" id="closeSettings">Done</button><button class="btn" id="leave">Leave</button></div>
-  </div></div>
-  <div class="sheet hidden" id="turn"><div class="card">
-    <h1>Turn your phone sideways</h1>
-    <button class="btn" id="forceTurn">Rotation Lock Is On</button>
   </div></div>
 </div>
 <script>
@@ -372,7 +397,7 @@ function rumble(on) {
 let sheet = "join";
 function show(name) {
   sheet = name;
-  for (const id of ["join", "message", "settings", "tiltAsk"]) $(id).classList.toggle("hidden", id !== name);
+  for (const id of ["join", "message", "settings", "tiltAsk", "shakeAsk"]) $(id).classList.toggle("hidden", id !== name);
   placeStage();
 }
 // button: its label ("" for none), which joins again unless action says otherwise.
@@ -399,11 +424,14 @@ function toast(text) {
   toastTimer = setTimeout(() => $("toast").classList.add("hidden"), 4000);
 }
 
-// ---- The stage, always landscape. When the screen is upright (rotation lock, or Safari turning it
-// during a hard turn), it's drawn a quarter turn round: the way gravity says the phone is held when
-// tilt is on, else the way the screen last was, else as the player chose.
+// ---- The stage, always landscape, and while playing always the same way round on the phone, so a
+// hard turn never turns it. When the screen is upright (rotation lock, or Safari turning it during a
+// hard turn), it's drawn a quarter turn round; when Safari has gone to the other landscape, a half.
+// Which way round the phone is held (side: the screen's angle when landscape, 90 or 270) comes from
+// the screen when it's landscape, else gravity when the phone is sideways, else it's as last time
+// (Flip in Settings changes it). While playing, it only changes until it's first known.
 let rotation = 0, W = innerWidth, H = innerHeight;
-let forced = false, forcedRotation = pref("rotation", 90), lastLandscape = null, gravity = null;
+let side = pref("side", 90), sideKnown = false, gravity = null;
 // Which sign of gravity's x goes with a phone turned anticlockwise: +1 as the motion spec has it,
 // checked against the screen whenever it's landscape.
 let gravitySign = pref("gravitySign", 1);
@@ -411,44 +439,50 @@ function screenAngle() {
   try { if (screen.orientation && typeof screen.orientation.angle === "number") return screen.orientation.angle; } catch (e) {}
   return typeof window.orientation === "number" ? (window.orientation + 360) % 360 : 0;
 }
-// Whether the screen is upright with no way to draw the controller sideways (then it asks to be
-// turned); otherwise sets the rotation. The way the screen last was only counts mid-game.
-function wantsTurn(playing) {
-  const portrait = innerHeight > innerWidth;
-  if (!portrait) {
-    rotation = 0;
-    const angle = screenAngle();
-    if (angle === 90 || angle === 270) {
-      lastLandscape = angle;
-      if (gravity && performance.now() - gravity.t < 1000 && Math.abs(gravity.x) > 6) {
-        const sign = Math.sign(gravity.x) * (angle === 90 ? 1 : -1);
-        if (sign !== gravitySign) { gravitySign = sign; setPref("gravitySign", sign); }
-      }
-    }
-    return false;
-  }
+function playing() { return joined && sheet === null; }
+function setSide(next) {
+  sideKnown = true;
+  if (next !== side) { side = next; setPref("side", next); }
+}
+// Recent gravity, if the phone is held sideways.
+function sideways() {
   const g = gravity && performance.now() - gravity.t < 1500 ? gravity : null;
-  if (g && Math.abs(g.x) > Math.abs(g.y)) { rotation = g.x * gravitySign > 0 ? 90 : -90; return false; }
-  if (g) return true;  // held upright
-  if (forced) { rotation = forcedRotation; return false; }
-  if (playing && lastLandscape !== null) { rotation = lastLandscape === 90 ? 90 : -90; return false; }
-  return true;
+  return g && Math.abs(g.x) > Math.max(Math.abs(g.y), 2) ? g : null;
+}
+function orient() {
+  const free = !playing() || !sideKnown, angle = screenAngle();
+  if (innerWidth >= innerHeight) {
+    rotation = 0;
+    if (angle !== 90 && angle !== 270) return;
+    if (gravity && performance.now() - gravity.t < 1000 && Math.abs(gravity.x) > 6) {
+      const sign = Math.sign(gravity.x) * (angle === 90 ? 1 : -1);
+      if (sign !== gravitySign) { gravitySign = sign; setPref("gravitySign", sign); }
+    }
+    if (free) setSide(angle);
+    if (side !== angle) rotation = 180;
+    return;
+  }
+  const g = sideways();
+  if (free && g) setSide(g.x * gravitySign > 0 ? 90 : 270);
+  // A quarter one way upright, the other upside down.
+  rotation = (side === 90) === (angle !== 180) ? 90 : -90;
 }
 function placeStage() {
-  const playing = joined && sheet === null, upright = wantsTurn(playing), turn = playing && upright;
-  if (upright) rotation = 0;
-  const vw = innerWidth, vh = innerHeight;
-  W = rotation ? vh : vw;
-  H = rotation ? vw : vh;
+  orient();
+  const vw = innerWidth, vh = innerHeight, quarter = rotation === 90 || rotation === -90;
+  W = quarter ? vh : vw;
+  H = quarter ? vw : vh;
   stage.style.width = W + "px";
   stage.style.height = H + "px";
   stage.style.transform = rotation === 90 ? "rotate(90deg) translate(0," + -H + "px)"
-                        : rotation === -90 ? "rotate(-90deg) translate(" + -W + "px,0)" : "none";
-  document.documentElement.classList.toggle("turned", rotation !== 0);
+                        : rotation === -90 ? "rotate(-90deg) translate(" + -W + "px,0)"
+                        : rotation === 180 ? "rotate(180deg) translate(" + -W + "px," + -H + "px)" : "none";
+  document.documentElement.classList.toggle("turned", quarter);
   document.documentElement.classList.toggle("back", rotation === -90);
   const s = getComputedStyle($("safe"));
   const [t, r, b, l] = [s.paddingTop, s.paddingRight, s.paddingBottom, s.paddingLeft].map((v) => parseFloat(v) || 0);
-  const insets = rotation === 90 ? [r, t, b, l] : rotation === -90 ? [l, b, t, r] : [t, l, r, b];  // top, left, right, bottom
+  const insets = rotation === 90 ? [r, t, b, l] : rotation === -90 ? [l, b, t, r]
+               : rotation === 180 ? [b, r, l, t] : [t, l, r, b];  // top, left, right, bottom
   const root = document.documentElement.style;
   root.setProperty("--u", Math.min(W, H) / 100 + "px");
   root.setProperty("--W", W + "px");
@@ -456,21 +490,22 @@ function placeStage() {
   root.setProperty("--sl", insets[1] + "px");
   root.setProperty("--sr", insets[2] + "px");
   root.setProperty("--sb", insets[3] + "px");
-  $("turn").classList.toggle("hidden", !turn);
-  $("flipRow").classList.toggle("hidden", !forced);
+  // Upright, the screen can't say which way round the phone is.
+  $("flipRow").classList.toggle("hidden", !quarter);
   restStick();
 }
 // Viewport coordinates to the stage's.
 function toStage(x, y) {
   if (rotation === 90) return {x: y, y: H - x};
   if (rotation === -90) return {x: W - y, y: x};
+  if (rotation === 180) return {x: W - x, y: H - y};
   return {x, y};
 }
 let wasPortrait = innerHeight > innerWidth;
 function onResize() {
   const portrait = innerHeight > innerWidth;
   // Safari turned the screen during a race: rotation lock keeps it still.
-  if (portrait !== wasPortrait && joined && sheet === null && tilt && layout() === "race" && !pref("lockTip", false)) {
+  if (portrait !== wasPortrait && playing() && tilt && layout() === "race" && !pref("lockTip", false)) {
     setPref("lockTip", true);
     toast("Turn on Rotation Lock.");
   }
@@ -481,8 +516,12 @@ addEventListener("resize", onResize);
 // Some browsers only have the new size a moment after turning.
 addEventListener("orientationchange", () => { setTimeout(onResize, 50); setTimeout(onResize, 400); });
 if (window.visualViewport) visualViewport.addEventListener("resize", onResize);
-$("forceTurn").onclick = () => { forced = true; placeStage(); };
-$("flip").onclick = () => { forcedRotation = -forcedRotation; setPref("rotation", forcedRotation); placeStage(); };
+// The other way round. If gravity still says this way, it's read the other way too.
+$("flip").onclick = () => {
+  if (sideways()) { gravitySign = -gravitySign; setPref("gravitySign", gravitySign); }
+  setSide(side === 90 ? 270 : 90);
+  placeStage();
+};
 
 // ---- What the player is doing, as KartPad says: "menus", "start" (the course intro and countdown),
 // "race", "fall" (off the course and back with Lakitu, until just after landing), or "unknown"
@@ -509,12 +548,11 @@ function applyLayout() {
   stage.classList.toggle("lefty", prefs.lefty);
   $("tiltKey").classList.toggle("hidden", !(canTilt && now === "race"));
   $("tiltKey").classList.toggle("on", tilt);
-  $("tiltKey").querySelector("span").textContent = tilt ? "Tilt" : "Stick";
   $("layoutKey").classList.toggle("hidden", view !== "unknown");
   $("layoutKey").textContent = manualRace ? "Menus" : "Race";
   // Fingers on controls that just went away let go.
   for (const [id, finger] of fingers) {
-    if (finger.el && finger.el.offsetParent === null) { fingers.delete(id); if (finger.kind === "item") showAim(finger.el, 0); }
+    if (finger.el && finger.el.offsetParent === null) { fingers.delete(id); if (finger.kind === "item") showAim(finger.item, 0); }
     if (finger.kind === "stick" && (now !== "race" || tilted)) { fingers.delete(id); stick = null; stickX = stickY = 0; }
   }
   restStick();
@@ -667,7 +705,14 @@ const b64url = (s) => btoa(unescape(encodeURIComponent(s))).replace(/\+/g, "-").
 
 function join() {
   keepAwake();
-  try { if (!iOS && document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(() => {}); } catch (e) {}
+  // Full screen where there is one, held in the landscape it's in: a hard turn doesn't turn the screen.
+  try {
+    if (!iOS && document.documentElement.requestFullscreen)
+      document.documentElement.requestFullscreen().then(() => {
+        const type = screen.orientation.type;
+        return screen.orientation.lock(type.startsWith("landscape") ? type : "landscape");
+      }).catch(() => {});
+  } catch (e) {}
   if (!secure) {
     wanted = true; failedInARow = 0; retry = 0;
     show(null);
@@ -691,7 +736,8 @@ window.addEventListener("message", async (event) => {
   if (event.data.t === "link-error") {
     if (event.data.why === "version") return mismatch(event.data.v);
     if (event.data.why === "expired") return goodbye("expired");
-    return failed("KartPad couldn’t link this phone (" + event.data.why + ").");
+    console.log("KartPad: link error", event.data.why);
+    return failed("KartPad couldn’t link this phone.");
   }
   if (event.data.t !== "answer") return;
   setLive(false, "Connecting…");
@@ -744,18 +790,22 @@ function mismatch(v) {
   else if (ws) { ws.onclose = null; ws.close(); ws = null; }
   if (v > VERSION) message("This page is out of date", secure ? "Reload it, or use touch controls." : "Reload it.", "Reload", true,
                            () => location.reload());
-  else message("Update KartPad", "KartPad on the Mac is older than this page.", "Try Again", true);
+  else message("Update KartPad", "KartPad on the Mac is older than this page.", "", true);
 }
-let askedTilt = false;
+let askedMotion = false;
 function welcome(m) {
   const first = !m.resumed;
   joined = true;
   failedInARow = 0;
   view = "menus";  // KartPad says what's on next
   player(m.player);
-  // Motion access needs a tap of its own, so tilt is offered once joined (it stays on through reconnects).
-  if (canTilt && !tilt && prefs.tilt && (first || !askedTilt)) { askedTilt = true; show("tiltAsk"); }
+  // Motion access needs a tap of its own on iPhone, so tilt, or else shaking, is offered once joined
+  // (it stays on through reconnects).
+  const ask = canTilt && (first || !askedMotion);
+  if (ask && !tilt && prefs.tilt) { askedMotion = true; show("tiltAsk"); }
+  else if (ask && !motionOn && prefs.shake && motionAsks) { askedMotion = true; show("shakeAsk"); }
   else show(null);
+  if (canTilt && prefs.shake && !motionAsks) wantMotion();
   applyLayout();
 }
 function goodbye(reason) {
@@ -766,7 +816,7 @@ function goodbye(reason) {
   else if (ws) { ws.onclose = null; ws.close(); ws = null; }
   if (reason === "full") message("Four phones are already playing", "Ask someone to leave, then try again.");
   else if (reason === "replaced") message("Opened somewhere else", "This controller is now in another tab or window.", "Use It Here");
-  else if (reason === "removed") { store(phoneKey, null); message("Removed", "", "Join Again"); }
+  else if (reason === "removed") { store(phoneKey, null); message("Removed from KartPad", "", "Join Again"); }
   else if (reason === "left") { store(phoneKey, null); show("join"); }
   else if (reason === "version") mismatch(macVersion);
   else if (reason === "expired") message("Link expired", "Scan the code in KartPad again.", "");
@@ -835,7 +885,7 @@ function answerPing(id) {
   pings.delete(id);
   rtts.push(performance.now() - t);
   if (rtts.length > 60) rtts.shift();
-  $("delay").textContent = "Link: " + middleDelay() + " ms (worst " + Math.round(Math.max(...rtts)) + " ms)";
+  $("delay").textContent = "Delay: " + middleDelay() + " ms";
 }
 
 // Screen wake locks are for HTTPS pages only. The plain-HTTP page has no good stand-in: a tiny muted
@@ -864,7 +914,7 @@ document.addEventListener("visibilitychange", () => {
 // the wheel angle is the direction of gravity in the screen's plane, from the phone's gyro-fused
 // gravity estimate, so swinging or jolting the phone doesn't steer. Browsers give it as
 // accelerationIncludingGravity minus acceleration (the motion the phone itself makes). Straight is
-// level, like a Wii Wheel: no calibrating. Set Here makes the current angle straight instead, for
+// level, like a Wii Wheel: no calibrating. Center: Current Angle makes the current angle straight instead, for
 // playing lying down.
 const DEAD_ZONE = 0.045, FULL_LOCK = 0.70;           // radians, at 1× sensitivity
 const SHAKE_REARM = 0.35, SHAKE_TRIGGER = 1.35, SHAKE_COOLDOWN = 0.45;  // g, g, seconds
@@ -914,8 +964,11 @@ function onMotion(event) {
   $("wheel").classList.toggle("flat", flat);
   $("wheel").style.transform = "rotate(" + (tiltSteer * 90) + "deg)";
   if (prefs.shake && layout() === "race" && own && own.x != null) shake(Math.hypot(own.x, own.y, own.z || 0) / G, event.timeStamp / 1000);
-  // Which way round to draw, while the screen is upright.
-  if (innerHeight > innerWidth && performance.now() - lastTurnCheck > 250) { lastTurnCheck = performance.now(); placeStage(); }
+  // Which way round to draw, while the screen is upright and that can still change.
+  if (innerHeight > innerWidth && !(playing() && sideKnown) && performance.now() - lastTurnCheck > 250) {
+    lastTurnCheck = performance.now();
+    placeStage();
+  }
   send();
 }
 
@@ -932,24 +985,43 @@ function shake(magnitude, now) {
   setTimeout(() => { render(); send(); }, 160);
 }
 
-async function setTilt(on) {
-  if (on && typeof DeviceMotionEvent.requestPermission === "function") {
-    let refused;
-    try { refused = (await DeviceMotionEvent.requestPermission()) !== "granted"; } catch (e) { refused = true; }
-    if (refused) { on = false; toast("Tilt is off. Motion access was denied."); }
+// Motion, for tilt and for shaking with the stick too: once on, it stays on. On iPhone it has to be
+// asked for, from a tap.
+const motionAsks = canTilt && typeof DeviceMotionEvent.requestPermission === "function";
+let motionOn = false;
+async function wantMotion() {
+  if (motionOn) return true;
+  if (motionAsks) {
+    try { if ((await DeviceMotionEvent.requestPermission()) !== "granted") return false; } catch (e) { return false; }
   }
+  motionOn = true;
+  window.addEventListener("devicemotion", onMotion);
+  return true;
+}
+async function setTilt(on) {
+  if (on && !(await wantMotion())) { on = false; toast("Tilt is off. Motion access was denied."); }
   tilt = on;
   prefs.tilt = on;
   setPref("tilt", on);
   tiltSteer = 0;
   levelSide = null;
-  if (on) window.addEventListener("devicemotion", onMotion);
-  else window.removeEventListener("devicemotion", onMotion);
   syncSettings();
   applyLayout();
 }
+async function setShake(on) {
+  if (on && !(await wantMotion())) { on = false; toast("Shake is off. Motion access was denied."); }
+  prefs.shake = on;
+  setPref("shake", on);
+  syncSettings();
+}
 $("useTilt").onclick = () => { show(null); setTilt(true); };
-$("useStick").onclick = () => { prefs.tilt = false; setPref("tilt", false); show(null); setTilt(false); };
+$("useStick").onclick = () => {
+  setTilt(false);
+  if (prefs.shake && !motionOn && motionAsks) show("shakeAsk");
+  else { show(null); if (prefs.shake) wantMotion(); }
+};
+$("shakeOn").onclick = () => { show(null); setShake(true); };
+$("shakeOff").onclick = () => { show(null); setShake(false); };
 
 // ---- Settings
 function syncSettings() {
@@ -958,12 +1030,14 @@ function syncSettings() {
   $("straight").querySelector('[data-value="level"]').classList.toggle("on", center === null);
   $("straight").querySelector('[data-value="here"]').classList.toggle("on", center !== null);
   for (const row of document.querySelectorAll(".tilt-only")) row.classList.toggle("hidden", !canTilt);
+  $("tiltSettings").classList.toggle("hidden", !tilt);
 }
 for (const seg of document.querySelectorAll(".seg[data-pref]")) {
   for (const b of seg.querySelectorAll("button")) {
     b.onclick = () => {
       const name = seg.dataset.pref, value = JSON.parse(b.dataset.value);
       if (name === "tilt") { setTilt(value); return; }
+      if (name === "shake") { setShake(value); return; }
       prefs[name] = value;
       setPref(name, value);
       if (name === "auto" && view === "race") aLocked = value;
@@ -1032,10 +1106,12 @@ function pressKey(id, k, x, y) {
   // A seam with A presses it, but only A itself switches accelerating off.
   if (bits === 1 && !pressA()) { fingers.set(id, {kind: "unlock", bits: 0, el: k}); return; }
   if (bits !== 1 && (bits & 1) && !aLocked) pressA();
-  if (k.classList.contains("k-item")) {
-    const aim = aimAt(k, x, y);
-    fingers.set(id, {kind: "item", bits, el: k, aim, startAim: aim, startY: toStage(x, y).y, at: performance.now()});
-    showAim(k, aim);
+  if (bits & 16) {
+    // Item, or the seam with Drift: there it starts unaimed, for holding an item behind.
+    const item = k.classList.contains("k-item") ? k : k.parentElement.querySelector(".k-item");
+    const aim = item === k ? aimAt(k, x, y) : 0;
+    fingers.set(id, {kind: "item", bits, el: k, item, aim, startAim: aim, startY: toStage(x, y).y, at: performance.now()});
+    showAim(item, aim);
   } else {
     fingers.set(id, {kind: "key", bits, el: k});
   }
@@ -1065,7 +1141,7 @@ function itemAim() {
   return performance.now() < aimUntil ? aimHeld : 0;
 }
 function letGoOfItem(finger) {
-  showAim(finger.el, 0);
+  showAim(finger.item, 0);
   const now = performance.now();
   itemUntil = Math.max(itemUntil, finger.at + ITEM_MIN_MS);
   if (itemUntil > now) setTimeout(() => { render(); send(); }, itemUntil - now + 10);
@@ -1113,7 +1189,7 @@ const barKeys = {tiltKey: () => setTilt(!tilt), gear: () => { syncSettings(); sh
                  layoutKey: () => { manualRace = !manualRace; aLocked = false; applyLayout(); }};
 
 document.addEventListener("pointerdown", (e) => {
-  if (!joined || sheet !== null || !$("turn").classList.contains("hidden")) return;
+  if (!playing()) return;
   const target = document.elementFromPoint(e.clientX, e.clientY);
   const bar = target && target.closest && target.closest("#tiltKey, #gear, #layoutKey");
   // These act when let go (lift): a touch's lift, unlike its press, lets the page ask for motion access.
@@ -1153,7 +1229,7 @@ document.addEventListener("pointermove", (e) => {
   } else if (finger.kind === "item") {
     // Held until let go, wherever the finger slides; sliding only aims it.
     const aim = flickAim(finger, e.clientX, e.clientY);
-    if (aim !== finger.aim) { finger.aim = aim; showAim(finger.el, aim); buzz(6); }
+    if (aim !== finger.aim) { finger.aim = aim; showAim(finger.item, aim); buzz(6); }
   } else {
     const k = keyAt(e.clientX, e.clientY);
     if (k && k !== finger.el && k.id !== "home" && k.closest(".layer, .bar") === finger.el.closest(".layer, .bar")) {
@@ -1195,14 +1271,14 @@ show("join");
 applyLayout();
 if (!mac || !key) {
   $("joinButton").classList.add("hidden");
-  $("joinNote").textContent = "Scan the code in KartPad: HOME › Controllers › Connect a controller › Phone.";
+  $("joinNote").textContent = "Scan the code in KartPad: HOME › Controllers › Connect › Phone.";
 } else if (!secure) {
   ready(true);
 } else if (!window.RTCPeerConnection) {
   message("Tilt isn’t available here", "This browser doesn’t support tilt. Touch controls still work.", "Try Again", true);
   $("messageButton").classList.add("hidden");
 } else {
-  prepare().catch((e) => { $("joinNote").textContent = "Couldn’t get ready: " + e; });
+  prepare().catch((e) => { console.log("KartPad: couldn’t get ready", e); $("joinNote").textContent = "Couldn’t get ready. Reload the page to try again."; });
 }
 </script>
 </body>
