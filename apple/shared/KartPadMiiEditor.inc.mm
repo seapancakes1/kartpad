@@ -2045,7 +2045,7 @@ static BOOL KPColorField(unsigned field){return field==3||field==8||field==12||f
         backing:NSBackingStoreBuffered defer:NO];
     if((self=[super initWithWindow:window])){
         self.original=data;self.draft=data.mutableCopy;self.slot=slot;self.creating=slot==NSNotFound&&!duplicate;
-        self.duplicating=duplicate;self.category=duplicate?0:2;self.feature=7;
+        self.duplicating=duplicate;self.category=0;self.feature=kartpad::mii::PrimaryFeatures[0];
         window.title=duplicate?@"Duplicate Mii":slot==NSNotFound?@"Create Mii":@"Edit Mii";
         window.contentMinSize=NSMakeSize(800,600);window.delegate=self;
         self.canvas=[[KPMiiCanvas alloc]initWithFrame:NSMakeRect(0,0,960,720)];
@@ -2232,7 +2232,7 @@ static void KPMiiPresentEditor(id parent,NSUInteger slot,NSData *data,BOOL dupli
     KPMiiActiveEditor=[[KPMiiEditor alloc]initWithData:data slot:slot duplicate:duplicate];KPMiiShowEditor(parent);
 #else
     KPMiiEditor *editor=[KPMiiEditor new];editor.original=data;editor.draft=data.mutableCopy;editor.slot=slot;
-    editor.category=duplicate?0:2;editor.feature=7;editor.creating=slot==NSNotFound&&!duplicate;
+    editor.category=0;editor.feature=kartpad::mii::PrimaryFeatures[0];editor.creating=slot==NSNotFound&&!duplicate;
     editor.duplicating=duplicate;editor.modalPresentationStyle=UIModalPresentationFullScreen;
     // Follow the launcher's light/dark choice, which it sets as an override on its own controller.
     editor.overrideUserInterfaceStyle=[(UIViewController*)parent traitCollection].userInterfaceStyle;

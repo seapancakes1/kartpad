@@ -558,6 +558,9 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
                            ^bool(const RuntimeUserConfig &c) { return c.audioMuted.value_or(false); }, true, true)];
   [sound addObject:levelRow(@"Master volume", "volume", ^float(const RuntimeUserConfig &c) { return c.audioVolume.value_or(1); })];
   [sound addObject:levelRow(@"Music", "music_volume", ^float(const RuntimeUserConfig &c) { return c.audioMusicVolume.value_or(1); })];
+  if (@available(macOS 14.2, *))  // the runtime's check for other apps' audio
+    [sound addObject:boolRow(@"Mute music while other apps play audio", nil, "audio", "attenuate_music_when_media_plays", false,
+                             ^bool(const RuntimeUserConfig &c) { return c.attenuateMusicWhenMediaPlays.value_or(false); }, false, true)];
   [sound addObject:levelRow(@"Sound effects", "sound_effects_volume",
                             ^float(const RuntimeUserConfig &c) { return c.audioSoundEffectsVolume.value_or(1); })];
   [sound addObject:levelRow(@"Menu sounds in the game", "ui_volume", ^float(const RuntimeUserConfig &c) { return c.audioUiVolume.value_or(1); })];

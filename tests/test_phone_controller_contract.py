@@ -81,6 +81,15 @@ class PhoneControllerContract(unittest.TestCase):
         self.assertIn("hypot(gravity.x, gravity.y) >= 0.08", IOS_MOTION)
         self.assertIn("Math.hypot(gx, gy) / G < 0.08", PAGE)
 
+    def test_sensitivity_only_changes_steering(self):
+        # The Sensitivity buttons set how far to tilt for full lock, not how hard a shake has to be.
+        steering = PAGE.split("function steering(")[1].split("\n}\n")[0]
+        shake = PAGE.split("function shake(")[1].split("\n}\n")[0]
+        self.assertIn("prefs.sensitivity", steering)
+        self.assertEqual(PAGE.count("prefs.sensitivity"), steering.count("prefs.sensitivity"))
+        self.assertNotIn("prefs", shake)
+        self.assertNotIn("sensitivity", re.search(r"KartPadShakeActionForSample\([^)]*\)", IOS_MOTION).group(0))
+
     def test_tilt_steers_from_gravity_not_raw_acceleration(self):
         # The raw accelerometer moves with every swing of the phone; gravity alone gives the angle.
         self.assertIn("gx = all.x - own.x;", PAGE)
