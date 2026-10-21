@@ -21,6 +21,7 @@ std::atomic<uint64_t> g_mapping{Pack(kDefaultControllerButtonMapping)};
 std::atomic<bool> g_autoAccelerate{false};
 std::atomic<bool> g_vibration{true};
 std::atomic<bool> g_nintendoLayout{false};
+std::atomic<bool> g_rumble{true};
 std::array<kartpad::input::AutoAccelerateLatch, 4> g_autoAccelerateLatches{};
 
 }  // namespace
@@ -72,6 +73,14 @@ RawGamepadState ApplyNintendoLayout(RawGamepadState input, const uint16_t vendor
 
 void PublishControllerAutoAccelerate(const bool enabled) noexcept {
   g_autoAccelerate.store(enabled, std::memory_order_release);
+}
+
+void PublishControllerRumble(const bool enabled) noexcept {
+  g_rumble.store(enabled, std::memory_order_release);
+}
+
+bool ControllerRumbleEnabled() noexcept {
+  return g_rumble.load(std::memory_order_acquire);
 }
 
 uint32_t ApplyControllerAutoAccelerate(const uint32_t chan,

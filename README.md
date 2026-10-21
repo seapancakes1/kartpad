@@ -25,8 +25,6 @@ The projects are independently maintained.
   <a href="https://discord.gg/xwHfUD2bxW"><img alt="Join the KartPad Discord" src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&amp;logoColor=white"></a>
 </p>
 
-![KartPad running a race on DK Summit on iPad](docs/images/kartpad-dk-summit-ipad.png)
-
 > [!IMPORTANT]
 > **Bring your own game data.** KartPad requires a legally obtained supported
 > PAL `RMCP01` revision 0 Mario Kart Wii image. tvOS remains experimental.
@@ -176,8 +174,10 @@ Your saves and game data stay.
 
 ### Current release
 
-**KartPad 0.8.3** (build 265) supports Retro Rewind 6.13.3, as described in the
-[release notes](docs/releases/v0.8.3.md).
+**KartPad 0.8.4** (build 266) adds rumble on Android, Retro Rewind soundtrack
+packs, an optional touch item hold and a new Snapdragon character graphics
+test, and retries dropped downloads during PadMint builds; Retro Rewind stays
+at 6.13.3. See the [release notes](docs/releases/v0.8.4.md).
 The latest published files are on the [releases page](https://github.com/chrissotraidis/kartpad/releases/latest).
 What changed and what remains open are in [status](docs/STATUS.md) and
 [known issues](docs/KNOWN-ISSUES.md). The earlier move onto maintained
@@ -472,3 +472,13 @@ to use, modify and redistribute the software are separate from game-content
 rights. See [rights, licenses and Corresponding Source](RIGHTS_AND_LICENSES.md).
 Mario Kart, Wii and game imagery belong to their respective rights holders.
 KartPad is not affiliated with or endorsed by Nintendo.
+
+## Legal
+
+KartPad is an unofficial, fan-made project. It is not affiliated with, endorsed
+by, or sponsored by Nintendo. Mario Kart Wii and related names and marks are
+trademarks of Nintendo (and their respective owners). The source code in this
+repository contains no game data, disc images, or extracted assets. To use it,
+you need your own legally obtained copy of the game. On iPhone, iPad and Mac,
+you build it yourself on your own machine. Please don't share game files or
+builds made from them.

@@ -7,6 +7,15 @@ for 0.8.0.
 
 ## What we're doing next
 
+**Update 20 October.** 0.8.4 (build 266) is the latest release. It adds
+Android rumble ([#497](https://github.com/chrissotraidis/kartpad/pull/497)),
+Retro Rewind soundtrack packs (#499, for #441), an optional touch item hold
+(#500, for #473), and item 2's bone-index experiment as a Character Graphics
+Test option ([#498](https://github.com/chrissotraidis/kartpad/pull/498)). The
+Thor reporter confirmed on 0.8.3 that Fill Screen fills the screen, so item 1
+is done and #202 is closed. Item 2 now waits for a log with the bone-index
+option on from #104, #301, #472 or #492. Item 3 is unchanged.
+
 **0.8.1 is the latest release** (13 October, build 263). 0.8.0 shipped on
 12 October, and PadMint 0.5.1 brought KartPad's Mac copy back the same day.
 PadMint 0.5.2 (15 October) adds GalaxyPad and does not change the KartPad
