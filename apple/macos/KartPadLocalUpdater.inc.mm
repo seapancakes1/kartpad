@@ -122,14 +122,18 @@ static void KPPositionUpdateNotice() {
   }
   NSRect area = parent ? [parent convertRectToScreen:parent.contentLayoutRect] : NSScreen.mainScreen.visibleFrame;
   CGFloat width = MIN(440, MAX(300, area.size.width - 32));
-  [kpUpdatePanel setFrame:NSMakeRect(NSMaxX(area) - width - 16, NSMaxY(area) - 156, width, 140) display:YES];
-  kpUpdateHeading.frame = NSMakeRect(50, 105, width - 88, 20);
-  kpUpdateLabel.frame = NSMakeRect(50, 58, width - 72, 44);
+  // The notice is as tall as its detail: one line or two.
+  CGFloat detail = MIN(44, MAX(16, ceil([kpUpdateLabel.cell cellSizeForBounds:NSMakeRect(0, 0, width - 72, 1000)].height)));
+  CGFloat height = 96 + detail;
+  [kpUpdatePanel setFrame:NSMakeRect(NSMaxX(area) - width - 16, NSMaxY(area) - 16 - height, width, height) display:YES];
+  kpUpdateHeading.frame = NSMakeRect(50, height - 35, width - 88, 20);
+  kpUpdateLabel.frame = NSMakeRect(50, height - 38 - detail, width - 72, detail);
+  kpUpdateProgress.frame = kpUpdateIcon.frame = NSMakeRect(18, height - 36, 20, 20);
   kpUpdateFootnote.frame = NSMakeRect(18, 16, width - 150, 20);
   kpDownloadProgress.frame = NSMakeRect(18, 44, width - 36, 4);
   kpUpdateAction.frame = NSMakeRect(width - 122, 12, 104, 28);
   NSButton *close = [kpUpdatePanel.contentView viewWithTag:42];
-  close.frame = NSMakeRect(width - 32, 107, 20, 20);
+  close.frame = NSMakeRect(width - 32, height - 33, 20, 20);
 }
 
 static void KPShowUpdateNotice() {
@@ -227,8 +231,8 @@ static BOOL KPLocalUpdateHelperRunning(NSDictionary *status) {
 }
 
 static void KPRenderUpdateStatus(NSDictionary *status) {
-  NSString *phase = status[@"phase"];
-  BOOL changed = ![kpUpdatePhase isEqualToString:phase];
+  NSString *phase = status[@"phase"], *previous = kpUpdatePhase;
+  BOOL changed = ![previous isEqualToString:phase];
   kpUpdatePhase = phase;
   NSString *version = [status[@"version"] isKindOfClass:NSString.class] ? status[@"version"] : @"";
   kpUpdateVersion = version;
@@ -287,21 +291,19 @@ static void KPRenderUpdateStatus(NSDictionary *status) {
     kpUpdateFootnote.stringValue = footnote;
     kpUpdateAction.title = @"Try Again"; kpUpdateAction.hidden = NO;
   } else if ([phase isEqualToString:@"current"]) {
+    // The review was withdrawn or the feed went back: a notice shown from the last launch goes.
+    if (!kpUpdateInteractive && [previous isEqualToString:@"unverified"]) [kpUpdatePanel orderOut:nil];
     if (!kpUpdateInteractive) return;
     KPUpdateNotice(@"You’re up to date", [NSString stringWithFormat:@"Retro Rewind %@ is the latest version.", version], NO);
     KPUpdateNoticeIcon(@"checkmark.circle.fill", NSColor.systemGreenColor, @"Up to date");
     KPHideUpdateNoticeAfter(4.0);
   } else if ([phase isEqualToString:@"unverified"] && changed) {
     // A version KartPad's maintainers haven't reviewed, or whose files differ from the review.
+    // Shown at every launch until it's installed, so a dismissed notice comes back.
     BOOL mismatch = [status[@"reason"] isEqualToString:@"mismatch"];
-    NSString *seen = [NSString stringWithFormat:@"%@ %@", version, status[@"reason"]];
-    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
-    if (!kpUpdateInteractive && [seen isEqualToString:[defaults stringForKey:@"KartPadLocalUpdateLastUnverified"]]) return;
-    [defaults setObject:seen forKey:@"KartPadLocalUpdateLastUnverified"];
-    KPUpdateNotice([NSString stringWithFormat:mismatch ? @"Retro Rewind %@ wasn’t installed" : @"Retro Rewind %@ isn’t reviewed yet", version],
-        mismatch ? @"Its files don’t match the ones KartPad checked." : @"It installs by itself once KartPad has checked it.", NO);
-    KPUpdateNoticeIcon(@"exclamationmark.shield", NSColor.systemOrangeColor, @"Update not reviewed");
-    kpUpdateFootnote.stringValue = @"Your current version stays installed";
+    KPUpdateNotice([NSString stringWithFormat:mismatch ? @"Retro Rewind %@ wasn’t installed" : @"Retro Rewind %@ is available", version],
+        mismatch ? @"Its files differ from the ones KartPad tested." : @"Installs automatically once KartPad has tested it.", NO);
+    KPUpdateNoticeIcon(@"exclamationmark.shield", NSColor.systemOrangeColor, @"Update not tested");
     kpUpdateAction.title = @"Install Anyway"; kpUpdateAction.hidden = NO;
   } else if ([phase isEqualToString:@"declined"]) {
     KPUpdateNotice([NSString stringWithFormat:@"Retro Rewind %@ is skipped", version],
@@ -428,6 +430,9 @@ static void KPStartLocalUpdates() {
       kpUpdateInteractive = YES;
       KPRenderUpdateStatus(status);
       kpUpdateInteractive = NO;
+    } else if ([KPLocalUpdateRead(@"status.json")[@"phase"] isEqualToString:@"unverified"]) {
+      // Offline, or before the check finishes: the update waiting from last time.
+      KPRenderUpdateStatus(KPLocalUpdateRead(@"status.json"));
     } else if ([status[@"phase"] isEqualToString:@"rolledBack"]) {
       NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
       double at = [status[@"checkedAt"] doubleValue];
@@ -477,8 +482,8 @@ static void KPFinishLocalUpdateAndQuit(NSString *then, id sender) {
     NSString *version = kpUpdateVersion;
     [kpUpdateDismissTimer invalidate]; kpUpdateDismissTimer = nil;
     NSAlert *alert = [NSAlert new];
-    alert.messageText = [NSString stringWithFormat:@"Install Retro Rewind %@ Without a Review?", version];
-    alert.informativeText = @"KartPad rebuilds itself from files its maintainers haven’t checked.";
+    alert.messageText = [NSString stringWithFormat:@"Install Retro Rewind %@?", version];
+    alert.informativeText = @"KartPad hasn’t tested this version. It may not work.";
     [alert addButtonWithTitle:@"Install Anyway"];
     [alert addButtonWithTitle:@"Cancel"];
     if ([alert runModal] == NSAlertFirstButtonReturn) KPCheckLocalUpdates(YES, @[@"--allow-unverified", version]);

@@ -48,7 +48,7 @@ KartPad's maintainers publish a reviewed pin for each Retro Rewind version they 
 - After all patches and the official delete list are applied, and before anything is translated or compiled, `Code.pul` and the Riivolution XML have the pinned size and SHA-256.
 - The pack's `version.txt` reads the reviewed version, or the review's `packVersion` when the release shipped an older one (Retro Rewind 6.13.3's says 6.13.2). The helper keeps `packVersion` with the pack and checks it again at installation, going back and later checks.
 
-Otherwise nothing is built. The banner says **Retro Rewind VERSION isn’t reviewed yet** (the feed is ahead of the review; it installs by itself once the review catches up) or **Retro Rewind VERSION wasn’t installed** (files differ from the review). **Install Anyway** asks for confirmation and records the approval for that version and download only (`approved.json`); the checks still run and their results are kept in the build's profile, but no longer stop it. Deletions from the official delete list are applied only in a verified update or after that approval.
+Otherwise nothing is built. The banner says **Retro Rewind VERSION is available** (the feed is ahead of the review; it installs by itself once the review catches up) or **Retro Rewind VERSION wasn’t installed** (files differ from the review). **Install Anyway** asks for confirmation and records the approval for that version and download only (`approved.json`); the checks still run and their results are kept in the build's profile, but no longer stop it. Deletions from the official delete list are applied only in a verified update or after that approval.
 
 A mismatch is remembered against that review, so automatic checks don't download it again until the feed or the review changes; **Retro Rewind Updates…** tries again.
 
@@ -60,7 +60,7 @@ A mismatch is remembered against that review, so automatic checks don't download
 
 ## Checking
 
-At each launch KartPad starts a background check at utility priority, and checks again every 4 hours while it stays open (after the Mac wakes, within half an hour of the 4 hours passing). Automatic checks are quiet: no banner appears while checking, when the game is current, or when the Mac is offline. A compact, nonactivating banner attaches to the upper-right of the game window when there is news: downloading, preparation, verification, a ready update, an unreviewed version, or a failure. Each distinct failure and each unreviewed version is shown once. Dismissing the banner doesn't cancel the update.
+At each launch KartPad starts a background check at utility priority, and checks again every 4 hours while it stays open (after the Mac wakes, within half an hour of the 4 hours passing). Automatic checks are quiet: no banner appears while checking, when the game is current, or when the Mac is offline. A compact, nonactivating banner attaches to the upper-right of the game window when there is news: downloading, preparation, verification, a ready update, an unreviewed version, or a failure. Each distinct failure is shown once. An unreviewed version is shown at every launch until it is installed, from the last check if the Mac is offline. Dismissing the banner doesn't cancel the update.
 
 **Game → Retro Rewind Updates…** runs a visible check, which also reports when the game is up to date, and reopens the banner for an update in progress. It ignores the retry rules below.
 
