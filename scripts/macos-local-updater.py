@@ -5,7 +5,7 @@ Standard library only; runs on Python 3.9 or newer (the stock macOS python3). Se
 docs/macos-local-auto-update.md for setup, the verification model and the state files."""
 from __future__ import annotations
 import argparse, contextlib, errno, fcntl, hashlib, http.client, importlib.util, json, os, re, shutil, stat
-import subprocess, sys, tempfile, time, urllib.error, urllib.request, zipfile
+import subprocess, sys, tempfile, threading, time, urllib.error, urllib.request, zipfile
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 
@@ -288,6 +288,45 @@ def uncarry(plan):
 def run(command, settings, log):
     # Rebuild work runs at background priority so it doesn't compete with the game.
     subprocess.run(['/usr/sbin/taskpolicy','-b',*command], cwd=settings['repo'], env={**os.environ, **settings.get('environment',{})}, stdout=log, stderr=subprocess.STDOUT, check=True)
+
+# Landmarks in the rebuild's log and how much of the rebuild is done at each. Translating the game
+# code is about a fifth of it; compiling the translated code takes most of the rest.
+TRANSLATING = b'[translator] Starting translation'
+TRANSLATED = b'Generated validated private Retro Rewind native graph'
+PACKAGED = b'Packaged KartPad:'
+TRANSLATOR_PHASES = 14  # the base and mod phases the translator reports
+PHASE = re.compile(rb"^\[translator\] (?:mod )?phase '", re.M)
+NINJA = re.compile(rb'^\[(\d+)/(\d+)\] (?!Re-checking|Re-running)', re.M)  # not CMake's own steps
+
+def build_progress(text):
+    """The stage a rebuild is in and how much of it is done, from its log so far."""
+    if PACKAGED in text: return 'packaging', 0.97
+    if TRANSLATED in text:
+        steps = NINJA.findall(text[text.index(TRANSLATED):])
+        done, total = (int(steps[-1][0]), int(steps[-1][1])) if steps else (0, 1)
+        return 'compiling', 0.28 + 0.67*min(1, done/max(total, 1))
+    if TRANSLATING in text:
+        return 'translating', 0.05 + 0.23*min(1, len(PHASE.findall(text))/TRANSLATOR_PHASES)
+    return 'preparing', 0.0
+
+BUILD_POLL = 2.0  # seconds between looks at the rebuild's log
+
+@contextlib.contextmanager
+def watching(path, report):
+    """Reports build_progress of the log at path every few seconds while the block runs. Progress
+    never goes backwards."""
+    done = threading.Event(); last = [None, 0.0]
+    def watch():
+        while not done.wait(BUILD_POLL):
+            try: name, fraction = build_progress(path.read_bytes())
+            except OSError: continue
+            fraction = round(max(fraction, last[1]), 3)
+            if [name, fraction] != last:
+                last[:] = [name, fraction]
+                with contextlib.suppress(OSError): report(name, fraction)
+    thread = threading.Thread(target=watch, daemon=True); thread.start()
+    try: yield
+    finally: done.set(); thread.join()
 
 def error_kind(error):
     if isinstance(error,NETWORK):return 'network'
@@ -672,16 +711,18 @@ def build(settings, installed, state, app, force, allow_declined, allow_unverifi
         local_profile=stage/'profile.json';atomic_json(local_profile,profile)
         candidate=stage/'KartPad.app'
         command=[arg.replace('{root}',str(root)).replace('{profile}',str(local_profile)).replace('{app}',str(candidate)) for arg in settings['buildCommand']]
-        status(step='compiling')
+        status(step='compiling',buildStage='preparing',progress=0.0)
         with (stage/'build.log').open('w') as log:
-            try: run(command,settings,log)
+            try:
+                with watching(stage/'build.log',lambda name,done:status(step='compiling',buildStage=name,progress=done)):
+                    run(command,settings,log)
             except subprocess.CalledProcessError as exc:
                 # A version newer than the checkout's own profile usually needs the maintainers' changes too.
                 supported=checkout(settings)[0]
                 if supported and version(supported)<version(latest):
                     raise OutdatedCheckout(f'Retro Rewind {latest} needs a newer KartPad checkout (it has {supported})') from exc
                 raise
-        status(step='verifying')
+        status(step='verifying',progress=0.98)
         binary=(candidate/'Contents/MacOS/KartPad').read_bytes()
         if any(profile['retroRewind'][key]['sha256'].encode() not in binary for key in ('codePul','riivolutionXml')):
             raise VerificationError('Rebuilt app does not validate the new pack fingerprint')

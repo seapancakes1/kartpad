@@ -60,7 +60,7 @@ A mismatch is remembered against that review, so automatic checks don't download
 
 ## Checking
 
-At each launch KartPad starts a background check at utility priority, and checks again every 4 hours while it stays open (after the Mac wakes, within half an hour of the 4 hours passing). Automatic checks are quiet: no banner appears while checking, when the game is current, or when the Mac is offline. A compact, nonactivating banner attaches to the upper-right of the game window when there is news: downloading, preparation, verification, a ready update, an unreviewed version, or a failure. Each distinct failure is shown once. An unreviewed version is shown at every launch until it is installed, from the last check if the Mac is offline. Dismissing the banner doesn't cancel the update.
+At each launch KartPad starts a background check at utility priority, and checks again every 4 hours while it stays open (after the Mac wakes, within half an hour of the 4 hours passing). Automatic checks are quiet: no banner appears while checking, when the game is current, or when the Mac is offline. A compact, nonactivating banner attaches to the upper-right of the game window when there is news: downloading, preparation, verification, a ready update, an unreviewed version, or a failure. Each distinct failure is shown once. An unreviewed version is shown at every launch until it is installed, from the last check if the Mac is offline. Downloads and the rebuild show a progress bar; the rebuild names its stage (reading the game files, translating, compiling, packaging), which the helper reads from `build.log` every 2 seconds. Dismissing the banner doesn't cancel the update, and **Retro Rewind Updates…** shows it again.
 
 **Game → Retro Rewind Updates…** runs a visible check, which also reports when the game is up to date, and reopens the banner for an update in progress. It ignores the retry rules below.
 
@@ -117,7 +117,7 @@ Files are under `~/Library/Application Support/KartPad/LocalUpdater`:
 
 | File | Purpose |
 | --- | --- |
-| `status.json` | Latest phase shown by the banner |
+| `status.json` | Latest phase shown by the banner, with the rebuild's `buildStage` and `progress` (0–1) |
 | `installed.json` | The installed app's path, Retro Rewind version and runtime digest |
 | `pending.json` | A finished build waiting to be installed |
 | `active.json` | The installed version, pack and profile, once an update has been installed |

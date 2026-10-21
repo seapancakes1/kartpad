@@ -244,8 +244,24 @@ static void KPRenderUpdateStatus(NSDictionary *status) {
       title = @"Downloading update";
       detail = [NSString stringWithFormat:@"Getting Retro Rewind %@ in the background.", version];
     } else if ([step isEqualToString:@"extracting"]) detail = [NSString stringWithFormat:@"Unpacking Retro Rewind %@.", version];
-    else if ([step isEqualToString:@"verifying"]) { title = @"Finishing update"; detail = @"Checking the files."; }
+    else if ([step isEqualToString:@"compiling"]) {
+      NSString *stage = status[@"buildStage"];
+      title = [NSString stringWithFormat:@"Building Retro Rewind %@", version];
+      if ([stage isEqualToString:@"preparing"]) detail = @"Reading the game files.";
+      else if ([stage isEqualToString:@"translating"]) detail = @"Translating the game code.";
+      else if ([stage isEqualToString:@"compiling"]) detail = @"Compiling the game code.";
+      else if ([stage isEqualToString:@"packaging"]) detail = @"Packaging KartPad.";
+    } else if ([step isEqualToString:@"verifying"]) { title = @"Finishing update"; detail = @"Checking the files."; }
     KPUpdateNotice(title, detail, YES);
+    // The rebuild reports how far it has got; downloads report their bytes below.
+    NSNumber *progress = [status[@"progress"] isKindOfClass:NSNumber.class] ? status[@"progress"] : nil;
+    if (progress != nil && ![step isEqualToString:@"downloading"]) {
+      double done = MIN(1, MAX(0, progress.doubleValue));
+      kpDownloadProgress.hidden = NO;
+      kpDownloadProgress.doubleValue = done;
+      kpUpdateFootnote.stringValue = [NSNumberFormatter localizedStringFromNumber:@(floor(done * 100) / 100)
+                                                                     numberStyle:NSNumberFormatterPercentStyle];
+    }
     double total = [status[@"totalBytes"] doubleValue], downloaded = [status[@"downloadedBytes"] doubleValue];
     if ([step isEqualToString:@"downloading"] && total > 0) {
       kpDownloadProgress.hidden = NO;

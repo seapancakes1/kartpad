@@ -451,6 +451,28 @@ class Updates(unittest.TestCase):
             u.check(self.settings,'6.13.1',self.state,self.app,**options)
     def status(self):return u.load(self.state/'status.json')
 
+    def test_rebuild_progress_follows_the_build_log(self):
+        start=b'Verified local extracted RMCP01 rev0 DOL and REL.\n[translator] Starting translation at 20:13:46\n'
+        self.assertEqual(u.build_progress(start[:20]),('preparing',0.0))
+        name,done=u.build_progress(start+b"[translator] phase 'discovery': 27.4s (t=27.4s)\n")
+        self.assertEqual(name,'translating');self.assertTrue(0.05<done<0.28)
+        graph=start+b'Generated validated private Retro Rewind native graph\n[0/2] Re-checking globbed directories...\n[1/2] Re-running CMake...\n'
+        self.assertEqual(u.build_progress(graph),('compiling',0.28))  # CMake's own steps aren't the build's
+        self.assertAlmostEqual(u.build_progress(graph+b'[50/100] Building CXX object a.o\n')[1],0.28+0.67/2)
+        self.assertEqual(u.build_progress(graph+b'[100/100] Linking\nPackaged KartPad: /x.app\n'),('packaging',0.97))
+    def test_rebuild_reports_its_progress_while_it_runs(self):
+        state,app,config=self.world();seen=[]
+        def build(command,settings,log):
+            if command[0]=='fake-build':
+                for line in ('[translator] Starting translation\n','Generated validated private Retro Rewind native graph\n','[3/4] Building\n','[1/2] Re-running CMake...\n'):
+                    log.write(line);log.flush();time.sleep(0.1)
+                    status=self.status();seen.append((status.get('buildStage'),status.get('progress')))
+            self.fake_run(command,settings,log)
+        with patch.object(u,'BUILD_POLL',0.01):self.run_check(run=build)
+        self.assertEqual([stage for stage,_ in seen],['translating','compiling','compiling','compiling'])
+        self.assertEqual(seen[2][1],seen[3][1])  # progress never goes backwards
+        self.assertAlmostEqual(seen[2][1],0.28+0.67*3/4,places=3)
+        self.assertEqual(self.status()['phase'],'ready')
     def test_reviewed_update_builds_pending_without_installing(self):
         state,app,config=self.world();original=config.read_text();calls=[]
         self.run_check(self.feed(calls=calls))
