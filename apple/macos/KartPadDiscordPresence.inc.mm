@@ -29,3 +29,20 @@ static void KPDiscordPresenceTick() {
   const presence::Lines lines = presence::ForRace(racing, settings);
   DiscordPresence::SetBasicActivity(lines.details, lines.state);
 }
+
+// A race or battle is running, not the title screen's demo: RaceManager exists only then, in
+// Retro Rewind as well. The Retro Rewind updater slows its rebuild down meanwhile.
+static void KPLocalUpdateRaceTick() {
+#if defined(KARTPAD_RUNTIME_PRODUCT_DUAL)  // the only app with the updater
+  static NSTimeInterval lastRead;
+  if (KPGameLoopTime - lastRead < 1) return;
+  lastRead = KPGameLoopTime;
+  namespace presence = kartpad::discord;
+  uint32_t config = 0, manager = 0, camera = 0;
+  const bool racing = Memory::TryRead32(presence::RaceConfigPointer, config) && config != 0 &&
+                      Memory::TryRead32(presence::RaceManagerPointer, manager) && manager != 0 &&
+                      Memory::TryRead32(config + presence::RaceSettingsOffset + presence::CameraModeOffset, camera) &&
+                      (camera < presence::TitleCameraFirst || camera > presence::TitleCameraLast);
+  dispatch_async(dispatch_get_main_queue(), ^{ KPLocalUpdateNoteRace(racing); });
+#endif
+}

@@ -25,6 +25,7 @@ static void KPHomeTick();
 static void KPOverlayGameTick();
 // What Discord shows (KartPadDiscordPresence.inc.mm).
 static void KPDiscordPresenceTick();
+static void KPLocalUpdateRaceTick();  // KartPadDiscordPresence.inc.mm
 
 static NSWindow *KPGameWindow() {
   // The SDL game window has no window controller; the Mii editor has one.
@@ -433,6 +434,7 @@ extern "C" void KartPadControllersTick() {
     KPHomeTick();
     KPOverlayGameTick();
     KPDiscordPresenceTick();
+    KPLocalUpdateRaceTick();
     KPPhoneRaceTick();
   }
 }

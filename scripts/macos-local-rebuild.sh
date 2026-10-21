@@ -41,6 +41,6 @@ cd "${repo_root}"
 "${translate}" --image "${KARTPAD_DISC_IMAGE}" --retro-root "${retro_root}" --payload "${payload}"
 # The app checks the pack against these pins at launch.
 PYTHONPATH="${repo_root}/builder" python3 -m kartpad_builder.release_header "${profile}" "${header}"
-cmake --build "${KARTPAD_RUNTIME_BUILD}" --target KartPadDual --parallel 4
+cmake --build "${KARTPAD_RUNTIME_BUILD}" --target KartPadDual --parallel "$(sysctl -n hw.ncpu)"
 "${repo_root}/scripts/package-macos-runtime.sh" "${KARTPAD_RUNTIME_BUILD}" "${app}" KartPadDual
 "${repo_root}/scripts/audit-macos-package.sh" "${app}" dual

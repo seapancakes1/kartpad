@@ -473,6 +473,18 @@ class Updates(unittest.TestCase):
         self.assertEqual(seen[2][1],seen[3][1])  # progress never goes backwards
         self.assertAlmostEqual(seen[2][1],0.28+0.67*3/4,places=3)
         self.assertEqual(self.status()['phase'],'ready')
+    def test_rebuild_slows_down_only_while_kartpad_races(self):
+        state,app,config=self.world();paced=[]
+        def build(command,settings,log):
+            if command[0]=='fake-build':
+                time.sleep(0.1)
+                (state/'racing').write_text(str(os.getpid()));time.sleep(0.1)  # a race starts
+                (state/'racing').write_text('999999999');time.sleep(0.1)  # a KartPad that quit mid-race
+            self.fake_run(command,settings,log)
+        with patch.object(u,'BUILD_POLL',0.01),patch.object(u,'pace',side_effect=paced.append):self.run_check(run=build)
+        self.assertEqual(paced[0],False)  # full speed from the start
+        self.assertIn(True,paced);self.assertEqual(paced[-1],False)
+        self.assertFalse(u.racing(state))
     def test_reviewed_update_builds_pending_without_installing(self):
         state,app,config=self.world();original=config.read_text();calls=[]
         self.run_check(self.feed(calls=calls))

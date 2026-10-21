@@ -432,9 +432,28 @@ static void KPCheckLocalUpdates(BOOL interactive, NSArray<NSString *> *options) 
   }];
 }
 
+// A rebuild runs at full speed except while a race runs in the active window: KartPad's process ID
+// in the state folder's "racing" file says so (the helper's racing()). One left by a KartPad that
+// has quit names a process that is gone.
+static void KPLocalUpdateNoteRace(BOOL racing) {
+  static BOOL noted;
+  racing = racing && NSApp.active && KPLocalUpdateIsInstalledCopy();
+  NSString *path = KPLocalUpdateStatePath(@"racing");
+  if (racing == noted || path == nil) return;
+  noted = racing;
+  if (racing)
+    [[NSString stringWithFormat:@"%d", NSProcessInfo.processInfo.processIdentifier]
+        writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+  else [NSFileManager.defaultManager removeItemAtPath:path error:nil];
+}
+
 // Called once the shell is up: one-time notices from the last launch, then a quiet check.
 static void KPStartLocalUpdates() {
   if (KPLocalUpdateSettings() == nil || !KPLocalUpdateIsInstalledCopy()) return;
+  [NSFileManager.defaultManager removeItemAtPath:KPLocalUpdateStatePath(@"racing") error:nil];
+  // A paused game in the background doesn't tick; leaving the window ends the slowdown at once.
+  [NSNotificationCenter.defaultCenter addObserverForName:NSApplicationDidResignActiveNotification object:nil
+      queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) { KPLocalUpdateNoteRace(NO); }];
   NSDictionary *status = KPLocalUpdateRead(@"status.json");
   BOOL failed = kpUpdateLaunchFailure;
   kpUpdateLaunchFailure = NO;

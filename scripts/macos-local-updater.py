@@ -4,7 +4,7 @@
 Standard library only; runs on Python 3.9 or newer (the stock macOS python3). See
 docs/macos-local-auto-update.md for setup, the verification model and the state files."""
 from __future__ import annotations
-import argparse, contextlib, errno, fcntl, hashlib, http.client, importlib.util, json, os, re, shutil, stat
+import argparse, contextlib, ctypes, errno, fcntl, hashlib, http.client, importlib.util, json, os, re, shutil, stat
 import subprocess, sys, tempfile, threading, time, urllib.error, urllib.request, zipfile
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
@@ -286,8 +286,11 @@ def uncarry(plan):
     discard(aside)
 
 def run(command, settings, log):
-    # Rebuild work runs at background priority so it doesn't compete with the game.
-    subprocess.run(['/usr/sbin/taskpolicy','-b',*command], cwd=settings['repo'], env={**os.environ, **settings.get('environment',{})}, stdout=log, stderr=subprocess.STDOUT, check=True)
+    # Rebuild work starts at background priority so it doesn't compete with the game; watching()
+    # lifts it while KartPad isn't racing. Set on the process: taskpolicy -b's can't be lifted.
+    process = subprocess.Popen(command, cwd=settings['repo'], env={**os.environ, **settings.get('environment',{})}, stdout=log, stderr=subprocess.STDOUT)
+    with contextlib.suppress(Exception): set_background(process.pid, True)
+    if process.wait(): raise subprocess.CalledProcessError(process.returncode, command)
 
 # Landmarks in the rebuild's log and how much of the rebuild is done at each. Translating the game
 # code is about a fifth of it; compiling the translated code takes most of the rest.
@@ -310,14 +313,49 @@ def build_progress(text):
     return 'preparing', 0.0
 
 BUILD_POLL = 2.0  # seconds between looks at the rebuild's log
+REPACE = 8  # polls between re-applying the build's priority, for processes started meanwhile
+
+def racing(state):
+    """KartPad is running a race in its active window: it keeps its process ID in state/racing then."""
+    try: pid = int((state/'racing').read_text())
+    except (OSError, ValueError): return False
+    try: os.kill(pid, 0)
+    except ProcessLookupError: return False
+    except PermissionError: pass
+    return True
+
+def descendants(pid):
+    """Every process started under pid: the build's shells, ninja and the compilers."""
+    table = subprocess.run(['/bin/ps', '-ax', '-o', 'pid=,ppid='], capture_output=True, text=True, check=True).stdout
+    children = {}
+    for line in table.split('\n'):
+        if line.strip(): child, parent = map(int, line.split()); children.setdefault(parent, []).append(child)
+    found, todo = [], [pid]
+    while todo:
+        for child in children.get(todo.pop(), ()): found.append(child); todo.append(child)
+    return found
+
+def set_background(pid, background):
+    """PRIO_DARWIN_BG, as taskpolicy -b sets it: efficiency cores and throttled disk use. Processes a
+    build starts later inherit it from their parent."""
+    ctypes.CDLL(None, use_errno=True).setpriority(4, pid, 0x1000 if background else 0)  # PRIO_DARWIN_PROCESS
+
+def pace(slow):
+    for pid in descendants(os.getpid()): set_background(pid, slow)
 
 @contextlib.contextmanager
-def watching(path, report):
-    """Reports build_progress of the log at path every few seconds while the block runs. Progress
-    never goes backwards."""
+def watching(path, state, report):
+    """While the block runs: reports build_progress of the log at path every few seconds (it never
+    goes backwards), and keeps the build at background priority only while KartPad is racing."""
     done = threading.Event(); last = [None, 0.0]
     def watch():
+        slow, polls = None, 0
         while not done.wait(BUILD_POLL):
+            polls += 1
+            now = racing(state)
+            if now != slow or (now and polls % REPACE == 0):
+                slow = now
+                with contextlib.suppress(Exception): pace(slow)
             try: name, fraction = build_progress(path.read_bytes())
             except OSError: continue
             fraction = round(max(fraction, last[1]), 3)
@@ -714,7 +752,7 @@ def build(settings, installed, state, app, force, allow_declined, allow_unverifi
         status(step='compiling',buildStage='preparing',progress=0.0)
         with (stage/'build.log').open('w') as log:
             try:
-                with watching(stage/'build.log',lambda name,done:status(step='compiling',buildStage=name,progress=done)):
+                with watching(stage/'build.log',state,lambda name,done:status(step='compiling',buildStage=name,progress=done)):
                     run(command,settings,log)
             except subprocess.CalledProcessError as exc:
                 # A version newer than the checkout's own profile usually needs the maintainers' changes too.

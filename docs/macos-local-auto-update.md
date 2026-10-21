@@ -77,7 +77,7 @@ The helper validates the installed pack, then clones it into a staging directory
 
 After each patch the helper applies that version's entries from the official `RetroRewindDelete.txt`, so files a release removes don't survive the update. Only `/RetroRewind6/` paths apply; other entries are the official updater's own downloads at the SD card root. A path that escapes the pack, or an entry that removes the whole pack, rejects the update.
 
-The helper then checks the resulting version and the reviewed hashes. Download and extraction limits reject oversized or unsafe archives. The build command runs under `taskpolicy -b` so it doesn't compete with the game. The helper verifies that the new pack fingerprints are present in the native app and that the app carries the helper, then signs it and runs the Mac package audit.
+The helper then checks the resulting version and the reviewed hashes. Download and extraction limits reject oversized or unsafe archives. The build command starts at background priority (`PRIO_DARWIN_BG`: efficiency cores, throttled disk use) so it doesn't compete with the game, and runs at full speed while no race is running in KartPad's active window: KartPad writes its process ID to `racing` in the state folder during a race, and the helper moves the build's processes in and out of the background every time that changes. (Not `taskpolicy -b`, whose setting can't be lifted from a running build.) The helper verifies that the new pack fingerprints are present in the native app and that the app carries the helper, then signs it and runs the Mac package audit.
 
 ## Installing
 
@@ -127,6 +127,7 @@ Files are under `~/Library/Application Support/KartPad/LocalUpdater`:
 | `declined.json` | A version the player went back from |
 | `approved.json` | A version the player chose to install without a review |
 | `activation.json` | Journal of an installation in progress |
+| `racing` | KartPad's process ID while a race runs in its active window |
 | `Backups.noindex/` | The previous app |
 | `last-build.log` | Output of the last failed rebuild |
 
