@@ -104,7 +104,9 @@ KartPadShakeAction KartPadShakeActionForSample(
     _steering.store(0.0f);
     _calibrated.store(false);
     NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
-    _shakeTricksEnabled.store([defaults boolForKey:kShakeTricksEnabledKey]);
+    // On unless turned off.
+    _shakeTricksEnabled.store([defaults objectForKey:kShakeTricksEnabledKey] == nil ||
+                              [defaults boolForKey:kShakeTricksEnabledKey]);
     _shakeArmed.store(false);
     _lastShakeTimestamp.store(-1.0);
     _shakePending.store(false);

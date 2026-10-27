@@ -146,7 +146,18 @@
   }
   [controls addObject:action(@"Touch controls", nil, ^{ [KPHost() screensShowTouchControls]; })];
   [controls addObject:action(@"Motion steering", nil, ^{ [KPHost() screensShowMotionSteering]; })];
-  [controls addObject:action(@"Shake to trick", nil, ^{ [KPHost() screensShowShakeTricks]; })];
+  {
+    KPSettingRow *row = KPRow(@"Auto-accelerate", nil, KPRowSwitch);
+    row.on = ^BOOL { return [KPHost() screensRaceAccelerate]; };
+    row.setOn = ^(BOOL on) { [KPHost() screensSetRaceAccelerate:on]; };
+    [controls addObject:row];
+  }
+  {
+    KPSettingRow *row = KPRow(@"Shake to trick", nil, KPRowSwitch);
+    row.on = ^BOOL { return [KPHost() screensShakeTricks]; };
+    row.setOn = ^(BOOL on) { [KPHost() screensSetShakeTricks:on]; };
+    [controls addObject:row];
+  }
 
   // Game.
   NSMutableArray *game = [NSMutableArray array];

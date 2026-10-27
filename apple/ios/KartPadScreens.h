@@ -21,7 +21,11 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)screensShowMultiplayer;
 - (void)screensShowPrivateServer;
 - (void)screensShowMotionSteering;
-- (void)screensShowShakeTricks;
+// Touch A held through the race (from GO, not in the countdown or a fall), and shaking for Trick.
+- (BOOL)screensRaceAccelerate;
+- (void)screensSetRaceAccelerate:(BOOL)on;
+- (BOOL)screensShakeTricks;
+- (void)screensSetShakeTricks:(BOOL)on;
 - (void)screensShowWiiRemoteInfo;
 - (void)screensShowButtonMapping;
 // These need the game itself on screen: the screens close first.

@@ -82,7 +82,8 @@ from the game:
 - **Accelerating:** from GO the phone accelerates by itself, so there's no A
   button. Hold **B** to brake and reverse; let go to drive on. Hold **A+B** when
   stopped (after a hit, say) to charge a standstill mini-turbo, then let go to
-  launch. The countdown and a fall are the player's: **A** takes Drift's place
+  launch. While you're spun out or flipped by an item, **B** does the same: it
+  holds A+B until you let go of it. The countdown and a fall are the player's: **A** takes Drift's place
   for a rocket start, and from falling off until just after Lakitu sets the kart
   down, for his boost (press A as you land). KartPad reads the fall from the
   game, as it does the race.

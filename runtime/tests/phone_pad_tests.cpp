@@ -507,7 +507,7 @@ struct FakeRace {
   }
   // Racer i's kart: its state's first and third flag words, and the frames left
   // after landing from a respawn.
-  void Kart(int i, uint32_t flags0, uint32_t flags2 = 0, int16_t postLand = 0) {
+  void Kart(int i, uint32_t flags0, uint32_t flags2 = 0, int16_t postLand = 0, uint32_t flags1 = 0) {
     namespace r = race;
     const uint32_t karts = 0x80d00000, objects = karts - 0x100, kart = karts + 0x1000 * i;
     const uint32_t accessor = kart + 0x1c, state = kart + 0x200, move = kart + 0x400;
@@ -518,15 +518,16 @@ struct FakeRace {
     words[accessor + r::AccessorState] = state;
     words[accessor + r::AccessorMove] = move;
     words[state + r::StateFlags] = flags0;
+    words[state + r::StateFlags + 4] = flags1;
     words[state + r::StateFlags + 8] = flags2;
     words[move + r::MovePostLandTimer] = static_cast<uint32_t>(static_cast<uint16_t>(postLand)) << 16 | 30;
   }
-  race::Views Views() const {
+  race::Views Views(race::Match match = race::Match::PadChannel) const {
     return race::ReadViews([this](uint32_t address, uint32_t &value) {
       const auto found = words.find(address);
       value = found == words.end() ? 0 : found->second;
       return true;
-    });
+    }, match);
   }
 };
 
@@ -571,12 +572,30 @@ bool RaceViews() {
   ok &= Expect(fall.Views()[0] == V::Fall, "just landed: still a fall, for the boost");
   fall.Kart(0, 1 << 18, 1 << 12 | 1 << 15, 0);
   ok &= Expect(fall.Views()[0] == V::Race, "landed: the race");
+  // Hit by an item: spun out until KartAction ends. Falling off while hit is a fall.
+  fall.Kart(0, 1, 0, 0, 1);
+  ok &= Expect(fall.Views() == race::Views{V::Hit, V::Race, V::Menus, V::Menus}, "spun out: hit");
+  fall.Kart(0, 1 << 4, 0, 0, 1);
+  ok &= Expect(fall.Views()[0] == V::Fall, "off the course while hit: a fall");
+  fall.Kart(0, 1, 0, 0, 1 << 1);
+  ok &= Expect(fall.Views()[0] == V::Race, "other flags in that word: the race");
   fall.words[fall.manager + race::ManagerStage] = race::Countdown;
   fall.Kart(0, 0, 1 << 13);
   ok &= Expect(fall.Views()[0] == V::Start, "a fall only counts in the race");
   fall.words[fall.manager + race::ManagerStage] = race::Racing;
   fall.words[race::KartManagerPointer] = 0x12345678;
   ok &= Expect(fall.Views() == race::Views{V::Race, V::Race, V::Menus, V::Menus}, "karts outside RAM: the race");
+
+  // By local player, as on iPhone and iPad: local player 1 races on a Classic
+  // Controller (not a GameCube pad), and local player 2 on GameCube pad 3.
+  FakeRace local(race::Racing);
+  local.Racer(0, -1, 0);
+  local.Racer(1, 0, 0);
+  local.Racer(2, 1, 3);
+  local.words[local.director + race::DirectorPlayers + race::KPadController] = 0x80e00000;
+  ok &= Expect(local.Views(race::Match::LocalPlayer) == race::Views{V::Race, V::Race, V::Menus, V::Menus},
+               "by local player: any controller");
+  ok &= Expect(local.Views() == race::Views{V::Menus, V::Menus, V::Menus, V::Race}, "by pad: GameCube pads only");
 
   FakeRace odd(7);
   odd.Racer(0, 0, 0);

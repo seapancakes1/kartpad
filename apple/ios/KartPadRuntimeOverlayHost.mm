@@ -20,6 +20,7 @@
 #import "SunPadSettings.h"
 #include "KartPadUpdateCheck.inc.mm"
 #include "audio_backend.h"
+#include "memory.h"
 #include "music_attenuation.h"
 #include "runtime_config.h"
 
@@ -38,6 +39,7 @@
 #include <chrono>
 
 #include "kartpad/input/auto_accelerate.h"
+#include "kartpad/network/phone_race.h"
 
 extern "C" int g_gxFrameCount;
 #include <atomic>
@@ -58,6 +60,22 @@ static std::atomic<bool> gKartPadControllerAutoAccelerate{
     [NSUserDefaults.standardUserDefaults boolForKey:kKartPadControllerAutoAccelerateKey]};
 static std::array<kartpad::input::AutoAccelerateLatch, 4> gKartPadControllerAccelerateLatches;
 
+// Race auto-accelerate, as on phones (web/phone): touch A is held through the race from GO, and let
+// go for the countdown, a fall, a pause and the menus, where A is the player's. After a hit, B holds
+// A+B. On by default. The
+// race view is read from the game's memory (kartpad/network/phone_race.h); while it can't be, the
+// touch A lock above stands in. Shake for Trick also only works in a race.
+static NSString *const kKartPadRaceAccelerateKey = @"KartPadRaceAccelerate";
+static std::atomic<bool> gKartPadRaceAccelerate{[] {
+  NSNumber *saved = [NSUserDefaults.standardUserDefaults objectForKey:kKartPadRaceAccelerateKey];
+  return saved == nil || saved.boolValue;
+}()};
+static std::atomic<kartpad::phone_pad::RaceView> gKartPadTouchRaceView{kartpad::phone_pad::RaceView::Unknown};
+static BOOL KartPadRaceAccelerateActive() {
+  return gKartPadRaceAccelerate.load(std::memory_order_relaxed) &&
+         gKartPadTouchRaceView.load(std::memory_order_relaxed) != kartpad::phone_pad::RaceView::Unknown;
+}
+
 static std::atomic<float> gKartPadFpsScale{1.0f};
 extern "C" float KartPadMobileFpsOverlayScale(){return gKartPadFpsScale.load(std::memory_order_relaxed);}
 
@@ -69,6 +87,7 @@ extern "C" float KartPadMobileFpsOverlayScale(){return gKartPadFpsScale.load(std
 - (void)runMainMenu;
 - (void)runScreensHold;
 - (void)showReportPreview;
+- (void)showRaceAccelerating:(BOOL)on;
 @end
 
 @interface KartPadGameOverlay : SunPadGameOverlay <SFSafariViewControllerDelegate>
@@ -92,6 +111,7 @@ extern "C" float KartPadMobileFpsOverlayScale(){return gKartPadFpsScale.load(std
 @property(nonatomic, weak) UIButton *kartPadVisibilityButton;
 @property(nonatomic, copy) NSString *kartPadSelectedControlIdentifier;
 - (void)resetKartPadControlAppearance;
+- (void)kartPadShowRaceAccelerating:(BOOL)on;
 @end
 
 // KartPad keeps SunPad's pinned implementation byte-identical. This narrow
@@ -3052,7 +3072,7 @@ static void KartPadApplySoundLevels(BOOL persist) {
     button.accessibilityValue = @"Unlocking acceleration";
     return;
   }
-  if (!KartPadAutoAccelerateEnabled()) return;
+  if (!KartPadAutoAccelerateEnabled() || KartPadRaceAccelerateActive()) return;
   __weak KartPadGameOverlay *weakSelf = self;
   __weak UIButton *weakButton = button;
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)NSEC_PER_SEC),
@@ -3061,6 +3081,7 @@ static void KartPadApplySoundLevels(BOOL persist) {
     UIButton *strongButton = weakButton;
     if (strongSelf == nil || strongButton == nil ||
         !strongSelf.kartPadGasPressed || !KartPadAutoAccelerateEnabled() ||
+        KartPadRaceAccelerateActive() ||
         strongSelf.kartPadGasHoldGeneration != generation) {
       return;
     }
@@ -3105,6 +3126,26 @@ static void KartPadApplySoundLevels(BOOL persist) {
       [UIColor colorWithWhite:1.0 alpha:0.36].CGColor;
   button.layer.shadowOpacity = 0.0;
   button.accessibilityValue = nil;
+}
+
+// Lights touch A while race auto-accelerate holds it, as the A lock does.
+- (void)kartPadShowRaceAccelerating:(BOOL)on {
+  UIButton *button = self.kartPadGasButton;
+  if (button == nil || self.kartPadGasLocked) return;
+  if (on) {
+    button.backgroundColor = [UIColor colorWithRed:0.06 green:0.78 blue:0.92 alpha:0.98];
+    button.layer.borderColor = UIColor.whiteColor.CGColor;
+    button.layer.shadowColor = [UIColor colorWithRed:0.06 green:0.78 blue:0.92 alpha:1.0].CGColor;
+    button.layer.shadowOpacity = 0.9;
+    button.layer.shadowRadius = 9.0;
+    button.layer.shadowOffset = CGSizeZero;
+    button.accessibilityValue = @"Accelerating";
+  } else {
+    button.backgroundColor = self.kartPadGasRestColor;
+    button.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.36].CGColor;
+    button.layer.shadowOpacity = 0.0;
+    button.accessibilityValue = nil;
+  }
 }
 
 - (void)resetKartPadControlAppearance {
@@ -3235,32 +3276,6 @@ static void KartPadApplySoundLevels(BOOL persist) {
   dispatch_async(dispatch_get_main_queue(), ^{
     [weakSelf reattachOverlayIfNeeded];
   });
-}
-
-- (void)showShakeTricks {
-  [[SunPadInputMixer sharedMixer] clearInputFromTouch:YES];
-  UIViewController *controller = KartPadVisibleViewController(_window);
-  if (controller == nil) return;
-  KartPadMotionSteering *motion = [KartPadMotionSteering sharedSteering];
-  NSString *message = motion.sensorAvailable
-      ? [NSString stringWithFormat:@"Shake the device to press D-pad Up: tricks in the air and wheelies on bikes. Works without tilt steering. Physical controllers take priority.\n\nCurrent state: %@.",
-                                   motion.shakeTricksEnabled ? @"On" : @"Off"]
-      : @"Shake input is unavailable on this device. You can still use D-pad Up.";
-  UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"Shake to Trick"
-      message:message preferredStyle:UIAlertControllerStyleActionSheet];
-  if (motion.sensorAvailable) {
-    [sheet addAction:[UIAlertAction actionWithTitle:motion.shakeTricksEnabled ? @"Turn Off" : @"Turn On"
-        style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-      (void)action;
-      motion.shakeTricksEnabled = !motion.shakeTricksEnabled;
-    }]];
-  }
-  [sheet addAction:[UIAlertAction actionWithTitle:@"Continue Playing"
-      style:UIAlertActionStyleCancel handler:nil]];
-  sheet.popoverPresentationController.sourceView = _overlay;
-  sheet.popoverPresentationController.sourceRect = CGRectMake(
-      CGRectGetMidX(_overlay.bounds), CGRectGetMidY(_overlay.bounds), 1.0, 1.0);
-  [controller presentViewController:sheet animated:YES completion:nil];
 }
 
 - (void)showMotionSteering {
@@ -3473,8 +3488,17 @@ static void KartPadApplySoundLevels(BOOL persist) {
 - (void)screensManageSaves { [self showSaveManager]; }
 - (void)screensShowMultiplayer { [self showMultiplayerAccess]; }
 - (void)screensShowPrivateServer { [self showPrivateServerSettings]; }
+- (void)showRaceAccelerating:(BOOL)on {
+  [(KartPadGameOverlay *)_overlay kartPadShowRaceAccelerating:on];
+}
+- (BOOL)screensRaceAccelerate { return gKartPadRaceAccelerate.load(); }
+- (BOOL)screensShakeTricks { return [KartPadMotionSteering sharedSteering].shakeTricksEnabled; }
+- (void)screensSetShakeTricks:(BOOL)on { [KartPadMotionSteering sharedSteering].shakeTricksEnabled = on; }
+- (void)screensSetRaceAccelerate:(BOOL)on {
+  [NSUserDefaults.standardUserDefaults setBool:on forKey:kKartPadRaceAccelerateKey];
+  gKartPadRaceAccelerate.store(on);
+}
 - (void)screensShowMotionSteering { [self showMotionSteering]; }
-- (void)screensShowShakeTricks { [self showShakeTricks]; }
 - (void)screensShowWiiRemoteInfo { [self showExperimentalWiimoteInfo]; }
 - (void)screensShowButtonMapping { [self showControllerButtonMapping]; }
 - (void)screensShowTouchControls {
@@ -4185,6 +4209,22 @@ extern "C" bool KartPadMobileReadRuntimeSettings(
   return true;
 }
 
+// Local player 1's race view, from the game's memory, on the game thread: player 1 reads touch.
+static kartpad::phone_pad::RaceView KartPadReadTouchRaceView() {
+  static uint64_t lastRead = 0;
+  const auto nowMs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now().time_since_epoch()).count());
+  if (nowMs - lastRead >= 50) {
+    lastRead = nowMs;
+    namespace race = kartpad::phone_pad::race;
+    const race::Views views = race::ReadViews(
+        [](uint32_t address, uint32_t &value) { return Memory::TryRead32(address, value); },
+        race::Match::LocalPlayer);
+    gKartPadTouchRaceView.store(views[0], std::memory_order_relaxed);
+  }
+  return gKartPadTouchRaceView.load(std::memory_order_relaxed);
+}
+
 extern "C" bool KartPadMobileReadClassicInput(
     KartPadMobileClassicInputSnapshot *snapshot) {
   return KartPadMobileReadClassicInputForPlayer(0, snapshot);
@@ -4234,9 +4274,31 @@ extern "C" bool KartPadMobileReadClassicInputForPlayer(
     adapted.leftStickX = adapted.leftStickY = adapted.rightStickX = adapted.rightStickY = 0;
   }
   KartPadMotionSteering *motion = [KartPadMotionSteering sharedSteering];
-  const BOOL shakeTrick = player == 0 ? [motion consumeShakeTrick] : NO;
-  if (player == 0 && !KartPadScreensActive() &&
-      [KartPadPhysicalControllers sharedControllers].connectedControllerCount == 0) {
+  BOOL shakeTrick = player == 0 ? [motion consumeShakeTrick] : NO;
+  const BOOL touchOnly = player == 0 && !KartPadScreensActive() &&
+      [KartPadPhysicalControllers sharedControllers].connectedControllerCount == 0;
+  if (player == 0) {
+    using kartpad::phone_pad::RaceView;
+    const RaceView view = KartPadReadTouchRaceView();
+    if (view == RaceView::Menus) shakeTrick = NO;
+    const bool racing = touchOnly && (view == RaceView::Race || view == RaceView::Hit) &&
+                        gKartPadRaceAccelerate.load(std::memory_order_relaxed);
+    // Braking (B without A) lets go of the accelerator; A+B holds both. So does B pressed during a
+    // hit, until it's let go: holding A+B charges a mini-turbo while the kart is stopped.
+    static bool hitBrake = false;
+    const bool braking = (adapted.buttons & kartpad::mobile::kClassicButtonB) != 0;
+    if (!braking) hitBrake = false;
+    else if (view == RaceView::Hit) hitBrake = true;
+    if (racing && (!braking || hitBrake || (adapted.buttons & kartpad::mobile::kClassicButtonA))) {
+      adapted.buttons |= kartpad::mobile::kClassicButtonA;
+    }
+    static bool shownRacing = false;
+    if (racing != shownRacing) {
+      shownRacing = racing;
+      dispatch_async(dispatch_get_main_queue(), ^{ [gRuntimeOverlayHost showRaceAccelerating:racing]; });
+    }
+  }
+  if (touchOnly) {
     kartpad::mobile::ApplyMotionInput(adapted, motion.currentSteering,
                                       shakeTrick);
   }

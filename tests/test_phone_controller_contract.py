@@ -65,8 +65,8 @@ class PhoneControllerContract(unittest.TestCase):
     def test_page_knows_every_race_view(self):
         names = re.search(r"RaceViewNames\[\] = \{([^}]*)\};", HEADER).group(1)
         views = re.findall(r'"(\w+)"', names)
-        self.assertEqual(views, ["menus", "start", "race", "unknown", "fall"])
-        self.assertIn("RaceView : uint8_t { Menus, Start, Race, Unknown, Fall }", HEADER)
+        self.assertEqual(views, ["menus", "start", "race", "unknown", "fall", "hit"])
+        self.assertIn("RaceView : uint8_t { Menus, Start, Race, Unknown, Fall, Hit }", HEADER)
         self.assertIn("[%s].includes(next)" % ", ".join('"%s"' % v for v in views), PAGE)
         self.assertIn('m.t === "race"', PAGE)
 

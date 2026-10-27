@@ -7,9 +7,10 @@
 
 // What each player's phone shows (phone_pad::RaceView), read from base Mario
 // Kart Wii's memory: whether a race is on and at which stage, whether it's
-// paused, which racers are players on this Mac and have finished, and whose
-// kart is off the course and back with Lakitu. Racers are matched to players by
-// the GameCube pad channel their controller reads, which is the player's slot.
+// paused, which racers are players on this Mac and have finished, whose kart
+// is off the course and back with Lakitu, and whose has been hit. Racers are matched to players by
+// the GameCube pad channel their controller reads, which is the player's slot,
+// or (Match::LocalPlayer) by local player, whatever their controller.
 // PAL layout, from doldecomp/mkw (src/system/RaceManager.hpp, KPadDirector.hpp,
 // KPadController.hpp and src/kart/KartObjectProxy.hpp, KartState.hpp, with
 // addresses from config/RMCP01), the kart manager from mkw-sp, and the respawn
@@ -41,9 +42,11 @@ inline constexpr uint32_t KartManagerPointer = 0x809c18f8, KartManagerObjects = 
 inline constexpr uint32_t AccessorState = 0x4, AccessorMove = 0x28;
 // KartState's flags, five words from +0x4 (flag n is bit n % 32 of word n / 32):
 // BeforeRespawn (4: off the course, until Lakitu has the kart), InRespawn (77:
-// Lakitu carries it) and AfterRespawn (78: dropped, until it lands).
+// Lakitu carries it) and AfterRespawn (78: dropped, until it lands), and InAction
+// (32: spun out, tumbling or flipped by a hit, until KartAction::end).
 inline constexpr uint32_t StateFlags = 0x4;
 inline constexpr uint32_t BeforeRespawnBit = 1u << 4, InOrAfterRespawnBits = 3u << 13;  // in words 0 and 2
+inline constexpr uint32_t InActionBit = 1u;                                             // in word 1
 // KartMove::m_respawnPostLandTimer, in the high half of this word: the frames
 // left after landing to press A for Lakitu's boost.
 inline constexpr uint32_t MovePostLandTimer = 0x238;
@@ -55,25 +58,35 @@ inline bool InRam(uint32_t address) {
 
 using Views = std::array<RaceView, Channels>;
 
-// Whether racer i's kart is off the course and back with Lakitu, until the
-// moment to press A for his boost has passed. Anything unreadable counts as
-// not, so the race view stands.
+// How racers are matched to Views' slots: by GameCube pad channel (phones on the
+// Mac), or by local player, the KPadPlayer they read (the touch controls on
+// iPhone and iPad, a Classic Controller to the game).
+enum class Match { PadChannel, LocalPlayer };
+
+// Racer i's view while racing: Fall while the kart is off the course and back
+// with Lakitu, until the moment to press A for his boost has passed; Hit while
+// it's spun out or flipped by a hit; otherwise Race. Anything unreadable counts
+// as neither, so the race view stands.
 template <typename Read>
-bool Falling(Read &&read, int i) {
-  uint32_t manager = 0, objects = 0, kart = 0, accessor = 0, state = 0, move = 0, flags0 = 0, flags2 = 0, timers = 0;
+RaceView Driving(Read &&read, int i) {
+  uint32_t manager = 0, objects = 0, kart = 0, accessor = 0, state = 0, move = 0, flags0 = 0, flags1 = 0, flags2 = 0,
+           timers = 0;
   if (!read(KartManagerPointer, manager) || !InRam(manager) || !read(manager + KartManagerObjects, objects) ||
       !InRam(objects) || !read(objects + 4 * i, kart) || !InRam(kart) || !read(kart, accessor) || !InRam(accessor) ||
       !read(accessor + AccessorState, state) || !InRam(state) || !read(accessor + AccessorMove, move) || !InRam(move) ||
-      !read(state + StateFlags, flags0) || !read(state + StateFlags + 8, flags2) || !read(move + MovePostLandTimer, timers))
-    return false;
-  return (flags0 & BeforeRespawnBit) || (flags2 & InOrAfterRespawnBits) || static_cast<int16_t>(timers >> 16) > 0;
+      !read(state + StateFlags, flags0) || !read(state + StateFlags + 4, flags1) ||
+      !read(state + StateFlags + 8, flags2) || !read(move + MovePostLandTimer, timers))
+    return RaceView::Race;
+  if ((flags0 & BeforeRespawnBit) || (flags2 & InOrAfterRespawnBits) || static_cast<int16_t>(timers >> 16) > 0)
+    return RaceView::Fall;
+  return (flags1 & InActionBit) ? RaceView::Hit : RaceView::Race;
 }
 
 // read(address, value) reads a big-endian word as the game sees it and returns
 // false where nothing is mapped. Anything that doesn't add up (another game
 // build, a Retro Rewind layout) gives Unknown rather than a wrong layout.
 template <typename Read>
-Views ReadViews(Read &&read) {
+Views ReadViews(Read &&read, Match match = Match::PadChannel) {
   Views unknown, views;
   unknown.fill(RaceView::Unknown);
   views.fill(RaceView::Menus);
@@ -94,15 +107,19 @@ Views ReadViews(Read &&read) {
     // Players on this Mac read one of the director's own KPadPlayers; computer
     // racers, ghosts and online opponents don't.
     if (kpad < kpads || kpad >= kpads + 4 * KPadPlayerSize || (kpad - kpads) % KPadPlayerSize != 0) continue;
-    if (!read(kpad + KPadController, controller)) return unknown;
-    // A GameCube pad: a Wii Remote is never a phone.
-    if (controller < controllers || controller >= controllers + 4 * GCControllerSize ||
-        (controller - controllers) % GCControllerSize != 0)
-      continue;
-    if (!read(controller + GCControllerChannel, channel) || channel >= Channels) return unknown;
+    if (match == Match::LocalPlayer) {
+      channel = (kpad - kpads) / KPadPlayerSize;
+    } else {
+      if (!read(kpad + KPadController, controller)) return unknown;
+      // A GameCube pad: a Wii Remote is never a phone.
+      if (controller < controllers || controller >= controllers + 4 * GCControllerSize ||
+          (controller - controllers) % GCControllerSize != 0)
+        continue;
+      if (!read(controller + GCControllerChannel, channel) || channel >= Channels) return unknown;
+    }
     RaceView view = RaceView::Menus;
     if (stage <= Countdown) view = RaceView::Start;
-    else if (stage == Racing && !(flags & FinishedFlag)) view = Falling(read, i) ? RaceView::Fall : RaceView::Race;
+    else if (stage == Racing && !(flags & FinishedFlag)) view = Driving(read, i);
     if (paused >> 24) view = RaceView::Menus;
     views[channel] = view;
   }

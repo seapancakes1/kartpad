@@ -627,9 +627,11 @@ inline std::string RumbleMessage(bool on) { return std::string("{\"t\":\"rumble\
 // course intro and the countdown, where accelerating is up to the player, for a
 // rocket start), or the race. Unknown: KartPad can't tell (the page offers a switch).
 // Fall: off the course and back with Lakitu, until just after landing, where
-// accelerating is up to the player again, for his boost.
-enum class RaceView : uint8_t { Menus, Start, Race, Unknown, Fall };
-inline constexpr const char *RaceViewNames[] = {"menus", "start", "race", "unknown", "fall"};
+// accelerating is up to the player again, for his boost. Hit: spun out, tumbling
+// or flipped by an item or an obstacle, where braking keeps accelerating held
+// too (A+B).
+enum class RaceView : uint8_t { Menus, Start, Race, Unknown, Fall, Hit };
+inline constexpr const char *RaceViewNames[] = {"menus", "start", "race", "unknown", "fall", "hit"};
 inline std::string RaceMessage(RaceView view) {
   return std::string("{\"t\":\"race\",\"view\":\"") + RaceViewNames[static_cast<int>(view)] + "\"}";
 }

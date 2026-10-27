@@ -29,13 +29,21 @@ switcher and open it again. There is no Quit or full-screen button on iPhone and
 | --- | --- |
 | Picture | Picture quality; Aspect ratio; Show frame rate; Frame rate size; App icon |
 | Sound | Sound; Volume; Adjust music and game sounds; Music; Game sounds; HOME and Mii sounds |
-| Controls | Controllers; Controller buttons; Vibration; Nintendo button layout; Touch controls; Motion steering; Shake to trick |
+| Controls | Controllers; Controller buttons; Vibration; Nintendo button layout; Touch controls; Motion steering; Auto-accelerate; Shake to trick |
 | Game | Start KartPad with; Miis; Time Trial ghosts; Saves; Multiplayer; Retro Rewind files; KartPad menu |
 | Advanced | Mario Kart Wii files; Private Wii server; Wii Remote + Nunchuk; Report a problem (and Test native crash in diagnostic builds) |
 
 Picture settings apply at once. **Touch controls** closes the screens and opens the touch
 layout editor over the game. Rows that open one of iOS's own sheets (Saves, Multiplayer,
 Motion steering and the others) need touch; the game stays held underneath.
+
+**Auto-accelerate** and **Shake to trick** are on by default and work as on the phone controller
+page. With touch controls only, A is held through the race from GO, and let go for the countdown
+(rocket start), a fall (Lakitu's boost), a pause and the menus; B without A brakes. B pressed
+while spun out or flipped by an item holds A+B instead, until you let go of B, to charge a
+mini-turbo. KartPad reads
+which of these it is from the game's memory. When it can't, the touch A lock (Touch controls →
+Touch auto-accelerate) applies instead. A sharp shake presses D-pad Up, in a race only.
 
 ## Controllers
 

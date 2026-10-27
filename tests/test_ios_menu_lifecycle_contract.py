@@ -39,7 +39,7 @@ class IOSMenuLifecycleContractTests(unittest.TestCase):
                        "KartPadSettingsScreen", "KartPadReconnect"):
             self.assertIn(f'#include "../macos/{screen}.inc.mm"', screens)
         rows = (REPO / "apple/ios/KartPadScreensSettingsRows.inc.mm").read_text()
-        for host in ("screensShowMultiplayer", "screensShowMotionSteering", "screensShowShakeTricks",
+        for host in ("screensShowMultiplayer", "screensShowMotionSteering", "screensSetShakeTricks", "screensSetRaceAccelerate",
                      "screensShowButtonMapping", "screensShowTouchControls", "screensManageSaves",
                      "screensManageRetroRewind", "screensManageGameData", "screensShowPrivateServer",
                      "screensShowWiiRemoteInfo", "screensReportProblem", "screensReturnToLauncher",
