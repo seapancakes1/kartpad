@@ -19,7 +19,7 @@ The projects are independently maintained.
   <img alt="Ahead-of-time static recompilation" src="https://img.shields.io/badge/PowerPC-static%20recompilation-FF9F0A">
   <img alt="macOS development target" src="https://img.shields.io/badge/macOS%20target-14%2B-0A84FF">
   <img alt="iPhone and iPad" src="https://img.shields.io/badge/platform-iPhone%20%2F%20iPad-0A84FF">
-  <img alt="Retro Rewind supported" src="https://img.shields.io/badge/Retro%20Rewind-6.13.3-FF375F">
+  <img alt="Retro Rewind supported" src="https://img.shields.io/badge/Retro%20Rewind-6.13.4-FF375F">
   <img alt="Game data not included" src="https://img.shields.io/badge/game%20data-not%20included-FF453A">
   <a href="https://github.com/chrissotraidis/padmint"><img alt="Build KartPad with PadMint (optional)" src="https://img.shields.io/badge/PadMint-optional%20build-3EB489"></a>
   <a href="https://discord.gg/xwHfUD2bxW"><img alt="Join the KartPad Discord" src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&amp;logoColor=white"></a>
@@ -101,9 +101,9 @@ above instead.
 Coming from a PadMint game pack? Install the new APK over it. KartPad no longer
 needs the pack and frees the space it took.
 
-From 0.7.14, KartPad updates itself: when **Update available** shows on the
-game chooser, tap it and **Update Now**. The first time, Android asks you to
-allow KartPad to install apps.
+From 0.7.14, you can start an update inside KartPad: when **Update available**
+shows on the game chooser, tap it and **Update Now**, then confirm Android's
+installation prompt. The first time, allow KartPad to install apps.
 
 ### iPhone and iPad
 
@@ -163,21 +163,26 @@ on those release pages but won't get updates; build newer versions with PadMint.
 
 ### Updating KartPad
 
-- **Android:** from 0.7.14, KartPad updates itself (**Update available →
-  Update Now**). You can also install the new APK over your current KartPad.
+- **Android:** from 0.7.14, choose **Update available → Update Now** inside
+  KartPad, then confirm Android's installation prompt. You can also install
+  the new APK over your current KartPad.
 - **iPhone, iPad and Mac:** build the new version with PadMint and install it
   over your current KartPad. From 0.8.0, KartPad tells you when a new version
   is out: **Update available** on the iPhone/iPad game chooser, or
   **Help → Check for Updates…** on Mac.
 
-Your saves and game data stay.
+Your saves and game data stay. See [why updates work this way](#automatic-updates).
 
 ### Current release
 
-**KartPad 0.8.4** (build 266) adds rumble on Android, Retro Rewind soundtrack
-packs, an optional touch item hold and a new Snapdragon character graphics
-test, and retries dropped downloads during PadMint builds; Retro Rewind stays
-at 6.13.3. See the [release notes](docs/releases/v0.8.4.md).
+**KartPad 0.8.6** (build 268) fixes PadMint builds, which stopped in preflight
+for everyone after an upstream change, gives the game your country for the
+online flag and globe, and brings in WiiCompiled's fixes through v0.9.0. On
+Android it adds 30 FPS Races, Simpler Computer Karts, custom GPU drivers for
+Snapdragon phones, faster game code (about 12% less game-thread CPU in emulator
+tests) and an opt-in WiiCompiled 0.9 graphics engine beta next to the default
+Classic engine. Retro Rewind stays at **6.13.4**.
+See the [release notes](docs/releases/v0.8.6.md).
 The latest published files are on the [releases page](https://github.com/chrissotraidis/kartpad/releases/latest).
 What changed and what remains open are in [status](docs/STATUS.md) and
 [known issues](docs/KNOWN-ISSUES.md). The earlier move onto maintained
@@ -193,7 +198,7 @@ Use KartPad for app/platform problems or when the cause is unclear.
 [Frequently asked questions](#frequently-asked-questions) · [Controls](docs/MULTIPLAYER.md) · [Save transfer and troubleshooting](docs/SUPPORT.md)
 
 - Choose **Mario Kart Wii** or **Retro Rewind** when KartPad opens. Retro
-  Rewind 6.13.3 content installs separately; KartPad requires a matching native
+  Rewind 6.13.4 content installs separately; KartPad requires a matching native
   profile when the mod updates. Follow your platform's setup guide above.
 - Touch controls, motion steering and controllers are available on mobile;
   Mac also supports keyboard input. Touch layouts can be moved, resized and
@@ -226,6 +231,41 @@ On Android, yes: the APK on the releases page is ready to play, and you add
 your own game data the first time. On iPhone, iPad and Mac, build KartPad with
 PadMint from your own disc (from 0.7.14; 0.7.9 to 0.7.13 had ready-to-play
 downloads that won't get updates). See [Get KartPad](#get-kartpad).
+
+</details>
+
+<a id="automatic-updates"></a>
+<details>
+<summary>Why do I need a new app file? Can't KartPad update automatically inside the app?</summary>
+
+An update can change the code KartPad runs, so it needs a new app build.
+How that build gets installed depends on your platform:
+
+- **iPhone and iPad:** KartPad can tell you an update is available, but it
+  cannot replace its own signed app. iOS/iPadOS
+  [requires executable code to be signed](https://support.apple.com/guide/security/app-code-signing-process-sec7c917bf14/web).
+  With KartPad's current distribution, PadMint builds your personal copy from
+  your own disc, then your sideloading tool signs and installs the new IPA.
+  Use the same tool and Apple ID and install over the existing app. Refreshing
+  its signature only keeps the installed version usable; it doesn't upgrade
+  KartPad to a new release.
+- **Android:** you can already update from inside KartPad (from 0.7.14).
+  Tap **Update available → Update Now** on the game chooser. KartPad downloads
+  and checks the new APK, then opens Android's installation confirmation.
+  The first time, enable **Allow from this source** for KartPad and return
+  to the app. This updater needs your confirmation; it doesn't silently
+  install releases in the background. You don't need to find the APK yourself.
+- **Mac:** **Help → Check for Updates…** tells you about new releases.
+  Build the new version with PadMint, quit KartPad and replace the app in
+  Applications. KartPad currently uses personal PadMint builds and has no
+  built-in Mac installer; this is its current update workflow, not a general
+  macOS restriction on automatic updates.
+
+**Updating should not mean setting everything up again.** Install over your
+existing copy; don't uninstall or clear its storage. With the same app/signing
+identity, your saves, settings and imported game data stay. See the
+[Android](docs/INSTALL_ANDROID.md#updating),
+[iPhone/iPad](docs/INSTALL_IPA.md) or [Mac](docs/INSTALL_MACOS.md#install) guide.
 
 </details>
 
@@ -319,7 +359,20 @@ VPN ([#405](https://github.com/chrissotraidis/kartpad/issues/405)).
 <details>
 <summary>Does KartPad support Retro Rewind, and what if it updates?</summary>
 
-Yes, with the separately installed **6.13.3** content and matching compiled profile. Almost every Retro Rewind update changes the mod's game code (`Code.pul`): 22 of its last 24 updates did. KartPad compiles that code into the app ahead of time, so a Retro Rewind update needs a new KartPad build; replacing files alone does not update the compiled game code. On Android the new build arrives through **Update available → Update Now**. On iPhone, iPad and Mac, build it with PadMint and install it over your current KartPad; iOS doesn't let a sideloaded app compile new code on the device. Apple checks the version before launch; Android checks the official version during installation and validates installed content at launch.
+Yes, with the separately installed **6.13.4** content and matching app build.
+Retro Rewind updates often change the mod's game code (`Code.pul`), as well as
+its data. KartPad translates and compiles that code into native code when the
+app is built. When the mod's code changes, it needs a new KartPad build;
+downloading a new pack or replacing `Code.pul` alone cannot update the code
+already compiled into your app.
+
+On Android and iPhone/iPad, KartPad can download the supported Retro Rewind
+content inside the app. That is separate from installing a new KartPad build.
+**Update KartPad first, then install the Retro Rewind version it supports.**
+On Mac, use the matching Retro Rewind files prepared by PadMint or follow the
+[Mac Retro Rewind guide](docs/INSTALL_MACOS.md#retro-rewind). The app checks
+that the content matches its supported version. See
+[how app updates work on each platform](#automatic-updates).
 
 </details>
 

@@ -18,6 +18,11 @@ void SetUiVolume(float volume) noexcept;
 void SetVoicesVolume(float volume) noexcept;
 }  // namespace MusicAttenuation
 
+// "30 FPS races" (runtime/src/hle/frame_rate_lock.cpp, in this library).
+extern "C" void RuntimeSetThirtyFpsRaces(bool enabled) noexcept;
+// "Simpler computer karts" (runtime/src/hle/low_detail_karts.cpp, in this library).
+extern "C" void RuntimeSetLowDetailComputerKarts(bool enabled) noexcept;
+
 extern "C" JNIEXPORT void JNICALL
 Java_dev_kartpad_android_KartPadActivity_nativeEnableActivityRecreation(
     JNIEnv*, jobject) {
@@ -51,6 +56,24 @@ Java_dev_kartpad_android_KartPadActivity_nativeApplyDisplaySettings(
   });
 }
 
+// Takes effect when the next race picks its frame rate.
+extern "C" JNIEXPORT void JNICALL
+Java_dev_kartpad_android_KartPadActivity_nativeApplyThirtyFpsRaces(
+    JNIEnv*, jobject, jboolean enabled) {
+  RuntimeSetThirtyFpsRaces(enabled == JNI_TRUE);
+  std::printf("[KartPadFrameRate] thirty_fps_races=%s\n", enabled == JNI_TRUE ? "on" : "off");
+  std::fflush(stdout);
+}
+
+// Takes effect when the next race loads its karts.
+extern "C" JNIEXPORT void JNICALL
+Java_dev_kartpad_android_KartPadActivity_nativeApplySimplerComputerKarts(
+    JNIEnv*, jobject, jboolean enabled) {
+  RuntimeSetLowDetailComputerKarts(enabled == JNI_TRUE);
+  std::printf("[KartPadKarts] simpler_computer_karts=%s\n", enabled == JNI_TRUE ? "on" : "off");
+  std::fflush(stdout);
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_dev_kartpad_android_KartPadActivity_nativeApplyControllerMapping(
     JNIEnv* env, jobject, jintArray values) {
@@ -60,7 +83,7 @@ Java_dev_kartpad_android_KartPadActivity_nativeApplyControllerMapping(
   if (env->ExceptionCheck()) return;
   kartpad::android::ControllerButtonMapping mapping{};
   for (std::size_t index = 0; index < mapping.size(); ++index) {
-    if (raw[index] < 0 || raw[index] >= 12) return;
+    if (raw[index] < 0 || raw[index] >= static_cast<jint>(kartpad::android::kMappablePhysicalButtons.size())) return;
     mapping[index] = static_cast<uint8_t>(raw[index]);
   }
   kartpad::android::PublishControllerButtonMapping(mapping);
@@ -94,7 +117,7 @@ std::atomic<bool> g_deviceRumbleActive{false};
 
 extern "C" JNIEXPORT void JNICALL
 Java_dev_kartpad_android_KartPadActivity_nativeApplyControllerRumble(
-    JNIEnv* env, jobject, jboolean enabled) {
+    JNIEnv* env, jobject, jboolean enabled, jint strengthPercent) {
   if (g_deviceRumbleClass.load(std::memory_order_acquire) == nullptr) {
     if (jclass local = env->FindClass("dev/kartpad/android/KartPadDeviceRumble")) {
       const jmethodID setActive = env->GetStaticMethodID(local, "setActive", "(Z)V");
@@ -107,7 +130,7 @@ Java_dev_kartpad_android_KartPadActivity_nativeApplyControllerRumble(
     }
     if (env->ExceptionCheck()) env->ExceptionClear();
   }
-  kartpad::android::PublishControllerRumble(enabled == JNI_TRUE);
+  kartpad::android::PublishControllerRumble(enabled == JNI_TRUE, strengthPercent);
 }
 
 void kartpad::android::SetDeviceRumble(const bool active) noexcept {

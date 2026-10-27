@@ -62,6 +62,9 @@ class KartPadOverlayView(context: Context) : View(context) {
     private var insetTop = 0
     private var insetRight = 0
     private var insetBottom = 0
+    // The KartPad ⋯ button, in this view's coordinates. It sits above these controls, so Start
+    // keeps clear of it: the button's top margin includes the hidden status bar, these insets don't.
+    private val menuButtonFrame = RectF()
     private var leftX = 0f
     private var leftY = 0f
     private var rightX = 0f
@@ -77,7 +80,7 @@ class KartPadOverlayView(context: Context) : View(context) {
     private var gasHoldGeneration = 0
     private var autoAccelerate = KartPadTouchSettings.autoAccelerate(context)
     private var gasLocked = false
-    // Item hold (#473): hold touch L for the same second to keep the item held behind the kart;
+    // Item hold (#473): hold touch L for 0.67 seconds to keep the item held behind the kart;
     // press L again to let go. Cleared with every other touch state.
     private var itemHoldGeneration = 0
     private var itemHold = KartPadTouchSettings.itemHold(context)
@@ -113,6 +116,14 @@ class KartPadOverlayView(context: Context) : View(context) {
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
         buildControls()
         reloadCustomSettings()
+    }
+
+    fun setMenuButtonFrame(left: Float, top: Float, right: Float, bottom: Float) {
+        if (menuButtonFrame.left == left && menuButtonFrame.top == top &&
+            menuButtonFrame.right == right && menuButtonFrame.bottom == bottom
+        ) return
+        menuButtonFrame.set(left, top, right, bottom)
+        invalidate()
     }
 
     @Suppress("DEPRECATION")
@@ -993,10 +1004,23 @@ class KartPadOverlayView(context: Context) : View(context) {
                 safe.left + controlWidth * 0.5f,
                 safe.right - controlWidth * 0.5f,
             )
-            val boundedCenterY = centerY.coerceIn(
+            var boundedCenterY = centerY.coerceIn(
                 safe.top + controlHeight * 0.5f,
                 safe.bottom - controlHeight * 0.5f,
             )
+            if (control.id == "Start" && !menuButtonFrame.isEmpty) {
+                val gap = dp(6f)
+                val overlaps = boundedCenterX - controlWidth * 0.5f < menuButtonFrame.right + gap &&
+                    boundedCenterX + controlWidth * 0.5f > menuButtonFrame.left - gap &&
+                    boundedCenterY - controlHeight * 0.5f < menuButtonFrame.bottom + gap &&
+                    boundedCenterY + controlHeight * 0.5f > menuButtonFrame.top - gap
+                if (overlaps) {
+                    boundedCenterY = min(
+                        menuButtonFrame.bottom + gap + controlHeight * 0.5f,
+                        safe.bottom - controlHeight * 0.5f,
+                    )
+                }
+            }
             val dpadCell = dp(if (tabletDefaults) 48f else 36f) * combinedScale
             val adjustedCenterX = boundedCenterX + when (control.id) {
                 "DpadLeft" -> -dpadCell
@@ -1318,7 +1342,7 @@ class KartPadOverlayView(context: Context) : View(context) {
             performVirtualKeyHaptic()
             publishState(connected = true)
             invalidate()
-        }, GAS_LOCK_DELAY_MS)
+        }, ITEM_LOCK_DELAY_MS)
     }
 
     private fun updateItemAccessibility() {
@@ -1644,6 +1668,7 @@ class KartPadOverlayView(context: Context) : View(context) {
 
     private companion object {
         const val GAS_LOCK_DELAY_MS = 1_000L
+        const val ITEM_LOCK_DELAY_MS = 670L
         const val ACCESSIBILITY_PULSE_MS = 140L
         const val ACCESSIBILITY_STICK_PULSE_MS = 240L
         const val ACTION_STICK_UP = 0x01020001

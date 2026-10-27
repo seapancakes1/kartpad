@@ -1,6 +1,10 @@
 # KartPad status
 
-## Current status: 20 October 2026
+## Current status: 25 October 2026
+
+**0.8.6 (build 268), 25 October:** fixes PadMint builds of every target, which stopped in preflight after upstream WiiCompiled turned `aurora-main` into a submodule (#509); gives the game a console country for the online flag and globe (#511); adds Android 30 FPS Races, Simpler Computer Karts and custom GPU drivers on a new ⋯ → Graphics & Performance page; ships the WiiCompiled 0.9 graphics engine on Android as an opt-in beta beside the default Classic engine; ports WiiCompiled fixes through v0.9.0; compiles the Android game pack with a race profile (about 12% less game-thread CPU on an unprofiled course in emulator pairs, pack 13% smaller; [record](artifacts/2026-10-24/pgo-release.md)); and includes the iPhone/iPad save-picker fix (#506), bounded Mii reads (#507) and diagnostic session labels (#508). See the [release notes](releases/v0.8.6.md).
+
+**0.8.5 (build 267), 21 October:** Retro Rewind 6.13.4, Android rumble strength (0–200%), L3/R3 controller mappings for tricks, and a shorter 0.67-second touch item hold on Android and iPhone/iPad. See the [release notes](releases/v0.8.5.md). Gameplay and device testing were skipped at the owner's request; no new graphics or performance fix is claimed.
 
 **0.8.4 (build 266), 20 October:** Android rumble, with device vibration for controllers without a motor (#497); Retro Rewind soundtrack packs on Android and iPhone/iPad (#499); an optional touch item hold (#500); the bone-index Character Graphics Test option for Adreno phones (#498). It also has the PadMint setup wording (#494), builder download retries (#495) and the 16 GB recipe (#490). The [release notes](releases/v0.8.4.md) record what was checked: each new feature in Android emulator races, and PadMint's clean Mac player check. Rumble on a real handheld or a controller with its own motor, soundtrack playback by ear, and the bone-index option on an affected Adreno phone are still unchecked.
 
