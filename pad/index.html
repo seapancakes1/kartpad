@@ -27,7 +27,7 @@
   player is doing (the menus, the start of a race, the race, a fall), and the page shows the controls
   for it: a D-pad in the menus; in a race, Drift under the right thumb, with a stick on the left and
   Item beside Drift, or tilt steering and Item on the left. In a race it accelerates by itself from GO; the start and a fall are the
-  player's, for a rocket start or Lakitu's boost. The look follows KartPad's
+  player's, for a rocket start or Lakitu's boost; after a hit, B holds A+B, for a mini-turbo. The look follows KartPad's
   (apple/shared/KartPadStyle.h).
 -->
 <style>
@@ -524,18 +524,19 @@ $("flip").onclick = () => {
 };
 
 // ---- What the player is doing, as KartPad says: "menus", "start" (the course intro and countdown),
-// "race", "fall" (off the course and back with Lakitu, until just after landing), or "unknown"
-// (KartPad can't tell, so the player switches).
+// "race", "fall" (off the course and back with Lakitu, until just after landing), "hit" (spun out or
+// flipped by an item), or "unknown" (KartPad can't tell, so the player switches).
 let view = "menus", manualRace = false;
 function layout() { return view === "unknown" ? (manualRace ? "race" : "menus") : view === "menus" ? "menus" : "race"; }
 function setView(next) {
-  if (!["menus", "start", "race", "unknown", "fall"].includes(next)) return;
+  if (!["menus", "start", "race", "unknown", "fall", "hit"].includes(next)) return;
   const was = view;
   view = next;
   // Accelerating by itself is for the race. The countdown and a fall are the player's: a rocket start,
-  // and Lakitu's boost, both need A pressed at the right moment.
-  if (next === "race" && was !== "race" && prefs.auto) aLocked = true;
-  if (next !== "race") aLocked = false;
+  // and Lakitu's boost, both need A pressed at the right moment. A hit is still the race.
+  const driving = (v) => v === "race" || v === "hit";
+  if (driving(next) && !driving(was) && prefs.auto) aLocked = true;
+  if (!driving(next)) aLocked = false;
   applyLayout();
 }
 function applyLayout() {
@@ -905,7 +906,7 @@ document.addEventListener("visibilitychange", () => {
   keepAwake();
   if (!secure) { connect(); return; }
   // A short lock can keep the WebRTC link: carry on, accelerating again if a race is on.
-  if (controlChannel && controlChannel.readyState === "open") { if (view === "race" && prefs.auto) aLocked = true; render(); }
+  if (controlChannel && controlChannel.readyState === "open") { if ((view === "race" || view === "hit") && prefs.auto) aLocked = true; render(); }
   else if (joined) lost();
 });
 
@@ -1040,7 +1041,7 @@ for (const seg of document.querySelectorAll(".seg[data-pref]")) {
       if (name === "shake") { setShake(value); return; }
       prefs[name] = value;
       setPref(name, value);
-      if (name === "auto" && view === "race") aLocked = value;
+      if (name === "auto" && (view === "race" || view === "hit")) aLocked = value;
       syncSettings();
       applyLayout();
     };
@@ -1057,7 +1058,7 @@ syncSettings();
 const keys = Array.from(document.querySelectorAll(".key[data-bit]"));
 const fingers = new Map();  // pointerId → {kind: "key" | "unlock" | "item" | "stick" | "dpad" | "home" | "bar", bits, el, aim}
 let stick = null, stickX = 0, stickY = 0;  // stick: where it was touched, on the stage
-let aLocked = false, aLockTimer = 0, homeTimer = 0, homeUntil = 0;
+let aLocked = false, aLockTimer = 0, homeTimer = 0, homeUntil = 0, hitBrake = false;
 let aimHeld = 0, aimUntil = 0, itemUntil = 0;
 
 function keyAt(x, y) {
@@ -1078,8 +1079,11 @@ function render() {
   let held = pressed;
   const racing = layout() === "race";
   if (aLocked && racing) held |= 1;
-  // Braking lets go of the accelerator while it's held (then reverses); A+B holds both.
-  if (aLocked && racing && (pressed & 2) && !(pressed & 1)) held &= ~1;
+  // Braking lets go of the accelerator while it's held (then reverses); A+B holds both. So does B
+  // pressed during a hit, until it's let go: holding A+B charges a mini-turbo while the kart is stopped.
+  if (!(pressed & 2)) hitBrake = false;
+  else if (view === "hit") hitBrake = true;
+  if (aLocked && racing && (pressed & 2) && !(pressed & 1) && !hitBrake) held &= ~1;
   buttons = held;
   for (const k of keys) {
     const bits = Number(k.dataset.bit), multi = (bits & (bits - 1)) !== 0;
@@ -1092,7 +1096,7 @@ function render() {
 // where it's just A. With Hold, a second's hold keeps it accelerating, and a tap while it is stops it.
 // In the menus it's just A.
 function pressA() {
-  if (layout() !== "race" || view === "start" || view === "fall" || (prefs.auto && view === "race")) return true;
+  if (layout() !== "race" || view === "start" || view === "fall" || (prefs.auto && (view === "race" || view === "hit"))) return true;
   if (aLocked) { aLocked = false; return false; }
   clearTimeout(aLockTimer);
   aLockTimer = setTimeout(() => {
