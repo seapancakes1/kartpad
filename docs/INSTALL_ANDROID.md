@@ -66,7 +66,7 @@ are missing, KartPad tells you which ones, and you copy the folder again.
 3. When it says **Game Data Imported**, tap **Done**, then **Play Game**.
 
 For **Retro Rewind**, tap **Set Up Game** on its card. KartPad downloads and
-installs official Retro Rewind 6.13.4 (the full pack, about 1.9 GB). Moving
+installs official Retro Rewind 6.13.5 (the full pack, about 1.9 GB). Moving
 up from an earlier Retro Rewind downloads the full pack again; your Retro saves
 and ghosts stay.
 
@@ -120,9 +120,12 @@ Multiplayer and **Report a Problem…**. The full menu is in
   tricks and bike wheelies; physical controllers take priority.
 - **Render resolution:** start at **Display → Render Resolution → 1×** and
   raise it if your phone keeps up.
-- **Character graphics:** if characters or tracks look broken, open **Help →
-  Character Graphics Test…** on the game chooser. **Automatic** is right for
-  most phones; the other options are workarounds for specific Snapdragon GPUs.
+- **Character graphics:** if characters are missing or white on a Snapdragon
+  phone, try a Turnip driver first: in a game, **⋯ → Graphics & Performance →
+  GPU Driver → Add Driver…**. It fixed the Galaxy S24 Ultra and Moto G85; see
+  [known issues](KNOWN-ISSUES.md#graphics-android). **Help → Character
+  Graphics Test…** on the game chooser has older workarounds for specific
+  Snapdragon GPUs; **Automatic** is right for most phones.
 - **On launch:** on the chooser, choose whether KartPad asks every time or
   opens Original or Retro Rewind directly.
 

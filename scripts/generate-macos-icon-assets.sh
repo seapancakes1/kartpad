@@ -12,7 +12,7 @@ set -euo pipefail
 repo_root="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 app_icon="${repo_root}/apple/ios/Assets.xcassets/AppIcon.appiconset/KartPadIcon-1024.png"
 logo="${repo_root}/apple/ios/Assets.xcassets/KartPadLogo.imageset/KartPadIcon-1024.png"
-exports="${repo_root}/branding/exports"
+exports="${KARTPAD_ICON_EXPORTS_DIR:-${repo_root}/branding/exports}"
 temporary="$(mktemp -d)"
 trap 'rm -rf "$temporary"' EXIT
 iconset="${temporary}/KartPad.iconset"

@@ -93,7 +93,7 @@ the folder again and reimport.
 3. Tap **Play Game**.
 
 For **Retro Rewind**, tap **Set Up Game** on its card. KartPad downloads and
-installs official Retro Rewind 6.13.4 (the full pack, about 1.9 GB). Moving
+installs official Retro Rewind 6.13.5 (the full pack, about 1.9 GB). Moving
 up from an earlier Retro Rewind downloads the full pack again; your Retro saves
 and ghosts stay.
 
@@ -140,9 +140,13 @@ Miis live in KartPad's private storage instead. Use **••• → Settings →
 Saves** to back up or restore a save. Deleting KartPad deletes them, so
 update in place and back up before changing tools or Apple IDs.
 
+Follow the [iPhone/iPad save-transfer guide](SUPPORT.md#iphone-and-ipad-save-transfer)
+for export and restore steps and what a save backup includes.
+
 ## Report a problem
 
-Open **••• → Settings → Advanced → Report a problem → Save or Share Report…**. Review it before
+Open **••• → Settings → Advanced → Report a problem → Save Diagnostic Log…** (called **Save
+or Share Report…** before 0.8.9). Review it before
 attaching; never attach game files, saves or keys. The
 [reporting guide](REPORTING.md) says what to include. Online play has its own
 [status page](ONLINE.md).

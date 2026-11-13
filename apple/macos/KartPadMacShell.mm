@@ -1031,6 +1031,13 @@ static NSString *KPGameTitle(NSString *profile);                       // KartPa
   } else {
     NSString *host = [field.stringValue stringByTrimmingCharactersInSet:
         NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (KartPad::Network::IsPublicWfcDomain(host.UTF8String)) {
+      NSAlert *error = [NSAlert new];
+      error.messageText = @"Not a Private Server";
+      error.informativeText = @"Retro Rewind already connects to Retro WFC. This setting is only for your own Wii server, so choose Use Default Service Next Launch.";
+      [error runModal];
+      return;
+    }
     if (!KartPad::Network::ValidPrivateWfcHost(host.UTF8String)) {
       NSAlert *error = [NSAlert new];
       error.messageText = @"Invalid Server Address";

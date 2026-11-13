@@ -23,6 +23,7 @@
 #include "memory.h"
 #include "music_attenuation.h"
 #include "runtime_config.h"
+#include "kartpad/graphics/bloom_setting.hpp"
 
 #import <SDL3/SDL_properties.h>
 #import <SDL3/SDL_video.h>
@@ -43,6 +44,19 @@
 
 extern "C" int g_gxFrameCount;
 #include <atomic>
+
+// Graphics & Performance options shared with Android (runtime/src/hle/frame_rate_lock.cpp and
+// low_detail_karts.cpp in the runtime). Both take effect from the next race.
+extern "C" void RuntimeSetThirtyFpsRaces(bool enabled) noexcept;
+extern "C" void RuntimeSetLowDetailComputerKarts(bool enabled) noexcept;
+static NSString *const kKartPadThirtyFpsRacesKey = @"KartPadThirtyFpsRaces";
+static NSString *const kKartPadSimplerComputerKartsKey = @"KartPadSimplerComputerKarts";
+
+static void KartPadApplyPerformanceSettings() {
+  NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+  RuntimeSetThirtyFpsRaces([defaults boolForKey:kKartPadThirtyFpsRacesKey]);
+  RuntimeSetLowDetailComputerKarts([defaults boolForKey:kKartPadSimplerComputerKartsKey]);
+}
 static NSString *const kKartPadAutoAccelerateKey = @"KartPadAutoAccelerate";
 // Touch L latch for trailing items (#473); off by default, as on Android.
 static NSString *const kKartPadItemHoldKey = @"KartPadItemHold";
@@ -2183,7 +2197,7 @@ static void KartPadApplySoundLevels(BOOL persist) {
   NSArray *labels=@[@"What went wrong?",@"Course or menu, and what you were doing",@"How often does it happen?"];
   for(NSString *title in labels){ UILabel *label=[UILabel new];label.text=title;label.numberOfLines=0;label.font=[UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];[stack addArrangedSubview:label]; UITextField *field=[UITextField new];field.borderStyle=UITextBorderStyleRoundedRect;field.placeholder=title;field.accessibilityLabel=title;field.font=[UIFont preferredFontForTextStyle:UIFontTextStyleBody];field.adjustsFontForContentSizeCategory=YES;[field.heightAnchor constraintGreaterThanOrEqualToConstant:44].active=YES;[stack addArrangedSubview:field];[fields addObject:field]; }
   self.fields=fields;
-  NSArray *buttons=@[@"Save or Share Report…",@"Review & Continue to GitHub…",@"Reporting Guide"];
+  NSArray *buttons=@[@"Save Diagnostic Log…",@"Review & Continue to GitHub…",@"Reporting Guide"];
   SEL selectors[]={@selector(share),@selector(github),@selector(guide)};
   for(NSUInteger i=0;i<buttons.count;++i){UIButton *button=[UIButton buttonWithType:UIButtonTypeSystem];UIButtonConfiguration *config=i==1?UIButtonConfiguration.filledButtonConfiguration:UIButtonConfiguration.tintedButtonConfiguration;config.title=buttons[i];button.configuration=config;button.titleLabel.numberOfLines=0;[button.heightAnchor constraintGreaterThanOrEqualToConstant:48].active=YES;[button addTarget:self action:selectors[i] forControlEvents:UIControlEventTouchUpInside];[stack addArrangedSubview:button];}
   UILayoutGuide *safe=self.view.safeAreaLayoutGuide;
@@ -2234,7 +2248,7 @@ static void KartPadApplySoundLevels(BOOL persist) {
   self.reviewButton.accessibilityValue = @"Unchecked";
   [self.reviewButton addTarget:self action:@selector(toggleReview) forControlEvents:UIControlEventTouchUpInside];
   UIButton *share = [UIButton buttonWithType:UIButtonTypeSystem];
-  [share setTitle:@"Save or Share Log…" forState:UIControlStateNormal];
+  [share setTitle:@"Save Diagnostic Log…" forState:UIControlStateNormal];
   share.enabled = self.reportURL != nil;
   [share addTarget:self action:@selector(shareLog:) forControlEvents:UIControlEventTouchUpInside];
   self.continueButton = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -3187,6 +3201,7 @@ static void KartPadApplySoundLevels(BOOL persist) {
 
   NSInteger fpsSize=[NSUserDefaults.standardUserDefaults integerForKey:@"KartPadFPSCounterSize"];
   gKartPadFpsScale.store(fpsSize==0?1.0f:fpsSize==1?1.5f:2.0f,std::memory_order_relaxed);
+  KartPadApplyPerformanceSettings();
   _sdlWindow = window;
   SDL_PropertiesID properties = SDL_GetWindowProperties(window);
   UIWindow *uiWindow = (__bridge UIWindow *)SDL_GetPointerProperty(
@@ -3494,6 +3509,10 @@ static void KartPadApplySoundLevels(BOOL persist) {
 - (BOOL)screensRaceAccelerate { return gKartPadRaceAccelerate.load(); }
 - (BOOL)screensShakeTricks { return [KartPadMotionSteering sharedSteering].shakeTricksEnabled; }
 - (void)screensSetShakeTricks:(BOOL)on { [KartPadMotionSteering sharedSteering].shakeTricksEnabled = on; }
+- (BOOL)screensShakeWithController { return [KartPadMotionSteering sharedSteering].shakeWithController; }
+- (void)screensSetShakeWithController:(BOOL)on { [KartPadMotionSteering sharedSteering].shakeWithController = on; }
+- (NSInteger)screensShakeSensitivity { return [KartPadMotionSteering sharedSteering].shakeSensitivity; }
+- (void)screensSetShakeSensitivity:(NSInteger)level { [KartPadMotionSteering sharedSteering].shakeSensitivity = level; }
 - (void)screensSetRaceAccelerate:(BOOL)on {
   [NSUserDefaults.standardUserDefaults setBool:on forKey:kKartPadRaceAccelerateKey];
   gKartPadRaceAccelerate.store(on);
@@ -3540,6 +3559,46 @@ static void KartPadApplySoundLevels(BOOL persist) {
   gKartPadFpsScale.store(size == 0 ? 1.0f : size == 1 ? 1.5f : 2.0f, std::memory_order_relaxed);
 }
 
+// The Wii console country (#511): the flag and globe position Mario Kart Wii shows online.
+// Same list and wording as Android's Multiplayer → Country…. KartPadApplyCountryAtLaunch reads
+// it, so it applies after KartPad is fully closed and reopened.
+- (void)showCountrySettings {
+  NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+  NSString *saved = [defaults stringForKey:@"KartPadCountry"];
+  NSString *region = [NSLocale.currentLocale objectForKey:NSLocaleCountryCode];
+  NSString *current = KartPad::System::FindWiiCountry(saved.UTF8String ?: "") ? saved.uppercaseString
+      : (KartPad::System::FindWiiCountry(region.UTF8String ?: "") ? region.uppercaseString : nil);
+  NSString *(^name)(NSString *) = ^NSString *(NSString *code) {
+    return [NSLocale.currentLocale displayNameForKey:NSLocaleCountryCode value:code] ?: code;
+  };
+  NSMutableArray<NSString *> *codes = [NSMutableArray array];
+  for (const auto &country : KartPad::System::kWiiCountries) [codes addObject:@(country.iso)];
+  [codes sortUsingComparator:^NSComparisonResult(NSString *a, NSString *b) {
+    return [name(a) localizedCaseInsensitiveCompare:name(b)];
+  }];
+  UIAlertController *picker = [UIAlertController
+      alertControllerWithTitle:[NSString stringWithFormat:@"Country (now: %@)", current ? name(current) : @"none"]
+                       message:@"The flag and globe position the game shows online."
+                preferredStyle:UIAlertControllerStyleAlert];
+  __weak KartPadRuntimeOverlayHost *weakSelf = self;
+  void (^choose)(NSString *) = ^(NSString *code) {
+    if (code) [defaults setObject:code forKey:@"KartPadCountry"];
+    else [defaults removeObjectForKey:@"KartPadCountry"];
+    [weakSelf showMultiplayerMessage:@"Country Saved"
+        message:@"Fully close and reopen KartPad to change your flag and globe position. Saves, ghosts and friends stay."];
+  };
+  [picker addAction:[UIAlertAction actionWithTitle:@"Use Device's Region"
+      style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) { choose(nil); }]];
+  for (NSString *code in codes) {
+    NSString *title = [code isEqualToString:saved.uppercaseString]
+        ? [NSString stringWithFormat:@"✓ %@", name(code)] : name(code);
+    [picker addAction:[UIAlertAction actionWithTitle:title
+        style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) { choose(code); }]];
+  }
+  [picker addAction:[UIAlertAction actionWithTitle:@"Back" style:UIAlertActionStyleCancel handler:nil]];
+  [self presentOverlayAlert:picker];
+}
+
 - (void)showPrivateServerSettings {
   UIViewController *controller = KartPadVisibleViewController(_window);
   if (controller == nil) return;
@@ -3563,6 +3622,11 @@ static void KartPadApplySoundLevels(BOOL persist) {
       [NSUserDefaults.standardUserDefaults removeObjectForKey:@"KartPadPrivateWfcHost"];
       [weakSelf showMultiplayerMessage:@"Default Service Selected"
           message:@"Fully close and reopen KartPad to restore the default online service. Original Mario Kart Wii's original service is closed; Retro Rewind uses Retro WFC."];
+      return;
+    }
+    if (KartPad::Network::IsPublicWfcDomain(host.UTF8String ?: "")) {
+      [weakSelf showMultiplayerMessage:@"Not a Private Server"
+          message:@"Retro Rewind already connects to Retro WFC. This setting is only for your own Wii server, so clear the field and save to use the default."];
       return;
     }
     if (!KartPad::Network::ValidPrivateWfcHost(host.UTF8String ?: "")) {
@@ -3592,7 +3656,13 @@ static void KartPadApplySoundLevels(BOOL persist) {
   UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"Multiplayer"
       message:message preferredStyle:UIAlertControllerStyleAlert];
   __weak KartPadRuntimeOverlayHost *weakSelf = self;
-  [sheet addAction:[UIAlertAction actionWithTitle:@"Local Players & Controllers…"
+  // Same rows and order as Android's Multiplayer sheet.
+  [sheet addAction:[UIAlertAction actionWithTitle:@"Local Split-Screen…"
+      style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+    [weakSelf showMultiplayerMessage:@"Local Split-Screen"
+        message:@"Pair controllers in Settings → Bluetooth, assign Player 1–4 in Controller Setup, then choose Multiplayer in the game. Press the mapped A button on each controller at Register Controllers."];
+  }]];
+  [sheet addAction:[UIAlertAction actionWithTitle:@"Controller Setup…"
       style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
     [weakSelf gameOverlayRequestsControllerMapping:nil];
   }]];
@@ -3603,6 +3673,10 @@ static void KartPadApplySoundLevels(BOOL persist) {
           message:@"Retro Rewind uses Retro WFC. Connect there in the game, then open Friends and exchange friend codes with players using the same Retro Rewind version. The host creates a room; friends join from their roster.\n\nThis is Retro Rewind's in-game service. A custom server override may prevent connection. Native KartPad host/join rooms are not implemented yet."];
     }]];
   }
+  [sheet addAction:[UIAlertAction actionWithTitle:@"Country…"
+      style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+    [weakSelf showCountrySettings];
+  }]];
   [sheet addAction:[UIAlertAction actionWithTitle:@"Experimental Server Settings…"
       style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
     [weakSelf showPrivateServerSettings];
@@ -4301,6 +4375,9 @@ extern "C" bool KartPadMobileReadClassicInputForPlayer(
   if (touchOnly) {
     kartpad::mobile::ApplyMotionInput(adapted, motion.currentSteering,
                                       shakeTrick);
+  } else if (player == 0 && !KartPadScreensActive() && motion.shakeWithController) {
+    // Tilt never steers over a controller; only the shake's D-pad Up is added.
+    kartpad::mobile::ApplyMotionInput(adapted, 0.0f, shakeTrick);
   }
   snapshot->buttons = adapted.buttons;
   snapshot->leftStickX = std::clamp(static_cast<float>(adapted.leftStickX) / 127.0f,

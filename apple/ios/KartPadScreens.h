@@ -26,6 +26,11 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)screensSetRaceAccelerate:(BOOL)on;
 - (BOOL)screensShakeTricks;
 - (void)screensSetShakeTricks:(BOOL)on;
+// Shake with a controller connected (D-pad Up only), and how light a shake counts.
+- (BOOL)screensShakeWithController;
+- (void)screensSetShakeWithController:(BOOL)on;
+- (NSInteger)screensShakeSensitivity;
+- (void)screensSetShakeSensitivity:(NSInteger)level;
 - (void)screensShowWiiRemoteInfo;
 - (void)screensShowButtonMapping;
 // These need the game itself on screen: the screens close first.

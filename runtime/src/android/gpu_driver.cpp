@@ -55,6 +55,14 @@ void Report(const char* state, const char* reason, const char* lib, const char* 
     KartPadAndroidLogMetric("KartPadGpuDriver", "state=%s reason=%s lib=%s api=%d detail=%s", state, reason,
                             lib != nullptr ? lib : "-", android_get_device_api_level(),
                             detail != nullptr ? detail : "-");
+    // The app shows this in Graphics & Performance → GPU Driver, so a driver that didn't load is
+    // never mistaken for the one running (KartPadGpuDriverSettings.kt).
+    if (const char* statusPath = Env("KARTPAD_GPU_DRIVER_STATUS")) {
+        if (std::FILE* file = std::fopen(statusPath, "w")) {
+            std::fprintf(file, "%s\n%s\n%s\n", state, reason, detail != nullptr ? detail : "");
+            std::fclose(file);
+        }
+    }
 }
 
 bool IsVulkanLoaderName(const char* filename) {
@@ -103,8 +111,8 @@ extern "C" void KartPadLoadCustomGpuDriver() {
     void* handle = adrenotools_open_libvulkan(RTLD_NOW, ADRENOTOOLS_DRIVER_CUSTOM, tmp.empty() ? nullptr : tmp.c_str(),
                                               hookDir.c_str(), dir.c_str(), driverLib, nullptr, nullptr);
     if (handle == nullptr) {
-        const char* error = dlerror();
-        Report("fallback", "open_failed", driverLib, error);
+        const char* error = adrenotools_last_error();
+        Report("fallback", "open_failed", driverLib, error != nullptr && error[0] != 0 ? error : nullptr);
         return;
     }
     if (dlsym(handle, "vkGetInstanceProcAddr") == nullptr) {
@@ -115,20 +123,22 @@ extern "C" void KartPadLoadCustomGpuDriver() {
     Report("loaded", "ok", driverLib);
 }
 
-// Graphics could not start. If that was with the player's driver, mark the app's start counter
-// failed so the next start uses the phone's own driver (KartPadGpuDriverSettings.kt), and return
-// a note for the error message; otherwise an empty note.
+// Graphics could not start, or the renderer failed during play (device lost, for example). If that
+// was with the player's driver, mark the app's start counter failed so the next start uses the
+// phone's own driver (KartPadGpuDriverSettings.kt), and return a note for the error message;
+// otherwise an empty note.
 extern "C" const char* KartPadGpuDriverStartFailedNote() {
     if (g_vulkanOverride.load(std::memory_order_acquire) == nullptr) return "";
-    Report("failed", "graphics_start", Env("KARTPAD_GPU_DRIVER_LIB"));
+    Report("failed", "graphics_error", Env("KARTPAD_GPU_DRIVER_LIB"));
     if (const char* starts = Env("KARTPAD_GPU_DRIVER_STARTS")) {
         if (std::FILE* file = std::fopen(starts, "w")) {
             std::fputs("99", file);
             std::fclose(file);
         }
     }
-    return "\n\nThis start used the GPU driver you chose. KartPad will use the phone's own driver the next "
-           "time you start the game.";
+    return "\n\nThis game used the GPU driver you chose, which is the likely cause. KartPad will use the "
+           "phone's own driver the next time you start the game. You can choose a driver again in "
+           "Graphics & Performance \u2192 GPU Driver.";
 }
 
 #else

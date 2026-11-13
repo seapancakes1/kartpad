@@ -74,7 +74,10 @@ class PhoneControllerContract(unittest.TestCase):
         dead = re.search(r"kDeadZone = ([\d.]+);", IOS_MOTION).group(1)
         lock = re.search(r"fullLock = ([\d.]+) / boundedSensitivity", IOS_MOTION).group(1)
         rearm = re.search(r"kRearmAcceleration = ([\d.]+);", IOS_MOTION).group(1)
-        trigger = re.search(r"kTriggerAcceleration = ([\d.]+);", IOS_MOTION).group(1)
+        # The page shakes at iPhone's default Shake Sensitivity level (Standard).
+        levels = re.search(r"kLevels\[KartPadShakeSensitivityLevels\] = \{([^}]*)\};", IOS_MOTION).group(1)
+        default = int(re.search(r"kDefaultShakeSensitivity = (\d+);", IOS_MOTION).group(1))
+        trigger = [level.strip() for level in levels.split(",")][default]
         cooldown = re.search(r"kCooldownSeconds = ([\d.]+);", IOS_MOTION).group(1)
         self.assertIn(f"DEAD_ZONE = {dead}, FULL_LOCK = {lock};", PAGE)
         self.assertIn(f"SHAKE_REARM = {rearm}, SHAKE_TRIGGER = {trigger}, SHAKE_COOLDOWN = {cooldown};", PAGE)

@@ -1,6 +1,29 @@
 # KartPad status
 
-## Current status: 25 October 2026
+## Next release preparation: 29 October 2026
+
+The four Classic runtime correction PRs are merged. The integrated source at
+`c3829dfc` passed full Android/iOS builds and clean Mac/iOS PadMint player builds.
+The parent [#536](https://github.com/chrissotraidis/kartpad/pull/536) adds mobile
+bloom control, import/build error handling and Mac controller diagnostics.
+The [31-issue disposition](ISSUE-TRIAGE-2026-10-29.md) records the exact scope.
+The Mac exports now use the current red-K icon. Fresh/update Android and
+Original/Retro Classic/Beta race checks passed; the isolated Mac reached both
+game modes. The [longer memory comparison](artifacts/2026-10-29/integrated-android.md)
+reproduced about 233 MiB retained after different courses and reclaimed by
+restart. Missing characters and phone slowdown remain unresolved; local tests
+do not establish a fix on affected devices.
+0.8.7 was published on 1 November from this work.
+
+## Current status: 8 November 2026
+
+**0.8.10 (build 275), 9 November:** Android fix after 0.8.9. A GPU driver chosen in 0.8.6–0.8.8 started running the moment players updated to 0.8.9, and on a Snapdragon 8 Elite gave a striped screen and "Device lost: vkMapMemory failed". 0.8.10 tells those players once and offers the phone's driver, falls back after a graphics failure during play with a custom driver, and ends the game process after "Graphics Unavailable" so the next start is clean. See [release notes](releases/v0.8.10.md).
+
+**0.8.9 (build 274), 9 November:** custom GPU drivers load again (they never did in 0.8.6–0.8.8) and can be downloaded; start-up flicker fixed on iPhone/iPad and Android (#390); textures and shader modules from earlier courses released (#510); shake sensitivity (#553); Graphics & Performance on iPhone/iPad. See [release notes](releases/v0.8.9.md).
+
+**0.8.8 (build 273), 7 November:** updates Retro Rewind to 6.13.5, which Retro WFC now requires (#547, #548), including the new call site for Android 30 FPS Races, and adds Shake with a Controller on Android, iPhone and iPad (#546). See the [release notes](releases/v0.8.8.md).
+
+**0.8.7 (build 272), 1 November:** makes the Android WiiCompiled 0.9 (Beta) engine much faster by no longer pinning its threads to one CPU core (#540) and by reporting real frame times to Android's performance hint (#542); fixes iPhone/iPad builds that couldn't start on some self-signed installs (#530, #541); adds Disable Bloom on Android, iPhone and iPad (#535); refuses Retro WFC and Nintendo addresses in the private-server setting (#520); and fixes the Mac Classic Controller D-pad (#306) and Wii Remote player slot (#476). See the [release notes](releases/v0.8.7.md).
 
 **0.8.6 (build 268), 25 October:** fixes PadMint builds of every target, which stopped in preflight after upstream WiiCompiled turned `aurora-main` into a submodule (#509); gives the game a console country for the online flag and globe (#511); adds Android 30 FPS Races, Simpler Computer Karts and custom GPU drivers on a new ⋯ → Graphics & Performance page; ships the WiiCompiled 0.9 graphics engine on Android as an opt-in beta beside the default Classic engine; ports WiiCompiled fixes through v0.9.0; compiles the Android game pack with a race profile (about 12% less game-thread CPU on an unprofiled course in emulator pairs, pack 13% smaller; [record](artifacts/2026-10-24/pgo-release.md)); and includes the iPhone/iPad save-picker fix (#506), bounded Mii reads (#507) and diagnostic session labels (#508). See the [release notes](releases/v0.8.6.md).
 

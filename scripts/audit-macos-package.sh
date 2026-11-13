@@ -40,6 +40,19 @@ for usage_key in NSLocalNetworkUsageDescription NSDownloadsFolderUsageDescriptio
 done
 test -x "${executable}"
 test -f "${contents}/Resources/${icon_name%.icns}.icns"
+# The Mac exports are generated from the shared red K artwork in macOS shape.
+# Comparing only the bundle to its ICNS misses a branding update not exported for Mac,
+# so regenerate them and compare.
+icon_check="$(mktemp -d)"
+if ! KARTPAD_ICON_EXPORTS_DIR="${icon_check}" "${repo_root}/scripts/generate-macos-icon-assets.sh" >/dev/null ||
+   ! cmp -s "${icon_check}/KartPad.icns" "${repo_root}/branding/exports/KartPad.icns" ||
+   ! cmp -s "${icon_check}/macos/KartPadIcon-1024.png" \
+     "${repo_root}/branding/exports/macos/KartPadIcon-1024.png"; then
+  rm -rf "${icon_check}"
+  echo "macOS icon exports are stale; run scripts/generate-macos-icon-assets.sh" >&2
+  exit 65
+fi
+rm -rf "${icon_check}"
 cmp "${contents}/Resources/${icon_name%.icns}.icns" "${repo_root}/branding/exports/KartPad.icns"
 test "$(readlink "${contents}/MacOS/dsp_coef.bin")" = \
   "../Resources/Runtime/dsp_coef.bin"

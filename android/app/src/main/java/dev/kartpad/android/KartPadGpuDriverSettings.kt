@@ -9,8 +9,12 @@ import android.os.Build
 import android.system.Os
 import android.widget.Toast
 import java.io.File
+import java.io.InputStream
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -30,11 +34,24 @@ import org.json.JSONObject
 internal object KartPadGpuDriverSettings {
     const val REQUEST_PICK_ZIP = 0x4b50
     private const val FAILED_STARTS_BEFORE_SYSTEM = 2
+    private const val RUNS_NOW_NOTICE = "runs_now_notice_shown"
     private val hookLibraries =
         listOf("libmain_hook.so", "libhook_impl.so", "libfile_redirect_hook.so", "libgsl_alloc_hook.so")
     private val environment =
         listOf("KARTPAD_GPU_DRIVER_DIR", "KARTPAD_GPU_DRIVER_LIB", "KARTPAD_GPU_HOOK_DIR", "KARTPAD_GPU_TMP_DIR",
-            "KARTPAD_GPU_DRIVER_STARTS")
+            "KARTPAD_GPU_DRIVER_STARTS", "KARTPAD_GPU_DRIVER_STATUS")
+
+    /**
+     * Where Download a Driver looks: GitHub releases of the AdrenoTools driver packages other
+     * Android emulators use. Each asset is the same .zip that Install from a .zip File accepts.
+     */
+    private data class Source(val title: String, val description: String, val repository: String)
+    private val sources = listOf(
+        Source("Turnip and Qualcomm (K11MCH1)", "Turnip builds plus newer Qualcomm drivers", "K11MCH1/AdrenoToolsDrivers"),
+        Source("Mainline and Stable Turnip (whitebelyash)", "Recent Mesa Turnip, including older Adreno 6xx", "whitebelyash/freedreno_turnip-CI"),
+        Source("Turnip CI (Weab-chan)", "Automatic Mesa Turnip builds", "Weab-chan/freedreno_turnip-CI"),
+    )
+    private data class Download(val label: String, val url: String)
 
     /** True when this start went back to the phone's driver because the chosen one kept failing. */
     @Volatile
@@ -47,6 +64,7 @@ internal object KartPadGpuDriverSettings {
     private fun driversDir(context: Context) = File(File(context.filesDir, "KartPad"), "gpu_drivers")
     private fun hooksDir(context: Context) = File(driversDir(context), "hooks")
     private fun startsFile(context: Context) = File(driversDir(context), "starts")
+    private fun statusFile(context: Context) = File(driversDir(context), "last-status")
 
     private fun installed(context: Context): List<Driver> =
         driversDir(context)
@@ -72,6 +90,32 @@ internal object KartPadGpuDriverSettings {
 
     /** For problem reports: the chosen driver's name, or null for the phone's own driver. */
     fun selectedName(context: Context): String? = selected(context)?.let { "${it.name} (${it.library})" }
+
+    /**
+     * Why the chosen driver didn't load on the latest start, or null when it loaded (or none was
+     * chosen). The runtime writes the status (runtime/src/android/gpu_driver.cpp); without this the
+     * menu kept naming a driver that had silently fallen back to the phone's.
+     */
+    fun loadProblem(context: Context): String? {
+        if (selected(context) == null) return null
+        val lines = runCatching { statusFile(context).readLines() }.getOrNull() ?: return null
+        if (lines.firstOrNull() == "loaded") return null
+        val reason = lines.getOrNull(1).orEmpty()
+        val detail = lines.getOrNull(2).orEmpty()
+        return listOf(reason, detail).filter { it.isNotBlank() }.joinToString(": ").ifBlank { "unknown" }
+    }
+
+    /** The GPU Driver row in Graphics & Performance. */
+    fun menuDetail(context: Context): String {
+        val name = selected(context)?.name ?: return "Phone's driver"
+        return if (loadProblem(context) != null) "Phone's driver ($name didn't load)" else name
+    }
+
+    /** For problem reports: what actually ran, not just what was chosen. */
+    fun reportState(context: Context): String {
+        val name = selectedName(context) ?: return "system"
+        return loadProblem(context)?.let { "$name not loaded, used system: $it" } ?: name
+    }
 
     /**
      * The runtime needs the hook libraries as real files; they ship inside the APK, which Android
@@ -115,6 +159,9 @@ internal object KartPadGpuDriverSettings {
             Os.setenv("KARTPAD_GPU_TMP_DIR", tmp.absolutePath + "/", true)
             // The runtime marks this file failed if graphics can't start with the driver.
             Os.setenv("KARTPAD_GPU_DRIVER_STARTS", starts.absolutePath, true)
+            // Written by the runtime when it loads the driver or falls back to the phone's.
+            statusFile(context).delete()
+            Os.setenv("KARTPAD_GPU_DRIVER_STATUS", statusFile(context).absolutePath, true)
             // Counted now, cleared by markStarted once the game has run for a minute.
             starts.writeText((failed + 1).toString())
         }.onFailure { environment.forEach { name -> Os.unsetenv(name) } }
@@ -125,12 +172,45 @@ internal object KartPadGpuDriverSettings {
         startsFile(context).delete()
     }
 
+    /**
+     * Until 0.8.9 a chosen driver never loaded (the phone's always ran), so after updating it ran
+     * for the first time with no warning, and on some phones that meant a broken picture or a
+     * renderer error right away. Tell the player once, with a one-tap way back. Returns true when
+     * the notice is shown, so the launcher doesn't start a game underneath it.
+     */
+    fun showRunsNowNotice(activity: Activity): Boolean {
+        val preferences = preferences(activity)
+        if (preferences.getBoolean(RUNS_NOW_NOTICE, false)) return false
+        val driver = selected(activity)
+        preferences.edit().putBoolean(RUNS_NOW_NOTICE, true).apply()
+        if (driver == null) return false
+        AlertDialog.Builder(activity)
+            .setTitle("Your GPU driver now runs")
+            .setMessage("You chose ${driver.name} as your GPU driver. Before KartPad 0.8.9, a bug meant chosen " +
+                "drivers never loaded and the game always used the phone's driver. Now ${driver.name} really runs.\n\n" +
+                "If characters, tracks or the whole picture look wrong, or the game stops with a renderer error, " +
+                "use the phone's driver. You can change this anytime in ⋯ → Graphics & Performance → GPU Driver.")
+            .setPositiveButton("Use Phone's Driver") { _, _ ->
+                if (!select(activity, null)) {
+                    Toast.makeText(activity, "The driver choice could not be saved.", Toast.LENGTH_LONG).show()
+                }
+            }
+            .setNegativeButton("Keep ${driver.name}", null)
+            // A choice is required: dismissing it shouldn't silently keep a driver never seen working.
+            .setCancelable(false)
+            .show()
+        return true
+    }
+
     private fun select(context: Context, driver: Driver?): Boolean =
         runCatching {
             if (driver != null) refreshHookLibraries(context)
             startsFile(context).delete()
+            statusFile(context).delete()
             val edit = preferences(context).edit()
             if (driver == null) edit.remove("driver") else edit.putString("driver", driver.dir.name)
+            // Chosen now, so the player knows it runs.
+            edit.putBoolean(RUNS_NOW_NOTICE, true)
             check(edit.commit())
             // Dawn's saved Vulkan pipeline data belongs to the previous driver. Drivers should
             // reject another driver's data, but old Adreno drivers are the ones this is for.
@@ -144,13 +224,20 @@ internal object KartPadGpuDriverSettings {
     fun show(activity: Activity, onChanged: () -> Unit) {
         val drivers = installed(activity)
         val current = selected(activity)
+        val problem = loadProblem(activity)
         var choice = drivers.indexOfFirst { it.dir == current?.dir } + 1
         val labels = (listOf("Phone's Driver (Default)") +
-            drivers.map { if (it.details.isBlank()) it.name else "${it.name}\n${it.details}" }).toTypedArray()
+            drivers.map { driver ->
+                listOfNotNull(
+                    driver.name,
+                    driver.details.ifBlank { null },
+                    if (driver.dir == current?.dir && problem != null) "Didn't load last start ($problem)" else null,
+                ).joinToString("\n")
+            }).toTypedArray()
         AlertDialog.Builder(activity)
             .setTitle("GPU Driver (Snapdragon)")
             .setSingleChoiceItems(labels, choice) { _, which -> choice = which }
-            .setNeutralButton("Install .zip…") { _, _ -> pickZip(activity) }
+            .setNeutralButton("Add Driver…") { _, _ -> showAddDriver(activity, onChanged) }
             .setNegativeButton("Back", null)
             .setPositiveButton("Save") { _, _ ->
                 val driver = drivers.getOrNull(choice - 1)
@@ -162,6 +249,108 @@ internal object KartPadGpuDriverSettings {
                 onChanged()
             }
             .show()
+    }
+
+    private fun showAddDriver(activity: Activity, onChanged: () -> Unit) {
+        AlertDialog.Builder(activity)
+            .setTitle("Add a GPU Driver")
+            .setItems(arrayOf("Download a Driver…", "Install from a .zip File…")) { _, which ->
+                if (which == 0) showSources(activity, onChanged) else pickZip(activity)
+            }
+            .setNegativeButton("Back") { _, _ -> show(activity, onChanged) }
+            .show()
+    }
+
+    private fun showSources(activity: Activity, onChanged: () -> Unit) {
+        val labels = sources.map { "${it.title}\n${it.description}" }.toTypedArray()
+        AlertDialog.Builder(activity)
+            .setTitle("Download a Driver")
+            .setItems(labels) { _, which -> listDownloads(activity, sources[which], onChanged) }
+            .setNegativeButton("Back") { _, _ -> showAddDriver(activity, onChanged) }
+            .show()
+    }
+
+    private fun listDownloads(activity: Activity, source: Source, onChanged: () -> Unit) {
+        val waiting = AlertDialog.Builder(activity).setTitle(source.title)
+            .setMessage("Looking for drivers…").setCancelable(false).show()
+        Thread {
+            val result = runCatching { fetchDownloads(source) }
+            activity.runOnUiThread {
+                waiting.dismiss()
+                if (activity.isFinishing) return@runOnUiThread
+                val downloads = result.getOrNull()
+                if (downloads.isNullOrEmpty()) {
+                    AlertDialog.Builder(activity).setTitle("No Drivers Found")
+                        .setMessage("KartPad couldn't list drivers from ${source.repository}. Check the connection, " +
+                            "or download a driver .zip in a browser and use Install from a .zip File.")
+                        .setPositiveButton("OK") { _, _ -> showSources(activity, onChanged) }.show()
+                    return@runOnUiThread
+                }
+                AlertDialog.Builder(activity)
+                    .setTitle(source.title)
+                    .setItems(downloads.map { it.label }.toTypedArray()) { _, which ->
+                        download(activity, downloads[which], onChanged)
+                    }
+                    .setNegativeButton("Back") { _, _ -> showSources(activity, onChanged) }
+                    .show()
+            }
+        }.start()
+    }
+
+    /** The newest releases' .zip assets, newest first. */
+    private fun fetchDownloads(source: Source): List<Download> {
+        val releases = JSONArray(httpGet("https://api.github.com/repos/${source.repository}/releases?per_page=8")
+            .bufferedReader().use { it.readText() })
+        val downloads = mutableListOf<Download>()
+        for (i in 0 until releases.length()) {
+            val release = releases.getJSONObject(i)
+            if (release.optBoolean("draft")) continue
+            val title = release.optString("name").ifBlank { release.optString("tag_name") }
+            val date = release.optString("published_at").take(10)
+            val assets = release.optJSONArray("assets") ?: continue
+            for (j in 0 until assets.length()) {
+                val asset = assets.getJSONObject(j)
+                val name = asset.optString("name")
+                val url = asset.optString("browser_download_url")
+                if (!name.endsWith(".zip", ignoreCase = true) || !url.startsWith("https://")) continue
+                if (asset.optLong("size") > MAX_PACKAGE_BYTES) continue
+                downloads += Download("$name\n$title · $date", url)
+            }
+        }
+        return downloads.take(24)
+    }
+
+    private fun download(activity: Activity, item: Download, onChanged: () -> Unit) {
+        val waiting = AlertDialog.Builder(activity).setTitle("Downloading Driver")
+            .setMessage(item.label.substringBefore('\n')).setCancelable(false).show()
+        Thread {
+            val error = runCatching { httpGet(item.url).use { install(activity, it) } }
+                .exceptionOrNull()?.let { it.message ?: it.toString() }
+            activity.runOnUiThread {
+                waiting.dismiss()
+                if (activity.isFinishing) return@runOnUiThread
+                if (error != null) {
+                    AlertDialog.Builder(activity).setTitle("Driver Not Installed").setMessage(error)
+                        .setPositiveButton("OK", null).show()
+                } else {
+                    show(activity, onChanged)
+                }
+            }
+        }.start()
+    }
+
+    private fun httpGet(url: String): InputStream {
+        val connection = URL(url).openConnection() as HttpURLConnection
+        connection.connectTimeout = 15_000
+        connection.readTimeout = 30_000
+        connection.setRequestProperty("Accept", "application/vnd.github+json, application/octet-stream")
+        connection.setRequestProperty("User-Agent", "KartPad/${BuildConfig.VERSION_NAME}")
+        if (connection.responseCode !in 200..299) {
+            val code = connection.responseCode
+            connection.disconnect()
+            error("The download failed (HTTP $code).")
+        }
+        return connection.inputStream
     }
 
     private fun pickZip(activity: Activity) {
@@ -176,7 +365,10 @@ internal object KartPadGpuDriverSettings {
     fun onZipPicked(activity: Activity, uri: Uri?, onChanged: () -> Unit) {
         if (uri == null) return
         Thread {
-            val error = runCatching { install(activity, uri) }.exceptionOrNull()?.let { it.message ?: it.toString() }
+            val error = runCatching {
+                val input = activity.contentResolver.openInputStream(uri) ?: error("Could not open that file.")
+                input.use { install(activity, it) }
+            }.exceptionOrNull()?.let { it.message ?: it.toString() }
             activity.runOnUiThread {
                 if (activity.isFinishing) return@runOnUiThread
                 if (error != null) {
@@ -192,12 +384,13 @@ internal object KartPadGpuDriverSettings {
         }.start()
     }
 
-    private fun install(context: Context, uri: Uri) {
+    private const val MAX_PACKAGE_BYTES = 512L * 1024 * 1024
+
+    private fun install(context: Context, input: InputStream) {
         val staging = File(driversDir(context), ".staging")
         staging.deleteRecursively()
         staging.mkdirs()
         try {
-            val input = context.contentResolver.openInputStream(uri) ?: error("Could not open that file.")
             ZipInputStream(input).use { zip ->
                 var total = 0L
                 while (true) {
@@ -211,7 +404,7 @@ internal object KartPadGpuDriverSettings {
                             val read = zip.read(buffer)
                             if (read < 0) break
                             total += read
-                            if (total > 512L * 1024 * 1024) error("That file is too large to be a driver package.")
+                            if (total > MAX_PACKAGE_BYTES) error("That file is too large to be a driver package.")
                             output.write(buffer, 0, read)
                         }
                     }

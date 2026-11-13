@@ -15,10 +15,14 @@ iPhone/iPad.
    with PadMint, quit KartPad and replace the app; your settings and saves stay.
    The Mac build needs PadMint 0.5.1 or newer and Xcode (install it from the
    App Store and open it once). PadMint supplies the other build tools.
-   A PadMint 0.5.1 build can stop during the first tool download, before
-   compilation starts ([#475](https://github.com/chrissotraidis/kartpad/issues/475)).
-   That is not an out-of-memory failure or a rejected disc. Keep certificate
-   verification on. PadMint 0.5.2's notes do not include a fix for it.
+   If a download stops with `CERTIFICATE_VERIFY_FAILED` or "unable to get local
+   issuer certificate" ([#532](https://github.com/chrissotraidis/kartpad/issues/532)),
+   start PadMint using `PadMint.command` from its Mac download, which uses
+   Apple's Python. If you deliberately use Python from python.org, run
+   `Install Certificates.command` in its folder under Applications first.
+   If the check still fails, check your Mac's date and certificate updates, or
+   ask your network administrator about HTTPS access. Keep certificate
+   verification enabled and retry; your disc and completed downloads can stay.
 2. If macOS says it can't check the app, choose **Done**, then
    open **System Settings → Privacy & Security** and choose **Open Anyway**.
    The app isn't notarized by Apple, which is why macOS asks. Don't turn off
@@ -41,14 +45,14 @@ while building, but doesn't put a separate `KartPad game data` folder in
 Downloads. You can copy those prepared files into a local folder you will keep:
 
 1. In Finder, choose **Go → Go to Folder…** and enter
-   `~/.padmint/games/kartpad-v0.8.6/`. Use the version folder matching the app
+   `~/.padmint/games/kartpad-v0.8.10/`. Use the version folder matching the app
    you built. This is PadMint's usual location; if you set `PADMINT_HOME`, use
    that folder instead of `~/.padmint`.
 2. Copy `private/self-build/disc` to your chosen location. When KartPad asks
    for Original game data, select that copied `disc` folder; it contains
    `files` and `sys`, just like Dolphin's `DATA` folder.
-3. For Retro Rewind 6.13.4 (KartPad 0.8.5 and 0.8.6), also copy the whole
-   `private/builder/retro-rewind-downloads/6.13.4-extracted` folder there.
+3. For Retro Rewind 6.13.5 (KartPad 0.8.8 and later), also copy the whole
+   `private/builder/retro-rewind-downloads/6.13.5-extracted` folder there.
    In KartPad, choose **Data → Choose Retro Rewind Data…** and select the
    `RetroRewind6` folder inside your copy. Then follow the game-switching
    steps below.

@@ -158,6 +158,19 @@
     row.setOn = ^(BOOL on) { [KPHost() screensSetShakeTricks:on]; };
     [controls addObject:row];
   }
+  {
+    KPSettingRow *row = KPRow(@"Shake sensitivity", nil, KPRowChoice);
+    row.choices = @[@"Low", @"Standard", @"High", @"Very High"];
+    row.index = ^NSInteger { return [KPHost() screensShakeSensitivity]; };
+    row.setIndex = ^(NSInteger index) { [KPHost() screensSetShakeSensitivity:index]; };
+    [controls addObject:row];
+  }
+  {
+    KPSettingRow *row = KPRow(@"Shake with a controller", nil, KPRowSwitch);
+    row.on = ^BOOL { return [KPHost() screensShakeWithController]; };
+    row.setOn = ^(BOOL on) { [KPHost() screensSetShakeWithController:on]; };
+    [controls addObject:row];
+  }
 
   // Game.
   NSMutableArray *game = [NSMutableArray array];

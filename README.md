@@ -19,7 +19,7 @@ The projects are independently maintained.
   <img alt="Ahead-of-time static recompilation" src="https://img.shields.io/badge/PowerPC-static%20recompilation-FF9F0A">
   <img alt="macOS development target" src="https://img.shields.io/badge/macOS%20target-14%2B-0A84FF">
   <img alt="iPhone and iPad" src="https://img.shields.io/badge/platform-iPhone%20%2F%20iPad-0A84FF">
-  <img alt="Retro Rewind supported" src="https://img.shields.io/badge/Retro%20Rewind-6.13.4-FF375F">
+  <img alt="Retro Rewind supported" src="https://img.shields.io/badge/Retro%20Rewind-6.13.5-FF375F">
   <img alt="Game data not included" src="https://img.shields.io/badge/game%20data-not%20included-FF453A">
   <a href="https://github.com/chrissotraidis/padmint"><img alt="Build KartPad with PadMint (optional)" src="https://img.shields.io/badge/PadMint-optional%20build-3EB489"></a>
   <a href="https://discord.gg/xwHfUD2bxW"><img alt="Join the KartPad Discord" src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&amp;logoColor=white"></a>
@@ -175,14 +175,12 @@ Your saves and game data stay. See [why updates work this way](#automatic-update
 
 ### Current release
 
-**KartPad 0.8.6** (build 268) fixes PadMint builds, which stopped in preflight
-for everyone after an upstream change, gives the game your country for the
-online flag and globe, and brings in WiiCompiled's fixes through v0.9.0. On
-Android it adds 30 FPS Races, Simpler Computer Karts, custom GPU drivers for
-Snapdragon phones, faster game code (about 12% less game-thread CPU in emulator
-tests) and an opt-in WiiCompiled 0.9 graphics engine beta next to the default
-Classic engine. Retro Rewind stays at **6.13.4**.
-See the [release notes](docs/releases/v0.8.6.md).
+**KartPad 0.8.10** (build 275) fixes custom GPU drivers on Android after
+0.8.9: a driver chosen in an earlier version no longer switches on without
+warning, and a driver that fails, even during a race, falls back to the
+phone's own. See the [release notes](docs/releases/v0.8.10.md). 0.8.9 made
+custom drivers load, fixed the start-up flicker on iPhone and iPad, and
+stopped memory building up over several cups ([0.8.9 notes](docs/releases/v0.8.9.md)).
 The latest published files are on the [releases page](https://github.com/chrissotraidis/kartpad/releases/latest).
 What changed and what remains open are in [status](docs/STATUS.md) and
 [known issues](docs/KNOWN-ISSUES.md). The earlier move onto maintained
@@ -198,7 +196,7 @@ Use KartPad for app/platform problems or when the cause is unclear.
 [Frequently asked questions](#frequently-asked-questions) · [Controls](docs/MULTIPLAYER.md) · [Save transfer and troubleshooting](docs/SUPPORT.md)
 
 - Choose **Mario Kart Wii** or **Retro Rewind** when KartPad opens. Retro
-  Rewind 6.13.4 content installs separately; KartPad requires a matching native
+  Rewind 6.13.5 content installs separately; KartPad requires a matching native
   profile when the mod updates. Follow your platform's setup guide above.
 - Touch controls, motion steering and controllers are available on mobile;
   Mac also supports keyboard input. Touch layouts can be moved, resized and
@@ -359,7 +357,7 @@ VPN ([#405](https://github.com/chrissotraidis/kartpad/issues/405)).
 <details>
 <summary>Does KartPad support Retro Rewind, and what if it updates?</summary>
 
-Yes, with the separately installed **6.13.4** content and matching app build.
+Yes, with the separately installed **6.13.5** content and matching app build.
 Retro Rewind updates often change the mod's game code (`Code.pul`), as well as
 its data. KartPad translates and compiles that code into native code when the
 app is built. When the mod's code changes, it needs a new KartPad build;
@@ -449,7 +447,7 @@ No. PowerPC code is translated ahead of time and compiled into the app. The iPho
 <details>
 <summary>Why is it slow or freezing, and are distorted graphics fixed?</summary>
 
-The first time a menu or course appears, KartPad prepares its graphics, which causes short pauses; heat and higher render resolutions make things slower. Start at **1×**. Broken characters on Android depend on the GPU: Snapdragon 8 Elite (Adreno 8xx) is fixed by **Automatic** in 0.7.10. 0.8.0's automatic change for older Adreno GPUs hid characters on some phones, so 0.8.1 puts Automatic back. The Galaxy S24 Ultra and some other Adreno phones still have invisible bodies, and PowerVR is still open. [Known issues](docs/KNOWN-ISSUES.md) lists what's open for each device family.
+The first time a menu or course appears, KartPad prepares its graphics, which causes short pauses; heat and higher render resolutions make things slower. Start at **1×**. Broken characters on Android depend on the GPU: Snapdragon 8 Elite (Adreno 8xx) is fixed by **Automatic** in 0.7.10. 0.8.0's automatic change for older Adreno GPUs hid characters on some phones, so 0.8.1 puts Automatic back. Snapdragon phones on Qualcomm's 512.762 graphics driver (Galaxy S24 and S24 Ultra, Moto G85 and others) still draw characters with invisible bodies; a Turnip driver from **⋯ → Graphics & Performance → GPU Driver** fixed that on the two phones that have tried one. PowerVR is still open. [Known issues](docs/KNOWN-ISSUES.md) lists what's open for each device family.
 
 </details>
 
@@ -457,6 +455,25 @@ The first time a menu or course appears, KartPad prepares its graphics, which ca
 <summary>Why are the inherited experimental modes absent?</summary>
 
 Those settings applied to Sunshine-specific CPU-clock and 60 FPS behavior and did not affect KartPad’s Mario Kart Wii runtime. They were removed because they were misleading no-ops. Use actual display controls and the [performance guidance](docs/PERF.md).
+
+</details>
+
+<details>
+<summary>Can I extract or transfer my KartPad data on iPhone or iPad?</summary>
+
+**Yes, you can export and restore saves.** Use **0.8.6 or newer** for the iOS
+save-picker fix. During a game, open **••• → Game
+Data & Saves → Manage Saves…**, choose Original Mario Kart Wii, Retro Rewind
+or Retro Rewind (Separate Save), then **Export Save Backup…** to save
+`rksys.dat` to Files. On the destination, back up its existing save, choose
+the matching profile and **Restore Save Backup… → Choose rksys.dat…**, then
+fully close KartPad from the app switcher and reopen it.
+
+This transfers that profile's save, not the whole app: it does not include
+game files, settings, Miis, console identity or Retro Rewind's separate rating
+file. Keep the source installation until you have checked the restored
+progress. See [iPhone/iPad save transfer](docs/SUPPORT.md#iphone-and-ipad-save-transfer)
+for the steps and limits.
 
 </details>
 

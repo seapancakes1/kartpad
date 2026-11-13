@@ -153,7 +153,7 @@ class KartPadActivity : SDLActivity(), KartPadScreensHost {
         }
         if (KartPadGpuDriverSettings.fellBackToSystem) {
             android.widget.Toast.makeText(this,
-                "The GPU driver you chose didn't start the game, so KartPad is using the phone's driver. " +
+                "The GPU driver you chose stopped the game, so KartPad is using the phone's driver. " +
                     "You can choose a driver again in Graphics & Performance → GPU Driver.", android.widget.Toast.LENGTH_LONG).show()
         }
         // A minute of play means this start worked; see KartPadNativeRuntime.
@@ -162,6 +162,15 @@ class KartPadActivity : SDLActivity(), KartPadScreensHost {
                 KartPadNativeRuntime.markStarted(filesDir)
                 KartPadGpuDriverSettings.markStarted(this)
             }, KartPadNativeRuntime.HEALTHY_RUN_MS)
+        // The runtime decides within seconds whether the chosen GPU driver loaded; say so if it didn't.
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
+            {
+                if (!isFinishing && KartPadGpuDriverSettings.loadProblem(this) != null) {
+                    android.widget.Toast.makeText(this,
+                        "The GPU driver you chose didn't load, so this game uses the phone's driver. " +
+                            "Graphics & Performance → GPU Driver shows why.", android.widget.Toast.LENGTH_LONG).show()
+                }
+            }, 8_000)
         nativeEnableActivityRecreation()
         inputManager = getSystemService(InputManager::class.java)
         runDebugRetroRewindExtractionFixture()
@@ -766,6 +775,19 @@ class KartPadActivity : SDLActivity(), KartPadScreensHost {
                 detail = RESOLUTION_LABELS[resolutionIndex()]) {
                 closeKartPadMenu(::showResolutionSettings)
             },
+            MenuRow("Disable Bloom", R.drawable.ic_kartpad_display,
+                switchOn = nativeIsBloomDisabled(),
+                detail = "Removes bright-area glow. Applies at the next scene.") {
+                if (nativeSetBloomDisabled(!nativeIsBloomDisabled())) {
+                    showDisplayMenu()
+                } else {
+                    closeKartPadMenu {
+                        AlertDialog.Builder(this).setTitle("Could Not Save Setting")
+                            .setMessage("The bloom setting could not be saved. Please try again.")
+                            .setPositiveButton("OK", null).show()
+                    }
+                }
+            },
             MenuRow("App Icon", R.drawable.ic_kartpad_display, submenu = true,
                 detail = KartPadAppIcon.titles[KartPadAppIcon.current(this)]) {
                 closeKartPadMenu(::showAppIconSettings)
@@ -782,7 +804,7 @@ class KartPadActivity : SDLActivity(), KartPadScreensHost {
             } else null,
             MenuRow("30 FPS Races", R.drawable.ic_kartpad_speedometer,
                 switchOn = KartPadTouchSettings.thirtyFpsRaces(this),
-                detail = "Races at normal speed, drawn at 30 FPS. For phones that slow down. From the next race.") {
+                detail = "Races at normal speed, drawn at 30 FPS. For devices that slow down. From the next race.") {
                 KartPadTouchSettings.setThirtyFpsRaces(this, !KartPadTouchSettings.thirtyFpsRaces(this))
                 applyDisplaySettings()
                 showGraphicsMenu()
@@ -796,7 +818,7 @@ class KartPadActivity : SDLActivity(), KartPadScreensHost {
             },
             if (KartPadNativeRuntime.isLikelyAdreno() || KartPadGpuDriverSettings.selectedName(this) != null) {
                 MenuRow("GPU Driver", R.drawable.ic_kartpad_display, submenu = true,
-                    detail = KartPadGpuDriverSettings.selectedName(this) ?: "Phone's driver") {
+                    detail = KartPadGpuDriverSettings.menuDetail(this)) {
                     closeKartPadMenu(::showGpuDriverSettings)
                 }
             } else null,
@@ -1471,7 +1493,8 @@ class KartPadActivity : SDLActivity(), KartPadScreensHost {
             setPadding(dp(24), dp(4), dp(24), dp(8))
             addView(settingsLabel(if (motionSteering.shakeSensorAvailable) {
                 "Shake the device to press D-pad Up: tricks in the air and wheelies on bikes. " +
-                    "Works without tilt steering. Physical controllers take priority."
+                    "Works without tilt steering. With a controller connected, shaking does " +
+                    "nothing unless Shake with a Controller is on. A higher sensitivity needs a lighter shake."
             } else {
                 "Shake input is unavailable on this device. You can still use D-pad Up."
             }))
@@ -1484,6 +1507,26 @@ class KartPadActivity : SDLActivity(), KartPadScreensHost {
                     motionSteering.setShakeTricksEnabled(checked)
                     // The dialog owns focus; sampling resumes when gameplay regains it.
                     motionSteering.stop()
+                }
+            })
+            addView(Switch(this@KartPadActivity).apply {
+                text = "Shake with a Controller"
+                isChecked = KartPadTouchSettings.shakeWithController(this@KartPadActivity)
+                isEnabled = motionSteering.shakeSensorAvailable
+                setOnCheckedChangeListener { _, checked ->
+                    KartPadTouchSettings.setShakeWithController(this@KartPadActivity, checked)
+                }
+            })
+            // Same four steps as iPhone/iPad; a higher sensitivity needs a lighter shake.
+            addView(Button(this@KartPadActivity).apply {
+                fun label() = "Sensitivity: ${KartPadShakeDetector.NAMES[motionSteering.shakeSensitivity]}"
+                text = label()
+                isEnabled = motionSteering.shakeSensorAvailable
+                setOnClickListener {
+                    motionSteering.setShakeSensitivity(
+                        (motionSteering.shakeSensitivity + 1) % KartPadShakeDetector.LEVELS.size,
+                    )
+                    text = label()
                 }
             })
         }
@@ -2889,6 +2932,8 @@ class KartPadActivity : SDLActivity(), KartPadScreensHost {
     )
 
     private external fun nativeApplySoundLevels(music: Float, sounds: Float)
+    private external fun nativeIsBloomDisabled(): Boolean
+    private external fun nativeSetBloomDisabled(disabled: Boolean): Boolean
     private external fun nativeApplyThirtyFpsRaces(enabled: Boolean)
     private external fun nativeApplySimplerComputerKarts(enabled: Boolean)
 

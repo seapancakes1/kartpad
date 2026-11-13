@@ -1,11 +1,33 @@
 # Current goal loop: after 0.8.1
 
+> **Superseded for current work.** The [11 November focus pass](MAINTENANCE-BOARD.md#11-november-focus-pass-after-0810)
+> has the current state of every open issue; rows below are an October snapshot
+> (for example, #390's flicker was fixed in 0.8.9).
+
 Written 10 October 2026 and updated 15 October. It replaces the
 [5 October loop](archive/current-loop-2026-10-05.md), whose setup, sound,
 file-check and WiiCompiled-sync work shipped in 0.7.11 to 0.7.15 or is merged
 for 0.8.0.
 
 ## What we're doing next
+
+**Update 29 October.** The owner requested a complete open-issue pass for the
+next release, expanding the older three-item order below. See the
+[31-issue disposition](ISSUE-TRIAGE-2026-10-29.md) for actual fixes, checks and
+remaining work. The four runtime PRs are merged, and their exact pins passed
+full Android/iOS builds and clean Mac/iOS PadMint player builds.
+[Build evidence](artifacts/2026-10-29/integrated-ios.md) and
+[character-renderer results](artifacts/2026-10-29/character-renderer.md) distinguish
+local validation from the unresolved device reports. The
+[longer Android comparison](artifacts/2026-10-29/integrated-android.md) reproduces
+about 233 MiB of process-lifetime retention after different courses, reclaimed
+on restart; it does not establish the phone slowdown’s cause. PR #536 contains the
+release-preparation fixes; #375 is
+updated to current main with passing checks but retains its gameplay gates.
+The public release remains 0.8.6. This pass does not publish a release or change
+the device restrictions below.
+
+**Update 27 October.** The next-build candidate in #522 combines experimental-server validation with an Android WiiCompiled beta resolution fix (runtime #9). The combined APK builds and passes its package audit; emulator checks confirm live resolution changes in menus and a race. No release is published or version-bumped. Phone acceptance remains open. See the [candidate record](artifacts/2026-10-27/next-build-resolution.md) for source pins, tests and remaining integration steps.
 
 **Update 24 October.** 0.8.6 (build 268) is prepared. #509 blocked every fresh PadMint build after upstream WiiCompiled v0.9.0 turned `aurora-main` into a submodule; the builder now checks out the pinned commit directly (#512). Item 3's PGO now ships in the Android pack, measured on the emulator only ([record](artifacts/2026-10-24/pgo-release.md)). Draft #375 stays out: its own remaining gates (wider course/variant/mode replay, Apple and device checks) are still open. The next speed candidate is the game thread's Performance Hint target, from #504's Odin 3 log, and it needs a phone that shows the hitches.
 

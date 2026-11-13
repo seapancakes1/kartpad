@@ -1,30 +1,31 @@
 # Mobile settings
 
-On Android, open **•••** (top right) while a game is running; the table below is its menu. The table describes current source; Android shake input and the separate Shake to Trick entry are not yet released in 0.7.14.
+On Android, open **•••** (top right) while a game is running; the table below is its menu and describes 0.8.9. When an option is added to one platform, add it to the other in the same release or mark it here as platform-only, with the reason; the release checklist compares both menus against this table.
 
 iPhone and iPad have HOME instead: **•••** (or holding Menu on a controller) opens HOME, and its Settings has the same options in five categories. See [HOME and controllers on iPhone and iPad](ios-home-and-controllers.md). The sections below name the Android menu; on iPhone and iPad the same items are under HOME › Settings (Game › Time Trial ghosts, Game › Saves, Controls › Touch controls, Advanced › Report a problem).
 
 | Menu | Options, in order |
 | --- | --- |
-| Main | Return to KartPad Menu; Multiplayer; Controls; Display; Graphics & Performance (Android); Sound; Game Data & Saves; Report a Problem |
+| Main | Return to KartPad Menu; Multiplayer; Controls; Display; Graphics & Performance; Sound; Game Data & Saves; Report a Problem |
+| Multiplayer | Local Split-Screen; Controller Setup; Retro WFC Friend Rooms (Retro Rewind only); Country; Experimental Server Settings |
 | Controls | Controller Button Mapping; Touch Control Settings; Controller Player Setup; Shake to Trick; Motion Steering; Experimental Wii Remote + Nunchuk |
-| Display | Show FPS Counter; FPS Counter Size; Aspect Ratio; Render Resolution; App Icon |
-| Graphics & Performance (Android) | Graphics Engine; 30 FPS Races; Simpler Computer Karts; GPU Driver (Snapdragon); Graphics Diagnostics |
-| Game Data & Saves | Player Identity; Time Trial Ghosts; Manage Saves; Manage Retro Rewind; Import or Reimport Wii Disc Image; Import from Extracted Folder; Remove Stored Game Data |
+| Display | Show FPS Counter; FPS Counter Size; Aspect Ratio; Render Resolution; Disable Bloom; App Icon |
+| Graphics & Performance | Graphics Engine (Android); 30 FPS Races; Simpler Computer Karts; GPU Driver (Android, Snapdragon); Graphics Diagnostics (Android) |
+| Game Data & Saves | Player Identity; Time Trial Ghosts; Manage Saves; Manage Retro Rewind; Retro Rewind Music; Import from Extracted Folder; Import or Reimport Wii Disc Image; Remove Stored Game Data |
 
-On Android, on/off settings show a switch and a one-line description, and tapping one flips it without leaving the menu; settings with choices show the current choice under their name. Graphics & Performance holds Android-only options. The Mac keeps the same settings in its menu bar and Settings window. Native file pickers and Retro Rewind installation workflows differ between platforms.
+On Android, on/off settings show a switch and a one-line description, and tapping one flips it without leaving the menu; settings with choices show the current choice under their name. From 0.8.9 iPhone and iPad have Graphics & Performance too, with 30 FPS Races and Simpler Computer Karts; the graphics engine choice, GPU Driver and Graphics Diagnostics stay Android-only because they have no iPhone/iPad equivalent. The Mac has its own layout: the menu bar and **KartPad → Settings…** (Graphics, Audio, Controllers, Game & Data, Advanced). It has no touch, motion or Android-only options, and it has no in-app save backup, ghost transfer or soundtrack import. On Mac, **Data → Show KartPad Data** opens `~/Library/Application Support/KartPad`, where settings and Original saves live, and soundtrack files go in Retro Rewind's `MyStuff` folder (see below and the [Mac install guide](INSTALL_MACOS.md)). Native file pickers and Retro Rewind installation workflows differ between platforms.
 
 ## Time Trial Ghosts
 
 Open **Game Data & Saves → Time Trial Ghosts**. Choose the Original license and use the import/export actions for `.rkg` files. Imports are validated and applied at the next complete app restart. Importing replaces the downloaded comparison ghost, not the personal best. Pending imports apply to the latest save, preserving progress made before restarting; a backup is retained. Exports support personal-best and downloaded ghosts.
 
-The next-version compressed-import correction expands a validated `.rkg` into the native comparison slot before replay. Exporting that imported ghost therefore produces an uncompressed 10,240-byte file with the same recorded inputs, rather than the original compressed file bytes. Ghosts imported by older builds need to be imported again from their source file to receive this correction; existing saves are not automatically rewritten. This correction is not released in 0.7.14.
+Since 0.7.15, a compressed import expands a validated `.rkg` into the native comparison slot before replay. Exporting that imported ghost therefore produces an uncompressed 10,240-byte file with the same recorded inputs, rather than the original compressed file bytes. Ghosts imported by older builds need to be imported again from their source file to receive this correction; existing saves are not automatically rewritten.
 
 This release transfers ghosts from the Original game profile only. Retro Rewind ghost transfers are not implemented, including original Wii courses played inside Retro Rewind. If a file fails, report the app build, course and import/export step; do not post your full save or identity publicly.
 
 ## Retro Rewind music
 
-Retro Rewind soundtrack packs work in the next version. Each track is a `.brstm` file named like one in Retro Rewind's own `strm` folder, for example `104_N.brstm` and `104_F.brstm` for that track's final lap. A file with that name replaces the track; the others keep Retro Rewind's music. Changes apply the next time KartPad starts, and your music stays when Retro Rewind updates. [#441](https://github.com/chrissotraidis/kartpad/issues/441)
+Retro Rewind soundtrack packs work from 0.8.4. Each track is a `.brstm` file named like one in Retro Rewind's own `strm` folder, for example `104_N.brstm` and `104_F.brstm` for that track's final lap. A file with that name replaces the track; the others keep Retro Rewind's music. Changes apply the next time KartPad starts, and your music stays when Retro Rewind updates. [#441](https://github.com/chrissotraidis/kartpad/issues/441)
 
 - **Android and iPhone/iPad:** **Game Data & Saves → Retro Rewind Music… → Add Music…**, then choose `.brstm` files or a pack's `.zip`. **Remove All** goes back to Retro Rewind's music.
 - **Mac:** put the files in the `MyStuff` folder inside the `RetroRewind6` folder you chose for KartPad, as you would for Dolphin.
@@ -33,7 +34,7 @@ Retro Rewind soundtrack packs work in the next version. Each track is a `.brstm`
 
 Controller Button Mapping supports D-pad directions and triggers, optional shared physical actions, and the Use L1 for Items preset. Controller Player Setup remains separate. Touch layout controls and motion steering remain available.
 
-**Rumble** (Android, next version) is in Controller Button Mapping and is on by default. A controller with its own motor rumbles; when player one's controller has none, such as a handheld's built-in controls, the device vibrates instead. Touch-only play does not vibrate.
+**Rumble** (Android, from 0.8.4) is in Controller Button Mapping and is on by default. A controller with its own motor rumbles; when player one's controller has none, such as a handheld's built-in controls, the device vibrates instead. Touch-only play does not vibrate.
 
 **Android controller mapping:** L3 and R3 stick clicks are available as physical buttons. Assign **D-pad Up — Trick / Wheelie**, or choose **Use L3 for Tricks**. **Rumble strength** runs from 0% to 200%; 100% is standard strength. It scales controller motors and handheld device vibration where amplitude control is supported.
 
@@ -43,14 +44,18 @@ On iPhone/iPad, **HOME › Settings › Controls › Auto-accelerate** (on by de
 
 **Touch item hold** (Android and iPhone/iPad) is beside it and off by default. With it on, holding touch L for 0.67 seconds keeps the item held behind your kart after you lift your finger, so you can steer and drift while trailing a shell or banana; L turns blue. Press L again to let go. Opening the menu or leaving the game lets go too. [#473](https://github.com/chrissotraidis/kartpad/issues/473)
 
-Motion steering supports calibration and sensitivity. **Controls → Shake to Trick…** is a separate option on Android, off by default; on iPhone/iPad it's a switch, on by default, that works in a race only. It sends D-pad Up for tricks in the air and wheelies on bikes; tilt steering can stay off. Physical controllers take priority. If the device has no supported motion sensor, the option explains that D-pad Up is still available. Mac and Apple TV do not offer handset shake input.
-
-On the released 0.7.14, iPhone/iPad shake input is inside Motion Steering, and Android has tilt steering only.
+Motion steering supports calibration and sensitivity. **Controls → Shake to Trick…** is a separate option on Android, off by default; on iPhone/iPad it's a switch under HOME › Settings › Controls, on by default, that works in a race only. From 0.8.9 it has **Sensitivity**: Low, Standard (the default, unchanged from before), High and Very High; a higher setting counts a lighter shake as a trick, with the same levels on both platforms ([#553](https://github.com/chrissotraidis/kartpad/issues/553)). It sends D-pad Up for tricks in the air and wheelies on bikes; tilt steering can stay off. With a controller connected, shaking does nothing unless **Shake with a Controller** is on (from 0.8.8, off by default); it then still presses D-pad Up, for clip-on controllers without motion sensors, while tilt steering stays off. If the device has no supported motion sensor, the option explains that D-pad Up is still available. Mac and Apple TV do not offer handset shake input.
 
 FPS Counter Size offers Small, Medium and Large on both platforms. Render Resolution can reduce GPU workload; it does not fix a CPU bottleneck or guarantee a faster race. Start with 1x Native on Android.
+
+**Disable Bloom** (Android and iPhone/iPad, from 0.8.7) is under **Display**. It removes the glow around bright areas when the next scene loads and keeps that choice after restarting KartPad. Bloom stays enabled by default. Mac already offers the same setting under **KartPad → Settings… → Graphics** (also **Game → Game Settings…**).
 
 ## Saves and reports
 
 Player Identity contains license rename and Mii selection/repair. Save restore validates size/checksums, stages changes and preserves backups. Export first before destructive data management. Keep the existing app and signing identity when updating.
 
 Report a Problem offers a reviewable diagnostic flow. The iPhone/iPad form scrolls and adapts to the keyboard. Android private diagnostic ZIPs may include bounded retained system crash/ANR traces; these are excluded from public issue metadata. Apple reports add lifecycle, thermal, memory and display context. More diagnostics help investigations; they do not establish that a crash or performance problem is fixed.
+
+## GPU Driver (Android, Snapdragon)
+
+**⋯ → Graphics & Performance → GPU Driver** chooses the Vulkan driver the game uses. **Add Driver… → Download a Driver…** lists recent AdrenoTools packages from three public sources (K11MCH1's Turnip and Qualcomm builds, whitebelyash's Mainline and Stable Turnip, and Weab-chan's Turnip CI); **Install from a .zip File…** takes a package you downloaded yourself. Choose it, tap **Save**, then **Restart to Selector**. From 0.8.9, if the chosen driver doesn't load, the GPU Driver row reads *Phone's driver (… didn't load)* and the driver list shows the reason; if the game can't start graphics with it, the next start goes back to the phone's driver by itself. Before 0.8.9 a chosen driver never loaded (see [known issues](KNOWN-ISSUES.md)).
