@@ -39,6 +39,12 @@
     [picture addObject:row];
   }
   {
+    KPSettingRow *row = KPRow(@"Bloom", nil, KPRowSwitch);
+    row.on = ^BOOL { return [KPHost() screensBloom]; };
+    row.setOn = ^(BOOL on) { [KPHost() screensSetBloom:on]; };
+    [picture addObject:row];
+  }
+  {
     KPSettingRow *row = KPRow(@"Show frame rate", nil, KPRowSwitch);
     row.on = ^BOOL { return SunPadSettings.sharedSettings.showFPSCounter; };
     row.setOn = ^(BOOL on) {
@@ -52,6 +58,18 @@
     row.choices = @[@"Small", @"Medium", @"Large"];
     row.index = ^NSInteger { return std::clamp<NSInteger>([KPHost() screensFPSCounterSize], 0, 2); };
     row.setIndex = ^(NSInteger index) { [KPHost() screensSetFPSCounterSize:index]; };
+    [picture addObject:row];
+  }
+  {
+    KPSettingRow *row = KPRow(@"30 FPS races", nil, KPRowSwitch);
+    row.on = ^BOOL { return [KPHost() screensThirtyFpsRaces]; };
+    row.setOn = ^(BOOL on) { [KPHost() screensSetThirtyFpsRaces:on]; };
+    [picture addObject:row];
+  }
+  {
+    KPSettingRow *row = KPRow(@"Simpler computer karts", nil, KPRowSwitch);
+    row.on = ^BOOL { return [KPHost() screensSimplerComputerKarts]; };
+    row.setOn = ^(BOOL on) { [KPHost() screensSetSimplerComputerKarts:on]; };
     [picture addObject:row];
   }
   if (UIApplication.sharedApplication.supportsAlternateIcons) {

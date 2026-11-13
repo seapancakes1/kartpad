@@ -3038,6 +3038,10 @@ class KartPadActivity : SDLActivity(), KartPadScreensHost {
         hideGameSystemBars()
     }
 
+    override fun bloomDisabled(): Boolean = nativeIsBloomDisabled()
+
+    override fun setBloomDisabled(disabled: Boolean): Boolean = nativeSetBloomDisabled(disabled)
+
     override fun applySoundLevels() = applySoundLevels(persist = true)
 
     override fun applyControllerMapping() {
@@ -3084,6 +3088,8 @@ class KartPadActivity : SDLActivity(), KartPadScreensHost {
             "remove_data" -> openGameDataManager(KartPadGameDataActivity.ACTION_REMOVE)
             "private_server" -> KartPadPrivateServerSettings.show(this)
             "graphics_diagnostics" -> KartPadCharacterGraphicsTestDialog.show(this)
+            "graphics_engine" -> showGraphicsEngineSettings()
+            "gpu_driver" -> showGpuDriverSettings()
             "report" -> showReportProblem()
             "app_icon" -> showAppIconSettings()
             "crash_test" -> AlertDialog.Builder(this).setTitle("Test Native Crash?")

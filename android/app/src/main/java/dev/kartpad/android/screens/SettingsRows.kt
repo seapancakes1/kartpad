@@ -3,6 +3,8 @@ package dev.kartpad.android.screens
 import android.content.Context
 import dev.kartpad.android.BuildConfig
 import dev.kartpad.android.KartPadAppIcon
+import dev.kartpad.android.KartPadGpuDriverSettings
+import dev.kartpad.android.KartPadNativeRuntime
 import dev.kartpad.android.KartPadIdentityStorage
 import dev.kartpad.android.KartPadMiiStorage
 import dev.kartpad.android.KartPadPreferredGame
@@ -99,8 +101,9 @@ object SettingsRows {
      */
     fun categories(context: Context, overlay: KPOverlay? = null, dualGame: Boolean = KartPadScreens.host.dualGame,
                    diagnostics: Boolean = BuildConfig.VERSION_NAME.contains("diagnostics")): List<Pair<String, List<KPSettingRow>>> {
-        // Picture: applies at once (the game reads it every frame).
-        val picture = listOf(
+        // Picture: applies at once (the game reads it every frame); bloom from the next scene, and
+        // 30 FPS races and simpler karts from the next race.
+        val picture = arrayListOf(
             row("Picture quality", KPRowKind.Choice) {
                 choices = listOf("0.5×", "0.75×", "1× (Native)", "2×", "3×", "4×")
                 index = {
@@ -120,6 +123,10 @@ object SettingsRows {
                     host().applyDisplaySettings()
                 }
             },
+            row("Bloom", KPRowKind.Switch) {
+                on = { !host().bloomDisabled() }
+                setOn = { isOn -> if (!host().setBloomDisabled(!isOn)) failed(overlay) }
+            },
             row("Show frame rate", KPRowKind.Switch) {
                 on = { KartPadTouchSettings.showFps(context) }
                 setOn = { isOn ->
@@ -135,11 +142,31 @@ object SettingsRows {
                     host().applyDisplaySettings()
                 }
             },
+            row("30 FPS races", KPRowKind.Switch) {
+                on = { KartPadTouchSettings.thirtyFpsRaces(context) }
+                setOn = { isOn ->
+                    KartPadTouchSettings.setThirtyFpsRaces(context, isOn)
+                    host().applyDisplaySettings()
+                }
+            },
+            row("Simpler computer karts", KPRowKind.Switch) {
+                on = { KartPadTouchSettings.simplerComputerKarts(context) }
+                setOn = { isOn ->
+                    KartPadTouchSettings.setSimplerComputerKarts(context, isOn)
+                    host().applyDisplaySettings()
+                }
+            },
             // Original KartPad artwork only. Android closes the app to change it, so its sheet asks first.
             sheet("App icon", "app_icon") {
                 value = { KartPadAppIcon.titles.getOrNull(KartPadAppIcon.current(context)) }
             },
         )
+        // The beta engine and Adreno drivers: Android only, shown as in the ⋯ menu's Graphics & Performance.
+        if (KartPadNativeRuntime.isAvailable()) picture += sheet("Graphics engine", "graphics_engine") {
+            value = { KartPadNativeRuntime.label(context.filesDir) }
+        }
+        if (KartPadNativeRuntime.isLikelyAdreno() || KartPadGpuDriverSettings.selectedName(context) != null)
+            picture += sheet("GPU driver", "gpu_driver") { value = { KartPadGpuDriverSettings.menuDetail(context) } }
 
         // Sound: HOME's volume over the music and game sounds, and the launcher's Sound sheet's levels.
         val sound = listOf(

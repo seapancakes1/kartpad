@@ -31,6 +31,13 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)screensSetShakeWithController:(BOOL)on;
 - (NSInteger)screensShakeSensitivity;
 - (void)screensSetShakeSensitivity:(NSInteger)level;
+// Bloom (from the next scene), and 30 FPS races and simpler computer karts (from the next race).
+- (BOOL)screensBloom;
+- (void)screensSetBloom:(BOOL)on;
+- (BOOL)screensThirtyFpsRaces;
+- (void)screensSetThirtyFpsRaces:(BOOL)on;
+- (BOOL)screensSimplerComputerKarts;
+- (void)screensSetSimplerComputerKarts:(BOOL)on;
 - (void)screensShowWiiRemoteInfo;
 - (void)screensShowButtonMapping;
 // These need the game itself on screen: the screens close first.

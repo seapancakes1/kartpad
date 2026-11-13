@@ -3513,6 +3513,27 @@ static void KartPadApplySoundLevels(BOOL persist) {
 - (void)screensSetShakeWithController:(BOOL)on { [KartPadMotionSteering sharedSteering].shakeWithController = on; }
 - (NSInteger)screensShakeSensitivity { return [KartPadMotionSteering sharedSteering].shakeSensitivity; }
 - (void)screensSetShakeSensitivity:(NSInteger)level { [KartPadMotionSteering sharedSteering].shakeSensitivity = level; }
+- (BOOL)screensBloom { return !kartpad::graphics::BloomDisabled(); }
+- (void)screensSetBloom:(BOOL)on {
+  if (kartpad::graphics::SetBloomDisabled(!on)) return;
+  UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Could Not Save Setting"
+      message:@"The bloom setting could not be saved. Please try again."
+      preferredStyle:UIAlertControllerStyleAlert];
+  [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+  [self presentOverlayAlert:alert];
+}
+- (BOOL)screensThirtyFpsRaces { return [NSUserDefaults.standardUserDefaults boolForKey:kKartPadThirtyFpsRacesKey]; }
+- (void)screensSetThirtyFpsRaces:(BOOL)on {
+  [NSUserDefaults.standardUserDefaults setBool:on forKey:kKartPadThirtyFpsRacesKey];
+  KartPadApplyPerformanceSettings();
+}
+- (BOOL)screensSimplerComputerKarts {
+  return [NSUserDefaults.standardUserDefaults boolForKey:kKartPadSimplerComputerKartsKey];
+}
+- (void)screensSetSimplerComputerKarts:(BOOL)on {
+  [NSUserDefaults.standardUserDefaults setBool:on forKey:kKartPadSimplerComputerKartsKey];
+  KartPadApplyPerformanceSettings();
+}
 - (void)screensSetRaceAccelerate:(BOOL)on {
   [NSUserDefaults.standardUserDefaults setBool:on forKey:kKartPadRaceAccelerateKey];
   gKartPadRaceAccelerate.store(on);

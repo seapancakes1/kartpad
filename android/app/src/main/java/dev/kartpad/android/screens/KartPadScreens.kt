@@ -36,6 +36,9 @@ interface KartPadScreensHost {
     fun pickDocument(create: Boolean, name: String?, mime: String, done: (android.net.Uri?) -> Unit)
     /** Settings that apply at once, after a change. */
     fun applyDisplaySettings()
+    /** Bloom is off (the runtime's post-processing mask); setting it saves first and fails without a save. */
+    fun bloomDisabled(): Boolean
+    fun setBloomDisabled(disabled: Boolean): Boolean
     fun applySoundLevels()
     fun applyControllerMapping()
 }

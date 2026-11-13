@@ -2,7 +2,7 @@
 
 On Android, open **•••** (top right) while a game is running; the table below is its menu and describes 0.8.9. When an option is added to one platform, add it to the other in the same release or mark it here as platform-only, with the reason; the release checklist compares both menus against this table.
 
-iPhone and iPad have HOME instead: **•••** (or holding Menu on a controller) opens HOME, and its Settings has the same options in five categories. See [HOME and controllers on iPhone and iPad](ios-home-and-controllers.md). The sections below name the Android menu; on iPhone and iPad the same items are under HOME › Settings (Game › Time Trial ghosts, Game › Saves, Controls › Touch controls, Advanced › Report a problem).
+iPhone and iPad have HOME instead: **•••** (or holding Menu on a controller) opens HOME, and its Settings has the same options in five categories. See [HOME and controllers on iPhone and iPad](ios-home-and-controllers.md). The sections below name the Android menu; on iPhone and iPad the same items are under HOME › Settings (Picture › Bloom, Picture › 30 FPS races, Game › Time Trial ghosts, Game › Saves, Controls › Touch controls, Controls › Shake sensitivity, Advanced › Report a problem). Android HOME has the same Picture rows, plus Graphics engine and GPU driver where the ••• menu shows them.
 
 | Menu | Options, in order |
 | --- | --- |
