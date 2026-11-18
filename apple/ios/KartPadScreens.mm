@@ -5,6 +5,7 @@
 // them hosts them over the game (KartPadScreens.h), takes touches and reads the controllers.
 #import "KartPadScreens.h"
 #import "KartPadMiiManager.h"
+#import "KartPadSync.h"
 #import "KartPadMiiEditor.h"
 #import "KartPadMenuButton.h"
 #import <GameController/GameController.h>

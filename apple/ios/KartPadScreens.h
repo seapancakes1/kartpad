@@ -18,6 +18,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)screensManageGameData;
 - (void)screensManageRetroRewind;
 - (void)screensManageSaves;
+- (void)screensProgressSync;
 - (void)screensShowMultiplayer;
 - (void)screensShowPrivateServer;
 - (void)screensShowMotionSteering;

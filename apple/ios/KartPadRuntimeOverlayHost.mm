@@ -19,6 +19,8 @@
 #import "SunPadInputMixer.h"
 #import "SunPadSettings.h"
 #include "KartPadUpdateCheck.inc.mm"
+// Progress sync at launch (KartPadSyncIOS.inc.mm, included at the end).
+static void KPSyncAtLaunch(UIViewController *presenter);
 #include "audio_backend.h"
 #include "memory.h"
 #include "music_attenuation.h"
@@ -1966,6 +1968,8 @@ static NSString *const kKartPadPreferredGameKey = @"KartPadPreferredGame";
     }
     self.pendingMiiFailure = KartPadApplyPendingMiiDatabase(&error) ? nil : error;
   }
+  // Synced progress loads now, before the game opens its files.
+  KPSyncAtLaunch(self.root);
   // The game runtime has no dialog of its own on iPhone/iPad, so a fatal error (for
   // example incomplete game data, #370) only closed the game. The runtime leaves its
   // message in Logs/last_fatal.txt; show it once here and remove it.
@@ -4408,3 +4412,5 @@ extern "C" bool KartPadMobileReadClassicInputForPlayer(
   snapshot->connected = adapted.connected ? 1 : 0;
   return true;
 }
+
+#include "KartPadSyncIOS.inc.mm"

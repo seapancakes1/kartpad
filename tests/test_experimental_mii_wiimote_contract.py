@@ -47,8 +47,11 @@ class ExperimentalMiiWiimoteContractTests(unittest.TestCase):
         self.assertIn('@"PendingRFL_DB.dat"', manager)
         self.assertIn('@"PendingPlayerIdentity.plist"', manager)
         self.assertIn('@"PendingLicenseChange.plist"', manager)
-        self.assertIn('RetroRewind/riivolution/save/RetroWFC/RMCP/rksys.dat', manager)
-        self.assertIn('RetroRewind/riivolution/save/RetroWFC2/RMCP/rksys.dat', manager)
+        # Retro saves: beside the pack (the Mac's configured one), else RetroRewind/riivolution/save.
+        self.assertIn('@"RetroRewind/riivolution/save"', manager)
+        self.assertIn('config.retroRewindRoot', manager)
+        self.assertIn('@"RetroWFC/RMCP/rksys.dat"', manager)
+        self.assertIn('@"RetroWFC2/RMCP/rksys.dat"', manager)
         self.assertIn('NSDataWritingAtomic', manager)
         self.assertIn('@"MiiBackups"', manager)
         self.assertIn('@"SaveBackups"', manager)

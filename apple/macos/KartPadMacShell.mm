@@ -1,6 +1,7 @@
 #import "../mobile/KartPadPrivateServerSettings.h"
 #import "KartPadMacShell.h"
 #import "KartPadMiiManager.h"
+#import "KartPadSync.h"
 #import "KartPadMiiEditor.h"
 #import "KartPadGameFiles.h"
 #import "KartPadWiimotePairing.h"
@@ -751,6 +752,7 @@ static NSString *KPGameTitle(NSString *profile);                       // KartPa
 }
 
 - (void)finishQuitting:(id)sender {
+  KartPadSyncSendNow(5);
   if (NSWindow *window = KPGameWindow()) {
     // Let Aurora observe the native close event. Its window-close path
     // flushes placement state and exits without running C++ teardown from a
@@ -1262,6 +1264,9 @@ static KartPadMacShellController *Controller() {
 }
 
 static void KPOpenMiisFromController() { [Controller() showMiis:nil]; }
+@interface KartPadMacShellController (Sync)
+- (void)showProgressSync:(id)sender;
+@end
 
 #include "KartPadOverlay.inc.mm"
 #include "KartPadUIGlyphs.inc.mm"
@@ -1328,6 +1333,8 @@ static bool KPShowScreen(NSString *which) {
                 message:@"Phones join once the game is running. Then choose Controls → Add Phone Controller… again."];
 }
 @end
+
+#include "KartPadMacSync.inc.mm"
 
 #if KP_QA_HOOKS
 #include "KartPadQA.inc.mm"
@@ -1800,6 +1807,8 @@ bool KartPadMacShellPrepareGameData(void) {
       }
       miiError = nil;
     }
+    // Synced progress loads now, before the game opens its files.
+    KPSyncAtLaunch();
     KartPadApplyExperimentalWiimotePreference();
     RuntimeConfigFile::EnsureConfigFile();
     const RuntimeUserConfig initialConfig = RuntimeConfigFile::LoadConfigFile();

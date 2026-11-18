@@ -24,7 +24,7 @@ if [[ $# -ge 2 ]]; then
  "$work/body" "$1" "$2"
 fi
 if [[ $(uname -s) == Darwin ]]; then
- for fixture in apple_mii_editor_tests apple_player_identity_tests; do
+ for fixture in apple_mii_editor_tests apple_player_identity_tests apple_sync_tests; do
   clang++ -std=c++20 -fobjc-arc -UNDEBUG -DKARTPAD_MII_MANAGER_TESTING=1 -I "$repo/apple/shared" -I "$repo/runtime/include" "$repo/runtime/tests/$fixture.mm" "$repo/apple/shared/KartPadMiiManager.mm" -framework Foundation -o "$work/$fixture"
   "$work/$fixture"
  done

@@ -676,6 +676,16 @@ static constexpr NSInteger KPSettingsVisibleRows = 7;
     [game addObject:row];
   }
   {
+    KPSettingRow *row = KPRow(@"Sync progress", nil, KPRowAction);
+    row.value = ^NSString * { return KartPadSyncStatus(); };
+    row.run = ^{
+      [KPOverlay() closeAll];
+      dispatch_async(dispatch_get_main_queue(), ^{ [Controller() showProgressSync:nil]; });
+    };
+    row.restart = ^BOOL { return KartPadSyncNeedsRestart(); };
+    [game addObject:row];
+  }
+  {
     KPSettingRow *row = KPRow(@"Mario Kart Wii files", @"Needs a mouse.", KPRowAction);
     row.value = ^NSString * { return KPGameDataReady() ? @"Ready" : @"Needs attention"; };
     row.run = ^{

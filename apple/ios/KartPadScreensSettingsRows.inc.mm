@@ -222,6 +222,12 @@
     row.restart = ^BOOL { return KartPadHasPendingGhost(); };
     [game addObject:row];
   }
+  {
+    KPSettingRow *row = action(@"Sync progress", nil, ^{ [KPHost() screensProgressSync]; });
+    row.value = ^NSString * { return KartPadSyncStatus(); };
+    row.restart = ^BOOL { return KartPadSyncNeedsRestart(); };
+    [game addObject:row];
+  }
   [game addObject:action(@"Saves", nil, ^{ [KPHost() screensManageSaves]; })];
   [game addObject:action(@"Multiplayer", nil, ^{ [KPHost() screensShowMultiplayer]; })];
   {

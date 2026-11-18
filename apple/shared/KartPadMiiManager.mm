@@ -51,8 +51,25 @@ NSString *PendingPath() {
   return [SupportRoot() stringByAppendingPathComponent:@"PendingRFL_DB.dat"];
 }
 
+// Retro Rewind saves sit beside its pack: the runtime puts the pack's <savegame> folder under the
+// folder holding RetroRewind6, as Dolphin does. On Mac the pack can be anywhere (Config.toml).
+NSString *RetroSaveRoot() {
+#if TARGET_OS_OSX && !defined(KARTPAD_MII_MANAGER_TESTING)
+  const RuntimeUserConfig config = RuntimeConfigFile::LoadConfigFile();
+  if (config.retroRewindRoot && !config.retroRewindRoot->empty()) {
+    std::filesystem::path root(*config.retroRewindRoot);
+    if (root.is_relative()) root = RuntimeConfigFile::ResolveConfigPath().parent_path() / root;
+    root = root.lexically_normal();
+    if (root.filename().empty()) root = root.parent_path();
+    return [NSString stringWithUTF8String:(root.parent_path() / "riivolution" / "save").string().c_str()];
+  }
+#endif
+  return [SupportRoot() stringByAppendingPathComponent:@"RetroRewind/riivolution/save"];
+}
+
 NSArray<NSDictionary<NSString *, NSString *> *> *SaveLocations() {
   NSString *support = SupportRoot();
+  NSString *retro = RetroSaveRoot();
   return @[
     @{
       @"identifier": @"original",
@@ -64,15 +81,13 @@ NSArray<NSDictionary<NSString *, NSString *> *> *SaveLocations() {
     @{
       @"identifier": @"retro_rewind",
       @"title": @"Retro Rewind",
-      @"path": [support stringByAppendingPathComponent:
-          @"RetroRewind/riivolution/save/RetroWFC/RMCP/rksys.dat"],
+      @"path": [retro stringByAppendingPathComponent:@"RetroWFC/RMCP/rksys.dat"],
       @"backup": @"rksys-retro-rewind",
     },
     @{
       @"identifier": @"retro_rewind_separate",
       @"title": @"Retro Rewind (Separate Save)",
-      @"path": [support stringByAppendingPathComponent:
-          @"RetroRewind/riivolution/save/RetroWFC2/RMCP/rksys.dat"],
+      @"path": [retro stringByAppendingPathComponent:@"RetroWFC2/RMCP/rksys.dat"],
       @"backup": @"rksys-retro-rewind-separate",
     },
   ];
@@ -1459,6 +1474,8 @@ static BOOL KartPadApplyPendingSaveRestore(NSError **error){
   if(![plist[@"data"] writeToFile:active options:NSDataWritingAtomic error:error])return NO;
   return KartPadCancelSaveRestore(error);
 }
+
+#include "KartPadSync.inc.mm"
 
 #if !defined(KARTPAD_MII_MANAGER_TESTING) && !defined(KARTPAD_MII_EDITOR_DISABLED) && \
     (TARGET_OS_OSX || (TARGET_OS_IOS && !TARGET_OS_TV))

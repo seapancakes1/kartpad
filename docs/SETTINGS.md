@@ -54,6 +54,8 @@ FPS Counter Size offers Small, Medium and Large on both platforms. Render Resolu
 
 Player Identity contains license rename and Mii selection/repair. Save restore validates size/checksums, stages changes and preserves backups. Export first before destructive data management. Keep the existing app and signing identity when updating.
 
+**Sync progress** (Mac, iPhone and iPad; Settings → Game) is off until you choose a folder. See [progress sync](SUPPORT.md#progress-sync-between-mac-iphone-and-ipad).
+
 Report a Problem offers a reviewable diagnostic flow. The iPhone/iPad form scrolls and adapts to the keyboard. Android private diagnostic ZIPs may include bounded retained system crash/ANR traces; these are excluded from public issue metadata. Apple reports add lifecycle, thermal, memory and display context. More diagnostics help investigations; they do not establish that a crash or performance problem is fixed.
 
 ## GPU Driver (Android, Snapdragon)

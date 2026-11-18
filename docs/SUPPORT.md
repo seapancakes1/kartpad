@@ -75,6 +75,30 @@ KartPad version, installation method and destination when asking for help.
 Do not uninstall the source app or share saves, identity files or game data
 publicly.
 
+## Progress sync between Mac, iPhone and iPad
+
+**Settings → Game → Sync progress** keeps Miis, saves (Original, Retro Rewind and Retro Rewind
+Separate Save) and Retro Rewind ratings the same on each device that uses it. It's off until you
+choose a folder. Choose the same folder on every device, such as a new **KartPad Sync** folder in
+iCloud Drive.
+
+- **When it syncs:** KartPad loads newer progress when it starts, before the game opens its files.
+  It sends this device's progress at launch, about once a minute while you play, when you quit
+  (Mac), and when KartPad goes to the background (iPhone/iPad). Progress that arrives while the
+  game runs waits for the next launch (**Restart to load newer progress**).
+- **Choosing:** if progress changed on both devices since they last synced, KartPad asks at launch:
+  **Keep This Mac’s**, **Use iPhone’s** or **Decide Later**. Keeping one side makes the other device
+  load it without asking. **Use Progress From…** replaces this device's progress with another's at
+  the next launch.
+- **Safety:** a file is only sent or loaded when it checks out (save checksum, Mii database, rating
+  format). Every replaced file is first copied to `SyncBackups` in KartPad's data folder (the newest
+  10 kept). Each device writes only its own file in the folder.
+- **Not synced:** console identity, settings, controllers, game files and Retro Rewind music. Play
+  online on one device at a time. If iCloud hasn't delivered the other device's latest file yet,
+  the next launch on that device asks which progress to keep instead of replacing anything.
+
+Turning sync off forgets the folder; nothing is deleted.
+
 ## Android save transfer
 
 KartPad stores saves in Android's **internal app-private storage**, so its save
